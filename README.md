@@ -18,7 +18,6 @@ celestia da-server accepts the following flags for celestia storage using
    --celestia.p2p-network value               celestia p2p network (default: "mocha-4") [$OP_ALTDA_CELESTIA_P2P_NETWORK]
    --addr value                               alt da server listening address (default: "127.0.0.1") [$OP_ALTDA_ADDR]
    --port value                               alt da server listening port (default: 3100) [$OP_ALTDA_PORT]
-   --generic-commitment                       enable generic commitments for testing. Not for production use. (default: true) [$OP_ALTDA_GENERIC_COMMITMENT]
    --celestia.tls-enabled                     celestia rpc TLS (default: true) [$OP_ALTDA_CELESTIA_TLS_ENABLED]
    --celestia.core.grpc.tls-enabled           enable core grpc TLS (default: true) [$OP_ALTDA_CELESTIA_CORE_GRPC_TLS_ENABLED]
    --celestia.core.grpc.auth-token value      celestia core grpc auth token [$OP_ALTDA_CELESTIA_CORE_GRPC_AUTH_TOKEN]
@@ -260,7 +259,6 @@ op-batcher
 
 ```sh
 da-server
-      --generic-commitment=true
       --celestia.addr=http://localhost:26658
       --celestia.auth-token=$CELESTIA_NODE_AUTH_TOKEN
       --celestia.namespace=$NAMESPACE

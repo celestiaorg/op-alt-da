@@ -10,6 +10,12 @@ LDFLAGS := -ldflags "$(LDFLAGSSTRING)"
 da-server:
 	env GO111MODULE=on GOOS=$(TARGETOS) GOARCH=$(TARGETARCH) go build -v $(LDFLAGS) -o ./bin/da-server ./cmd/daserver
 
+lint:
+	golangci-lint run
+
+fmt:
+	golangci-lint run --fix
+
 clean:
 	rm bin/da-server
 
