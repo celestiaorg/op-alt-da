@@ -128,6 +128,11 @@ func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	} else {
+		if input == nil {
+			responseSent = true
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		responseSent = true
 		if _, err := w.Write(input); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
