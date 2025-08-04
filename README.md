@@ -11,13 +11,13 @@ celestia da-server accepts the following flags for celestia storage using
 [celestia-openrpc](https://github.com/celestiaorg/celestia-openrpc)
 
 ````
-    --celestia.auth-token value                                            ($OP_ALT_DA_DA_SERVER_CELESTIA_AUTH_TOKEN)
+    --celestia.auth-token value                                            ($OP_ALT_DA_SERVER_CELESTIA_AUTH_TOKEN)
           celestia auth token
 
-    --celestia.namespace value                                             ($OP_ALT_DA_DA_SERVER_CELESTIA_NAMESPACE)
+    --celestia.namespace value                                             ($OP_ALT_DA_SERVER_CELESTIA_NAMESPACE)
           celestia namespace
 
-    --celestia.server value             (default: "http://localhost:26658") ($OP_ALT_DA_DA_SERVER_CELESTIA_SERVER)
+    --celestia.server value             (default: "http://localhost:26658") ($OP_ALT_DA_SERVER_CELESTIA_SERVER)
           celestia server endpoint
 
     --s3.credential-type                                            $OP_ALT_DA_S3_CREDENTIAL_TYPE	Static or iam.
