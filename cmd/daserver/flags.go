@@ -159,21 +159,28 @@ func init() {
 var Flags []cli.Flag
 
 type CLIConfig struct {
-	UseGenericComm    bool
-	CelestiaEndpoint  string
-	CelestiaAuthToken string
-	CelestiaNamespace string
-	S3Config          s3.S3Config
-	Fallback          bool
-	Cache             bool
+	UseGenericComm     bool
+	DAAddr             string
+	DATLSEnabled       bool
+	DAAuthToken        string
+	Namespace          string
+	DefaultKeyName     string
+	KeyringPath        string
+	CoreGRPCAddr       string
+	CoreGRPCTLSEnabled bool
+	CoreGRPCAuthToken  string
+	P2PNetwork         string
+	S3Config           s3.S3Config
+	Fallback           bool
+	Cache              bool
 }
 
 func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 	return CLIConfig{
-		UseGenericComm:    ctx.Bool(GenericCommFlagName),
-		CelestiaEndpoint:  ctx.String(CelestiaServerFlagName),
-		CelestiaAuthToken: ctx.String(CelestiaAuthTokenFlagName),
-		CelestiaNamespace: ctx.String(CelestiaNamespaceFlagName),
+		UseGenericComm: ctx.Bool(GenericCommFlagName),
+		DAAddr:         ctx.String(CelestiaServerFlagName),
+		DAAuthToken:    ctx.String(CelestiaAuthTokenFlagName),
+		Namespace:      ctx.String(CelestiaNamespaceFlagName),
 		S3Config: s3.S3Config{
 			S3CredentialType: toS3CredentialType(ctx.String(S3CredentialTypeFlagName)),
 			Bucket:           ctx.String(S3BucketFlagName),
@@ -189,11 +196,11 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 }
 
 func (c CLIConfig) Check() error {
-	if c.CelestiaEnabled() && (c.CelestiaEndpoint == "" || c.CelestiaAuthToken == "" || c.CelestiaNamespace == "") {
+	if c.CelestiaEnabled() && (c.DAAddr == "" || c.DAAuthToken == "" || c.Namespace == "") {
 		return errors.New("all Celestia flags must be set")
 	}
 	if c.CelestiaEnabled() {
-		if _, err := hex.DecodeString(c.CelestiaNamespace); err != nil {
+		if _, err := hex.DecodeString(c.Namespace); err != nil {
 			return err
 		}
 	}
@@ -201,16 +208,23 @@ func (c CLIConfig) Check() error {
 }
 
 func (c CLIConfig) CelestiaConfig() celestia.CelestiaConfig {
-	ns, _ := hex.DecodeString(c.CelestiaNamespace)
+	ns, _ := hex.DecodeString(c.Namespace)
 	return celestia.CelestiaConfig{
-		URL:       c.CelestiaEndpoint,
-		AuthToken: c.CelestiaAuthToken,
-		Namespace: ns,
+		DAAddr:       c.DAAddr,
+		DATLSEnabled: c.DATLSEnabled,
+		DAAuthToken:  c.DAAuthToken,
+		Namespace:    ns,
+		DefaultKeyName: c.DefaultKeyName,
+		KeyringPath: c.KeyringPath,
+		CoreGRPCAddr: c.CoreGRPCAddr,
+		CoreGRPCTLSEnabled: c.CoreGRPCTLSEnabled,
+		CoreGRPCAuthToken: c.CoreGRPCAuthToken,
+		P2PNetwork: c.P2PNetwork,
 	}
 }
 
 func (c CLIConfig) CelestiaEnabled() bool {
-	return !(c.CelestiaEndpoint == "" && c.CelestiaAuthToken == "" && c.CelestiaNamespace == "")
+	return !(c.DAAddr == "" && c.DAAuthToken == "" && c.Namespace == "")
 }
 
 func (c CLIConfig) CacheEnabled() bool {

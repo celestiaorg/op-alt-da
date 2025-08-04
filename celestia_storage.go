@@ -2,79 +2,142 @@ package celestia
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"time"
 
-	client "github.com/celestiaorg/celestia-openrpc"
-	"github.com/celestiaorg/go-square/blob"
-	"github.com/celestiaorg/go-square/inclusion"
-	"github.com/celestiaorg/go-square/merkle"
-	"github.com/celestiaorg/go-square/namespace"
-	altda "github.com/ethereum-optimism/optimism/op-plasma"
+	"github.com/celestiaorg/celestia-node/api/client"
+	"github.com/celestiaorg/celestia-node/blob"
+	"github.com/celestiaorg/celestia-node/nodebuilder/p2p"
+	"github.com/celestiaorg/celestia-node/state"
+	libshare "github.com/celestiaorg/go-square/v2/share"
+	"github.com/cosmos/cosmos-sdk/crypto/keyring"
+	altda "github.com/ethereum-optimism/optimism/op-alt-da"
 	"github.com/ethereum/go-ethereum/log"
 )
 
 const VersionByte = 0x0c
 
+// heightLen is a length (in bytes) of serialized height.
+//
+// This is 8 as uint64 consist of 8 bytes.
+const heightLen = 8
+
+func MakeID(height uint64, commitment []byte) []byte {
+	id := make([]byte, heightLen+len(commitment))
+	binary.LittleEndian.PutUint64(id, height)
+	copy(id[heightLen:], commitment)
+	return id
+}
+
+func SplitID(id []byte) (uint64, []byte) {
+	if len(id) <= heightLen {
+		return 0, nil
+	}
+	commitment := id[heightLen:]
+	return binary.LittleEndian.Uint64(id[:heightLen]), commitment
+}
+
 type CelestiaConfig struct {
-	URL       string
-	AuthToken string
-	Namespace []byte
+	DAAddr             string
+	DATLSEnabled       bool
+	DAAuthToken        string
+	Namespace          []byte
+	DefaultKeyName     string
+	KeyringPath        string
+	CoreGRPCAddr       string
+	CoreGRPCTLSEnabled bool
+	CoreGRPCAuthToken  string
+	P2PNetwork         string
 }
 
 // CelestiaStore implements DAStorage with celestia backend
 type CelestiaStore struct {
 	Log        log.Logger
 	GetTimeout time.Duration
-	Namespace  []byte
+	Namespace  libshare.Namespace
 	Client     *client.Client
 }
 
 // NewCelestiaStore returns a celestia store.
 func NewCelestiaStore(cfg CelestiaConfig) *CelestiaStore {
+	keyname := cfg.DefaultKeyName
+	if keyname == "" {
+		keyname = "my_celes_key"
+	}
+	kr, err := client.KeyringWithNewKey(client.KeyringConfig{
+		KeyName:     keyname,
+		BackendName: keyring.BackendTest,
+	}, cfg.KeyringPath)
+	if err != nil {
+		log.Crit("failed to create keyring", "err", err)
+	}
+
+	// Configure client
+	config := client.Config{
+		ReadConfig: client.ReadConfig{
+			BridgeDAAddr: cfg.DAAddr,
+			DAAuthToken:  cfg.DAAuthToken,
+			EnableDATLS:  cfg.DATLSEnabled,
+		},
+		SubmitConfig: client.SubmitConfig{
+			DefaultKeyName: cfg.DefaultKeyName,
+			Network:        p2p.Network(cfg.P2PNetwork),
+			CoreGRPCConfig: client.CoreGRPCConfig{
+				Addr:       cfg.CoreGRPCAddr,
+				TLSEnabled: cfg.CoreGRPCTLSEnabled,
+				AuthToken:  cfg.CoreGRPCAuthToken,
+			},
+		},
+	}
 	Log := log.New()
 	ctx := context.Background()
-	client, err := client.NewClient(ctx, cfg.URL, cfg.AuthToken)
+	client, err := client.New(ctx, config, kr)
 	if err != nil {
-		Log.Crit(err.Error())
+		log.Crit("failed to create celestia client", "err", err)
 	}
+	namespace := libshare.MustNewV0Namespace(cfg.Namespace)
 	return &CelestiaStore{
 		Log:        Log,
 		Client:     client,
 		GetTimeout: time.Minute,
-		Namespace:  cfg.Namespace,
+		Namespace:  namespace,
 	}
 }
 
 func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	log.Info("celestia: blob request", "id", hex.EncodeToString(key))
 	ctx, cancel := context.WithTimeout(context.Background(), d.GetTimeout)
-	blobs, err := d.Client.DA.Get(ctx, [][]byte{key[2:]}, d.Namespace)
+	height, commitment := SplitID(key[2:])
+	blob, err := d.Client.Blob.Get(ctx, height, d.Namespace, commitment)
 	cancel()
-	if err != nil || len(blobs) == 0 {
+	if err != nil || blob == nil {
 		return nil, fmt.Errorf("celestia: failed to resolve frame: %w", err)
 	}
-	if len(blobs) != 1 {
-		d.Log.Warn("celestia: unexpected length for blobs", "expected", 1, "got", len(blobs))
-	}
-	return blobs[0], nil
+	return blob.Data(), nil
 }
 
 func (d *CelestiaStore) Put(ctx context.Context, data []byte) ([]byte, error) {
-	ids, err := d.Client.DA.Submit(ctx, [][]byte{data}, -1, d.Namespace)
-	if err == nil && len(ids) == 1 {
-		d.Log.Info("celestia: blob successfully submitted", "id", hex.EncodeToString(ids[0]))
-		commitment := altda.NewGenericCommitment(append([]byte{VersionByte}, ids[0]...))
+	b, err := blob.NewBlob(libshare.ShareVersionZero, d.Namespace, data, nil)
+	if err != nil {
+		fmt.Println("failed to create blob:", err)
+		return nil, err
+	}
+	height, err := d.Client.Blob.Submit(ctx, []*blob.Blob{b}, state.NewTxConfig())
+	if err == nil {
+		id := MakeID(height, b.Commitment)
+		d.Log.Info("celestia: blob successfully submitted", "id", hex.EncodeToString(id))
+		commitment := altda.NewGenericCommitment(append([]byte{VersionByte}, id...))
 		return commitment.Encode(), nil
 	}
 	return nil, err
 }
 
 func (d *CelestiaStore) CreateCommitment(data []byte) ([]byte, error) {
-	ins, err := namespace.From(d.Namespace)
+	b, err := blob.NewBlob(libshare.ShareVersionZero, d.Namespace, data, nil)
 	if err != nil {
 		return nil, err
 	}
-	return inclusion.CreateCommitment(blob.New(ins, data, 0), merkle.HashFromByteSlices, 64)
+	return b.Commitment, nil
 }

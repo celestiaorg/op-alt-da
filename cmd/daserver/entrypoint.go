@@ -7,8 +7,8 @@ import (
 
 	celestia "github.com/celestiaorg/op-alt-da"
 	s3 "github.com/celestiaorg/op-alt-da/s3"
+	"github.com/ethereum-optimism/optimism/op-service/ctxinterrupt"
 	oplog "github.com/ethereum-optimism/optimism/op-service/log"
-	"github.com/ethereum-optimism/optimism/op-service/opio"
 )
 
 type Server interface {
@@ -37,7 +37,7 @@ func StartDAServer(cliCtx *cli.Context) error {
 
 	switch {
 	case cfg.CelestiaEnabled():
-		l.Info("Using celestia storage", "url", cfg.CelestiaConfig().URL)
+		l.Info("Using celestia storage", "url", cfg.CelestiaConfig().DAAddr)
 		store := celestia.NewCelestiaStore(cfg.CelestiaConfig())
 		l.Info("Using s3 storage", "config", cfg.S3Config)
 		s3Store, err := s3.NewS3(cfg.S3Config)
@@ -59,7 +59,7 @@ func StartDAServer(cliCtx *cli.Context) error {
 		}
 	}()
 
-	opio.BlockOnInterrupts()
+	ctxinterrupt.Wait(cliCtx.Context)
 
 	return nil
 }

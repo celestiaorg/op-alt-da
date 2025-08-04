@@ -14,8 +14,8 @@ import (
 	"time"
 
 	s3 "github.com/celestiaorg/op-alt-da/s3"
-	altda "github.com/ethereum-optimism/optimism/op-plasma"
-	"github.com/ethereum-optimism/optimism/op-service/rpc"
+	altda "github.com/ethereum-optimism/optimism/op-alt-da"
+	"github.com/ethereum-optimism/optimism/op-service/httputil"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
@@ -26,7 +26,7 @@ type CelestiaServer struct {
 	endpoint   string
 	store      *CelestiaStore
 	s3Store    *s3.S3Store
-	tls        *rpc.ServerTLSConfig
+	tls        *httputil.ServerTLSConfig
 	httpServer *http.Server
 	listener   net.Listener
 
