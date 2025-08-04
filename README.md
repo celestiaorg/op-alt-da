@@ -11,23 +11,23 @@ celestia da-server accepts the following flags for celestia storage using
 [celestia-openrpc](https://github.com/celestiaorg/celestia-openrpc)
 
 ````
-    --celestia.auth-token value                                            ($OP_PLASMA_DA_SERVER_CELESTIA_AUTH_TOKEN)
+    --celestia.auth-token value                                            ($OP_ALT_DA_DA_SERVER_CELESTIA_AUTH_TOKEN)
           celestia auth token
 
-    --celestia.namespace value                                             ($OP_PLASMA_DA_SERVER_CELESTIA_NAMESPACE)
+    --celestia.namespace value                                             ($OP_ALT_DA_DA_SERVER_CELESTIA_NAMESPACE)
           celestia namespace
 
-    --celestia.server value             (default: "http://localhost:26658") ($OP_PLASMA_DA_SERVER_CELESTIA_SERVER)
+    --celestia.server value             (default: "http://localhost:26658") ($OP_ALT_DA_DA_SERVER_CELESTIA_SERVER)
           celestia server endpoint
 
-    --s3.credential-type                                            $OP_PLASMA_S3_CREDENTIAL_TYPE	Static or iam.
-    --s3.access-key-id                                            $OP_PLASMA_S3_ACCESS_KEY_ID	Access key id for S3 storage.
-    --s3.access-key-id                                            $OP_PLASMA_S3_ACCESS_KEY_ID	Access key id for S3 storage.
-    --s3.access-key-secret                                            $OP_PLASMA_S3_ACCESS_KEY_SECRET	Access key secret for S3 storage.
-    --s3.bucket                                            $OP_PLASMA_S3_BUCKET	Bucket name for S3 storage.
-    --s3.path                                            $OP_PLASMA_S3_PATH
-    --routing.fallback          (default: false)	$OP_PLASMA_FALLBACK_TARGET	Fall back backend target. Supports S3.
-    --routing.cache             (default: false)	$OP_PLASMA_CACHE
+    --s3.credential-type                                            $OP_ALT_DA_S3_CREDENTIAL_TYPE	Static or iam.
+    --s3.access-key-id                                            $OP_ALT_DA_S3_ACCESS_KEY_ID	Access key id for S3 storage.
+    --s3.access-key-id                                            $OP_ALT_DA_S3_ACCESS_KEY_ID	Access key id for S3 storage.
+    --s3.access-key-secret                                            $OP_ALT_DA_S3_ACCESS_KEY_SECRET	Access key secret for S3 storage.
+    --s3.bucket                                            $OP_ALT_DA_S3_BUCKET	Bucket name for S3 storage.
+    --s3.path                                            $OP_ALT_DA_S3_PATH
+    --routing.fallback          (default: false)	$OP_ALT_DA_FALLBACK_TARGET	Fall back backend target. Supports S3.
+    --routing.cache             (default: false)	$OP_ALT_DA_CACHE
 
 ````
 
@@ -57,13 +57,13 @@ The first way uses a fork of [rollop](https://github.com/0xFableOrg/roll-op) to
 automate deployment. This method is recommended for beginners.
 
 Clone the [rollop](https://github.com/celestiaorg/roll-op) repository, checkout
-the `plasma` branch and follow the instructions in the README to setup the
+the `alt-da` branch and follow the instructions in the README to setup the
 rollop stack.
 
 ```sh
 git clone https://github.com/celestiaorg/roll-op.git
 cd roll-op
-git checkout plasma
+git checkout alt-da
 ./rollop setup --yes
 ````
 
@@ -163,7 +163,7 @@ not require a peer-to-peer connection.
 To run a local devnet with local-celestia-devnet:
 
 ```sh
-DEVNET_PLASMA="true" GENERIC_PLASMA="true"  make devnet-up
+DEVNET_ALT_DA="true" GENERIC_ALT_DA="true"  make devnet-up
 ```
 
 This will start the devnet in Alt-DA mode with local-celestia-devnet.
@@ -206,7 +206,7 @@ check [the documentation for the node type you are using](https://docs.celestia.
 Once the docker compose file is modified, you can run the devnet with the following command:
 
 ```sh
-DEVNET_PLASMA="true" GENERIC_PLASMA="true"  make devnet-up
+DEVNET_ALT_DA="true" GENERIC_ALT_DA="true"  make devnet-up
 ```
 
 This will start the devnet in Alt-DA mode with celestia-node running in testnet
@@ -238,14 +238,14 @@ including the following flags:
 
 ```sh
 op-node
-      --plasma.enabled=true
-      --plasma.da-service=true
+      --alt-da.enabled=true
+      --alt-da.da-service=true
 ```
 
 ```sh
 op-batcher
-      --plasma.enabled=true
-      --plasma.da-service=true
+      --alt-da.enabled=true
+      --alt-da.da-service=true
 ```
 
 ```sh

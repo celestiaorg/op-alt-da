@@ -8,9 +8,9 @@ import (
 
 	"github.com/urfave/cli/v2"
 
-	s3 "github.com/celestiaorg/op-plasma-celestia/s3"
+	s3 "github.com/celestiaorg/op-alt-da/s3"
 
-	celestia "github.com/celestiaorg/op-plasma-celestia"
+	celestia "github.com/celestiaorg/op-alt-da"
 	opservice "github.com/ethereum-optimism/optimism/op-service"
 	oplog "github.com/ethereum-optimism/optimism/op-service/log"
 )
@@ -34,7 +34,7 @@ const (
 	CacheFlagName             = "routing.cache"
 )
 
-const EnvVarPrefix = "OP_PLASMA_DA_SERVER"
+const EnvVarPrefix = "OP_ALT_DA_SERVER"
 
 func prefixEnvVars(name string) []string {
 	return opservice.PrefixEnvVar(EnvVarPrefix, name)

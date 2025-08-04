@@ -1,4 +1,4 @@
-module github.com/celestiaorg/op-plasma-celestia
+module github.com/celestiaorg/op-alt-da
 
 go 1.22.2
 

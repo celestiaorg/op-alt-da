@@ -1,8 +1,8 @@
-# Plasma DA Server
+# Alt-DA Server
 
 ## Introduction
 
-This DA server proxies plasma requests to a remote celestia node.
+This DA server proxies alt-da requests to a remote celestia node.
 
 ## Celestia Configuration
 

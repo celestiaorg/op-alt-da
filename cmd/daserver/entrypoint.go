@@ -5,8 +5,8 @@ import (
 
 	"github.com/urfave/cli/v2"
 
-	celestia "github.com/celestiaorg/op-plasma-celestia"
-	s3 "github.com/celestiaorg/op-plasma-celestia/s3"
+	celestia "github.com/celestiaorg/op-alt-da"
+	s3 "github.com/celestiaorg/op-alt-da/s3"
 	oplog "github.com/ethereum-optimism/optimism/op-service/log"
 	"github.com/ethereum-optimism/optimism/op-service/opio"
 )
@@ -31,7 +31,7 @@ func StartDAServer(cliCtx *cli.Context) error {
 	l := oplog.NewLogger(oplog.AppOut(cliCtx), logCfg)
 	oplog.SetGlobalLogHandler(l.Handler())
 
-	l.Info("Initializing Plasma DA server...")
+	l.Info("Initializing Alt-DA server...")
 
 	var server Server
 

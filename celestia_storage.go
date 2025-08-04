@@ -11,7 +11,7 @@ import (
 	"github.com/celestiaorg/go-square/inclusion"
 	"github.com/celestiaorg/go-square/merkle"
 	"github.com/celestiaorg/go-square/namespace"
-	plasma "github.com/ethereum-optimism/optimism/op-plasma"
+	altda "github.com/ethereum-optimism/optimism/op-plasma"
 	"github.com/ethereum/go-ethereum/log"
 )
 
@@ -65,7 +65,7 @@ func (d *CelestiaStore) Put(ctx context.Context, data []byte) ([]byte, error) {
 	ids, err := d.Client.DA.Submit(ctx, [][]byte{data}, -1, d.Namespace)
 	if err == nil && len(ids) == 1 {
 		d.Log.Info("celestia: blob successfully submitted", "id", hex.EncodeToString(ids[0]))
-		commitment := plasma.NewGenericCommitment(append([]byte{VersionByte}, ids[0]...))
+		commitment := altda.NewGenericCommitment(append([]byte{VersionByte}, ids[0]...))
 		return commitment.Encode(), nil
 	}
 	return nil, err
