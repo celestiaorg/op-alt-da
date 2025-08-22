@@ -1,3 +1,3 @@
 FROM scratch
-COPY op-plasma-celestia /usr/bin/op-plasma-celestia
-ENTRYPOINT ["/usr/bin/op-plasma-celestia"]
+COPY op-alt-da /usr/bin/op-alt-da
+ENTRYPOINT ["/usr/bin/op-alt-da"]

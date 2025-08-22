@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	s3 "github.com/celestiaorg/op-plasma-celestia/s3"
-	plasma "github.com/ethereum-optimism/optimism/op-plasma"
+	s3 "github.com/celestiaorg/op-alt-da/s3"
+	altda "github.com/ethereum-optimism/optimism/op-plasma"
 	"github.com/ethereum-optimism/optimism/op-service/rpc"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -123,7 +123,7 @@ func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	}
 	// 2 read blob from Celestia
 	input, err := d.store.Get(r.Context(), comm)
-	if err != nil && errors.Is(err, plasma.ErrNotFound) {
+	if err != nil && errors.Is(err, altda.ErrNotFound) {
 		responseSent = true
 		w.WriteHeader(http.StatusNotFound)
 		return
