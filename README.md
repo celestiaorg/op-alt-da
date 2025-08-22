@@ -11,7 +11,7 @@ celestia da-server accepts the following flags for celestia storage using
 [celestia-openrpc](https://github.com/celestiaorg/celestia-openrpc)
 
 ````
-    --celestia.auth-token value                                            ($OP_ALT_DA_SERVER_CELESTIA_AUTH_TOKEN)
+    --celestia.bridge.auth-token value                                            ($OP_ALT_DA_SERVER_CELESTIA_BRIDGE_AUTH_TOKEN)
           celestia auth token
 
     --celestia.namespace value                                             ($OP_ALT_DA_SERVER_CELESTIA_NAMESPACE)

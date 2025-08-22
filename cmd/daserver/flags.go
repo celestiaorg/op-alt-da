@@ -16,12 +16,19 @@ import (
 )
 
 const (
-	ListenAddrFlagName        = "addr"
-	PortFlagName              = "port"
-	GenericCommFlagName       = "generic-commitment"
-	CelestiaServerFlagName    = "celestia.server"
-	CelestiaAuthTokenFlagName = "celestia.auth-token"
-	CelestiaNamespaceFlagName = "celestia.namespace"
+	ListenAddrFlagName                 = "addr"
+	PortFlagName                       = "port"
+	GenericCommFlagName                = "generic-commitment"
+	CelestiaBridgeAddrFlagName         = "celestia.bridge.addr"
+	CelestiaBridgeDATLSEnabledFlagName = "celestia.bridge.tls.enabled"
+	CelestiaBridgeAuthTokenFlagName    = "celestia.bridge.auth-token"
+	CelestiaNamespaceFlagName          = "celestia.namespace"
+	CelestiaDefaultKeyNameFlagName     = "celestia.keyring.default-key-name"
+	CelestiaKeyringPathFlagName        = "celestia.keyring.path"
+	CelestiaCoreGRPCAddrFlagName       = "celestia.core.grpc.addr"
+	CelestiaCoreGRPCTLSEnabledFlagName = "celestia.core.grpc.tls-enabled"
+	CelestiaCoreGRPCAuthTokenFlagName  = "celestia.core.grpc.auth-token"
+	CelestiaP2PNetworkFlagName         = "celestia.p2p-network"
 	//s3
 	S3CredentialTypeFlagName  = "s3.credential-type" // #nosec G101
 	S3BucketFlagName          = "s3.bucket"          // #nosec G101
@@ -59,23 +66,65 @@ var (
 		EnvVars: prefixEnvVars("GENERIC_COMMITMENT"),
 		Value:   true,
 	}
-	CelestiaServerFlag = &cli.StringFlag{
-		Name:    CelestiaServerFlagName,
+	CelestiaBridgeAddrFlag = &cli.StringFlag{
+		Name:    CelestiaBridgeAddrFlagName,
 		Usage:   "celestia server endpoint",
 		Value:   "http://localhost:26658",
-		EnvVars: prefixEnvVars("CELESTIA_SERVER"),
+		EnvVars: prefixEnvVars("CELESTIA_BRIDGE_ADDR"),
 	}
-	CelestiaAuthTokenFlag = &cli.StringFlag{
-		Name:    CelestiaAuthTokenFlagName,
+	CelestiaBridgeDATLSEnabledFlag = &cli.BoolFlag{
+		Name:    CelestiaBridgeDATLSEnabledFlagName,
+		Usage:   "enable DA TLS",
+		EnvVars: prefixEnvVars("CELESTIA_BRIDGE_TLS_ENABLED"),
+		Value:   false,
+	}
+	CelestiaBridgeAuthTokenFlag = &cli.StringFlag{
+		Name:    CelestiaBridgeAuthTokenFlagName,
 		Usage:   "celestia auth token",
 		Value:   "",
-		EnvVars: prefixEnvVars("CELESTIA_AUTH_TOKEN"),
+		EnvVars: prefixEnvVars("CELESTIA_BRIDGE_AUTH_TOKEN"),
 	}
 	CelestiaNamespaceFlag = &cli.StringFlag{
 		Name:    CelestiaNamespaceFlagName,
 		Usage:   "celestia namespace",
 		Value:   "",
 		EnvVars: prefixEnvVars("CELESTIA_NAMESPACE"),
+	}
+	CelestiaDefaultKeyNameFlag = &cli.StringFlag{
+		Name:    CelestiaDefaultKeyNameFlagName,
+		Usage:   "celestia default key name",
+		Value:   "my_celes_key",
+		EnvVars: prefixEnvVars("CELESTIA_DEFAULT_KEY_NAME"),
+	}
+	CelestiaKeyringPathFlag = &cli.StringFlag{
+		Name:    CelestiaKeyringPathFlagName,
+		Usage:   "celestia keyring path",
+		Value:   "",
+		EnvVars: prefixEnvVars("CELESTIA_KEYRING_PATH"),
+	}
+	CelestiaCoreGRPCAddrFlag = &cli.StringFlag{
+		Name:    CelestiaCoreGRPCAddrFlagName,
+		Usage:   "celestia core grpc addr",
+		Value:   "http://localhost:9090",
+		EnvVars: prefixEnvVars("CELESTIA_CORE_GRPC_ADDR"),
+	}
+	CelestiaCoreGRPCTLSEnabledFlag = &cli.BoolFlag{
+		Name:    CelestiaCoreGRPCTLSEnabledFlagName,
+		Usage:   "enable core grpc TLS",
+		EnvVars: prefixEnvVars("CELESTIA_CORE_GRPC_TLS_ENABLED"),
+		Value:   false,
+	}
+	CelestiaCoreGRPCAuthTokenFlag = &cli.StringFlag{
+		Name:    CelestiaCoreGRPCAuthTokenFlagName,
+		Usage:   "celestia core grpc auth token",
+		Value:   "",
+		EnvVars: prefixEnvVars("CELESTIA_CORE_GRPC_AUTH_TOKEN"),
+	}
+	CelestiaP2PNetworkFlag = &cli.StringFlag{
+		Name:    CelestiaP2PNetworkFlagName,
+		Usage:   "celestia p2p network",
+		Value:   "mocha",
+		EnvVars: prefixEnvVars("CELESTIA_P2P_NETWORK"),
 	}
 	S3CredentialTypeFlag = &cli.StringFlag{
 		Name:    S3CredentialTypeFlagName,
@@ -136,9 +185,16 @@ var requiredFlags = []cli.Flag{
 
 var optionalFlags = []cli.Flag{
 	GenericCommFlag,
-	CelestiaServerFlag,
-	CelestiaAuthTokenFlag,
+	CelestiaBridgeAddrFlag,
+	CelestiaBridgeDATLSEnabledFlag,
+	CelestiaBridgeAuthTokenFlag,
 	CelestiaNamespaceFlag,
+	CelestiaDefaultKeyNameFlag,
+	CelestiaKeyringPathFlag,
+	CelestiaCoreGRPCAddrFlag,
+	CelestiaCoreGRPCTLSEnabledFlag,
+	CelestiaCoreGRPCAuthTokenFlag,
+	CelestiaP2PNetworkFlag,
 	S3CredentialTypeFlag,
 	S3BucketFlag,
 	S3PathFlag,
@@ -177,10 +233,17 @@ type CLIConfig struct {
 
 func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 	return CLIConfig{
-		UseGenericComm: ctx.Bool(GenericCommFlagName),
-		DAAddr:         ctx.String(CelestiaServerFlagName),
-		DAAuthToken:    ctx.String(CelestiaAuthTokenFlagName),
-		Namespace:      ctx.String(CelestiaNamespaceFlagName),
+		UseGenericComm:     ctx.Bool(GenericCommFlagName),
+		DAAddr:             ctx.String(CelestiaBridgeAddrFlagName),
+		DATLSEnabled:       ctx.Bool(CelestiaBridgeDATLSEnabledFlagName),
+		DAAuthToken:        ctx.String(CelestiaBridgeAuthTokenFlagName),
+		Namespace:          ctx.String(CelestiaNamespaceFlagName),
+		DefaultKeyName:     ctx.String(CelestiaDefaultKeyNameFlagName),
+		KeyringPath:        ctx.String(CelestiaKeyringPathFlagName),
+		CoreGRPCAddr:       ctx.String(CelestiaCoreGRPCAddrFlagName),
+		CoreGRPCTLSEnabled: ctx.Bool(CelestiaCoreGRPCTLSEnabledFlagName),
+		CoreGRPCAuthToken:  ctx.String(CelestiaCoreGRPCAuthTokenFlagName),
+		P2PNetwork:         ctx.String(CelestiaP2PNetworkFlagName),
 		S3Config: s3.S3Config{
 			S3CredentialType: toS3CredentialType(ctx.String(S3CredentialTypeFlagName)),
 			Bucket:           ctx.String(S3BucketFlagName),
@@ -196,7 +259,7 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 }
 
 func (c CLIConfig) Check() error {
-	if c.CelestiaEnabled() && (c.DAAddr == "" || c.DAAuthToken == "" || c.Namespace == "") {
+	if c.CelestiaEnabled() && (c.DAAddr == "" || c.Namespace == "") {
 		return errors.New("all Celestia flags must be set")
 	}
 	if c.CelestiaEnabled() {
@@ -210,16 +273,16 @@ func (c CLIConfig) Check() error {
 func (c CLIConfig) CelestiaConfig() celestia.CelestiaConfig {
 	ns, _ := hex.DecodeString(c.Namespace)
 	return celestia.CelestiaConfig{
-		DAAddr:       c.DAAddr,
-		DATLSEnabled: c.DATLSEnabled,
-		DAAuthToken:  c.DAAuthToken,
-		Namespace:    ns,
-		DefaultKeyName: c.DefaultKeyName,
-		KeyringPath: c.KeyringPath,
-		CoreGRPCAddr: c.CoreGRPCAddr,
+		DAAddr:             c.DAAddr,
+		DATLSEnabled:       c.DATLSEnabled,
+		DAAuthToken:        c.DAAuthToken,
+		Namespace:          ns,
+		DefaultKeyName:     c.DefaultKeyName,
+		KeyringPath:        c.KeyringPath,
+		CoreGRPCAddr:       c.CoreGRPCAddr,
 		CoreGRPCTLSEnabled: c.CoreGRPCTLSEnabled,
-		CoreGRPCAuthToken: c.CoreGRPCAuthToken,
-		P2PNetwork: c.P2PNetwork,
+		CoreGRPCAuthToken:  c.CoreGRPCAuthToken,
+		P2PNetwork:         c.P2PNetwork,
 	}
 }
 
