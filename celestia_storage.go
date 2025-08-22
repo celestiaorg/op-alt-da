@@ -124,7 +124,6 @@ func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 func (d *CelestiaStore) Put(ctx context.Context, data []byte) ([]byte, error) {
 	b, err := blob.NewBlob(libshare.ShareVersionZero, d.Namespace, data, nil)
 	if err != nil {
-		fmt.Println("failed to create blob:", err)
 		return nil, err
 	}
 	height, err := d.Client.Blob.Submit(ctx, []*blob.Blob{b}, state.NewTxConfig())
