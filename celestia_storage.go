@@ -97,7 +97,10 @@ func NewCelestiaStore(cfg CelestiaConfig) *CelestiaStore {
 	if err != nil {
 		log.Crit("failed to create celestia client", "err", err)
 	}
-	namespace := libshare.MustNewV0Namespace(cfg.Namespace)
+	namespace, err := libshare.NewNamespaceFromBytes(cfg.Namespace)
+	if err != nil {
+		log.Crit("failed to parse namespace", "err", err)
+	}
 	return &CelestiaStore{
 		Log:        Log,
 		Client:     client,
