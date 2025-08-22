@@ -259,7 +259,7 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 }
 
 func (c CLIConfig) Check() error {
-	if c.CelestiaEnabled() && (c.DAAddr == "" || c.Namespace == "") {
+	if c.CelestiaEnabled() && (c.DAAddr == "" || c.DAAuthToken == "" || c.Namespace == "") {
 		return errors.New("all Celestia flags must be set")
 	}
 	if c.CelestiaEnabled() {
