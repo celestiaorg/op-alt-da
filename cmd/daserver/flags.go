@@ -76,7 +76,7 @@ var (
 		Name:    CelestiaBridgeDATLSEnabledFlagName,
 		Usage:   "enable DA TLS",
 		EnvVars: prefixEnvVars("CELESTIA_BRIDGE_TLS_ENABLED"),
-		Value:   false,
+		Value:   true,
 	}
 	CelestiaBridgeAuthTokenFlag = &cli.StringFlag{
 		Name:    CelestiaBridgeAuthTokenFlagName,
@@ -112,7 +112,7 @@ var (
 		Name:    CelestiaCoreGRPCTLSEnabledFlagName,
 		Usage:   "enable core grpc TLS",
 		EnvVars: prefixEnvVars("CELESTIA_CORE_GRPC_TLS_ENABLED"),
-		Value:   false,
+		Value:   true,
 	}
 	CelestiaCoreGRPCAuthTokenFlag = &cli.StringFlag{
 		Name:    CelestiaCoreGRPCAuthTokenFlagName,
@@ -179,22 +179,22 @@ var (
 	}
 )
 var requiredFlags = []cli.Flag{
-	ListenAddrFlag,
-	PortFlag,
+	CelestiaBridgeAddrFlag,
+	CelestiaBridgeAuthTokenFlag,
+	CelestiaNamespaceFlag,
+	CelestiaCoreGRPCAddrFlag,
+	CelestiaCoreGRPCAuthTokenFlag,
+	CelestiaP2PNetworkFlag,
 }
 
 var optionalFlags = []cli.Flag{
+	ListenAddrFlag,
+	PortFlag,
 	GenericCommFlag,
-	CelestiaBridgeAddrFlag,
 	CelestiaBridgeDATLSEnabledFlag,
-	CelestiaBridgeAuthTokenFlag,
-	CelestiaNamespaceFlag,
+	CelestiaCoreGRPCTLSEnabledFlag,
 	CelestiaDefaultKeyNameFlag,
 	CelestiaKeyringPathFlag,
-	CelestiaCoreGRPCAddrFlag,
-	CelestiaCoreGRPCTLSEnabledFlag,
-	CelestiaCoreGRPCAuthTokenFlag,
-	CelestiaP2PNetworkFlag,
 	S3CredentialTypeFlag,
 	S3BucketFlag,
 	S3PathFlag,
