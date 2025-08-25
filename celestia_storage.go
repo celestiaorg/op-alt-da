@@ -40,9 +40,9 @@ func SplitID(id []byte) (uint64, []byte) {
 }
 
 type CelestiaConfig struct {
-	DAAddr             string
-	DATLSEnabled       bool
-	DAAuthToken        string
+	URL                string
+	TLSEnabled         bool
+	AuthToken          string
 	Namespace          []byte
 	DefaultKeyName     string
 	KeyringPath        string
@@ -77,9 +77,9 @@ func NewCelestiaStore(cfg CelestiaConfig) *CelestiaStore {
 	// Configure client
 	config := client.Config{
 		ReadConfig: client.ReadConfig{
-			BridgeDAAddr: cfg.DAAddr,
-			DAAuthToken:  cfg.DAAuthToken,
-			EnableDATLS:  cfg.DATLSEnabled,
+			BridgeDAAddr: cfg.URL,
+			DAAuthToken:  cfg.AuthToken,
+			EnableDATLS:  cfg.TLSEnabled,
 		},
 		SubmitConfig: client.SubmitConfig{
 			DefaultKeyName: cfg.DefaultKeyName,

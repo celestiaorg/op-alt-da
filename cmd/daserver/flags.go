@@ -4,6 +4,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/urfave/cli/v2"
@@ -19,9 +21,9 @@ const (
 	ListenAddrFlagName                 = "addr"
 	PortFlagName                       = "port"
 	GenericCommFlagName                = "generic-commitment"
-	CelestiaBridgeAddrFlagName         = "celestia.bridge.addr"
-	CelestiaBridgeDATLSEnabledFlagName = "celestia.bridge.tls.enabled"
-	CelestiaBridgeAuthTokenFlagName    = "celestia.bridge.auth-token"
+	CelestiaAddrFlagName               = "celestia.addr"
+	CelestiaTLSEnabledFlagName         = "celestia.tls-enabled"
+	CelestiaAuthTokenFlagName          = "celestia.auth-token"
 	CelestiaNamespaceFlagName          = "celestia.namespace"
 	CelestiaDefaultKeyNameFlagName     = "celestia.keyring.default-key-name"
 	CelestiaKeyringPathFlagName        = "celestia.keyring.path"
@@ -41,22 +43,47 @@ const (
 	CacheFlagName             = "routing.cache"
 )
 
-const EnvVarPrefix = "OP_ALT_DA_SERVER"
+const EnvVarPrefix = "OP_ALTDA"
 
 func prefixEnvVars(name string) []string {
 	return opservice.PrefixEnvVar(EnvVarPrefix, name)
 }
 
+// DefaultKeyringPath constructs the default keyring path using the given
+// node type and network.
+var DefaultKeyringPath = func(tp string, network string) (string, error) {
+	home := os.Getenv("CELESTIA_HOME")
+	if home != "" {
+		return home, nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	if network == "mainnet" {
+		return fmt.Sprintf("%s/.celestia-%s/keys", home, strings.ToLower(tp)), nil
+	}
+	// only include network name in path for testnets and custom networks
+	return fmt.Sprintf(
+		"%s/.celestia-%s-%s/keys",
+		home,
+		strings.ToLower(tp),
+		strings.ToLower(network),
+	), nil
+}
+
 var (
 	ListenAddrFlag = &cli.StringFlag{
 		Name:    ListenAddrFlagName,
-		Usage:   "server listening address",
+		Usage:   "alt da server listening address",
 		Value:   "127.0.0.1",
 		EnvVars: prefixEnvVars("ADDR"),
 	}
 	PortFlag = &cli.IntFlag{
 		Name:    PortFlagName,
-		Usage:   "server listening port",
+		Usage:   "alt da server listening port",
 		Value:   3100,
 		EnvVars: prefixEnvVars("PORT"),
 	}
@@ -66,23 +93,23 @@ var (
 		EnvVars: prefixEnvVars("GENERIC_COMMITMENT"),
 		Value:   true,
 	}
-	CelestiaBridgeAddrFlag = &cli.StringFlag{
-		Name:    CelestiaBridgeAddrFlagName,
-		Usage:   "celestia server endpoint",
+	CelestiaAddrFlag = &cli.StringFlag{
+		Name:    CelestiaAddrFlagName,
+		Usage:   "celestia rpc endpoint",
 		Value:   "http://localhost:26658",
-		EnvVars: prefixEnvVars("CELESTIA_BRIDGE_ADDR"),
+		EnvVars: prefixEnvVars("CELESTIA_ADDR"),
 	}
-	CelestiaBridgeDATLSEnabledFlag = &cli.BoolFlag{
-		Name:    CelestiaBridgeDATLSEnabledFlagName,
-		Usage:   "enable DA TLS",
-		EnvVars: prefixEnvVars("CELESTIA_BRIDGE_TLS_ENABLED"),
+	CelestiaTLSEnabledFlag = &cli.BoolFlag{
+		Name:    CelestiaTLSEnabledFlagName,
+		Usage:   "celestia rpc TLS",
+		EnvVars: prefixEnvVars("CELESTIA_TLS_ENABLED"),
 		Value:   true,
 	}
-	CelestiaBridgeAuthTokenFlag = &cli.StringFlag{
-		Name:    CelestiaBridgeAuthTokenFlagName,
-		Usage:   "celestia auth token",
+	CelestiaAuthTokenFlag = &cli.StringFlag{
+		Name:    CelestiaAuthTokenFlagName,
+		Usage:   "celestia rpc auth token",
 		Value:   "",
-		EnvVars: prefixEnvVars("CELESTIA_BRIDGE_AUTH_TOKEN"),
+		EnvVars: prefixEnvVars("CELESTIA_AUTH_TOKEN"),
 	}
 	CelestiaNamespaceFlag = &cli.StringFlag{
 		Name:    CelestiaNamespaceFlagName,
@@ -98,7 +125,7 @@ var (
 	}
 	CelestiaKeyringPathFlag = &cli.StringFlag{
 		Name:    CelestiaKeyringPathFlagName,
-		Usage:   "celestia keyring path",
+		Usage:   "celestia keyring path e.g. ~/.celestia-light-mocha-4/keys",
 		Value:   "",
 		EnvVars: prefixEnvVars("CELESTIA_KEYRING_PATH"),
 	}
@@ -123,8 +150,16 @@ var (
 	CelestiaP2PNetworkFlag = &cli.StringFlag{
 		Name:    CelestiaP2PNetworkFlagName,
 		Usage:   "celestia p2p network",
-		Value:   "mocha",
+		Value:   "mocha-4",
 		EnvVars: prefixEnvVars("CELESTIA_P2P_NETWORK"),
+		Action: func(c *cli.Context, network string) error {
+			keyringPath, err := DefaultKeyringPath("light", network)
+			if err != nil {
+				return err
+			}
+			c.Set(CelestiaKeyringPathFlagName, keyringPath)
+			return nil
+		},
 	}
 	S3CredentialTypeFlag = &cli.StringFlag{
 		Name:    S3CredentialTypeFlagName,
@@ -179,11 +214,10 @@ var (
 	}
 )
 var requiredFlags = []cli.Flag{
-	CelestiaBridgeAddrFlag,
-	CelestiaBridgeAuthTokenFlag,
+	CelestiaAddrFlag,
+	CelestiaAuthTokenFlag,
 	CelestiaNamespaceFlag,
 	CelestiaCoreGRPCAddrFlag,
-	CelestiaCoreGRPCAuthTokenFlag,
 	CelestiaP2PNetworkFlag,
 }
 
@@ -191,8 +225,9 @@ var optionalFlags = []cli.Flag{
 	ListenAddrFlag,
 	PortFlag,
 	GenericCommFlag,
-	CelestiaBridgeDATLSEnabledFlag,
+	CelestiaTLSEnabledFlag,
 	CelestiaCoreGRPCTLSEnabledFlag,
+	CelestiaCoreGRPCAuthTokenFlag,
 	CelestiaDefaultKeyNameFlag,
 	CelestiaKeyringPathFlag,
 	S3CredentialTypeFlag,
@@ -216,10 +251,10 @@ var Flags []cli.Flag
 
 type CLIConfig struct {
 	UseGenericComm     bool
-	DAAddr             string
-	DATLSEnabled       bool
-	DAAuthToken        string
-	Namespace          string
+	CelestiaEndpoint   string
+	CelestiaTLSEnabled bool
+	CelestiaAuthToken  string
+	CelestiaNamespace  string
 	DefaultKeyName     string
 	KeyringPath        string
 	CoreGRPCAddr       string
@@ -234,10 +269,10 @@ type CLIConfig struct {
 func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 	return CLIConfig{
 		UseGenericComm:     ctx.Bool(GenericCommFlagName),
-		DAAddr:             ctx.String(CelestiaBridgeAddrFlagName),
-		DATLSEnabled:       ctx.Bool(CelestiaBridgeDATLSEnabledFlagName),
-		DAAuthToken:        ctx.String(CelestiaBridgeAuthTokenFlagName),
-		Namespace:          ctx.String(CelestiaNamespaceFlagName),
+		CelestiaEndpoint:   ctx.String(CelestiaAddrFlagName),
+		CelestiaTLSEnabled: ctx.Bool(CelestiaTLSEnabledFlagName),
+		CelestiaAuthToken:  ctx.String(CelestiaAuthTokenFlagName),
+		CelestiaNamespace:  ctx.String(CelestiaNamespaceFlagName),
 		DefaultKeyName:     ctx.String(CelestiaDefaultKeyNameFlagName),
 		KeyringPath:        ctx.String(CelestiaKeyringPathFlagName),
 		CoreGRPCAddr:       ctx.String(CelestiaCoreGRPCAddrFlagName),
@@ -259,11 +294,11 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 }
 
 func (c CLIConfig) Check() error {
-	if c.CelestiaEnabled() && (c.DAAddr == "" || c.DAAuthToken == "" || c.Namespace == "") {
+	if c.CelestiaEnabled() && (c.CelestiaEndpoint == "" || c.CelestiaAuthToken == "" || c.CelestiaNamespace == "") {
 		return errors.New("all Celestia flags must be set")
 	}
 	if c.CelestiaEnabled() {
-		if _, err := hex.DecodeString(c.Namespace); err != nil {
+		if _, err := hex.DecodeString(c.CelestiaNamespace); err != nil {
 			return err
 		}
 	}
@@ -271,11 +306,11 @@ func (c CLIConfig) Check() error {
 }
 
 func (c CLIConfig) CelestiaConfig() celestia.CelestiaConfig {
-	ns, _ := hex.DecodeString(c.Namespace)
+	ns, _ := hex.DecodeString(c.CelestiaNamespace)
 	return celestia.CelestiaConfig{
-		DAAddr:             c.DAAddr,
-		DATLSEnabled:       c.DATLSEnabled,
-		DAAuthToken:        c.DAAuthToken,
+		URL:                c.CelestiaEndpoint,
+		TLSEnabled:         c.CelestiaTLSEnabled,
+		AuthToken:          c.CelestiaAuthToken,
 		Namespace:          ns,
 		DefaultKeyName:     c.DefaultKeyName,
 		KeyringPath:        c.KeyringPath,
@@ -287,7 +322,7 @@ func (c CLIConfig) CelestiaConfig() celestia.CelestiaConfig {
 }
 
 func (c CLIConfig) CelestiaEnabled() bool {
-	return !(c.DAAddr == "" && c.DAAuthToken == "" && c.Namespace == "")
+	return !(c.CelestiaEndpoint == "" && c.CelestiaAuthToken == "" && c.CelestiaNamespace == "")
 }
 
 func (c CLIConfig) CacheEnabled() bool {

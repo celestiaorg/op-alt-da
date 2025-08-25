@@ -37,7 +37,7 @@ func StartDAServer(cliCtx *cli.Context) error {
 
 	switch {
 	case cfg.CelestiaEnabled():
-		l.Info("Using celestia storage", "url", cfg.CelestiaConfig().DAAddr)
+		l.Info("Using celestia storage", "url", cfg.CelestiaConfig().URL)
 		store := celestia.NewCelestiaStore(cfg.CelestiaConfig())
 		l.Info("Using s3 storage", "config", cfg.S3Config)
 		s3Store, err := s3.NewS3(cfg.S3Config)
