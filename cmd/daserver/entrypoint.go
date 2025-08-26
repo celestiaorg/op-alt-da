@@ -7,8 +7,8 @@ import (
 
 	celestia "github.com/celestiaorg/op-alt-da"
 	s3 "github.com/celestiaorg/op-alt-da/s3"
+	"github.com/ethereum-optimism/optimism/op-service/ctxinterrupt"
 	oplog "github.com/ethereum-optimism/optimism/op-service/log"
-	"github.com/ethereum-optimism/optimism/op-service/opio"
 )
 
 type Server interface {
@@ -59,7 +59,7 @@ func StartDAServer(cliCtx *cli.Context) error {
 		}
 	}()
 
-	opio.BlockOnInterrupts()
+	ctxinterrupt.Wait(cliCtx.Context)
 
 	return nil
 }

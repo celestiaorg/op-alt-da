@@ -8,27 +8,37 @@ commitments.
 The `da-server` connects to a celestia-node running as a sidecar process.
 
 celestia da-server accepts the following flags for celestia storage using
-[celestia-openrpc](https://github.com/celestiaorg/celestia-openrpc)
+[celestia go client](https://docs.celestia.org/how-to-guides/client/go#create-main-go)
 
 ````
-    --celestia.auth-token value                                            ($OP_ALT_DA_SERVER_CELESTIA_AUTH_TOKEN)
-          celestia auth token
-
-    --celestia.namespace value                                             ($OP_ALT_DA_SERVER_CELESTIA_NAMESPACE)
-          celestia namespace
-
-    --celestia.server value             (default: "http://localhost:26658") ($OP_ALT_DA_SERVER_CELESTIA_SERVER)
-          celestia server endpoint
-
-    --s3.credential-type                                            $OP_ALT_DA_S3_CREDENTIAL_TYPE	Static or iam.
-    --s3.access-key-id                                            $OP_ALT_DA_S3_ACCESS_KEY_ID	Access key id for S3 storage.
-    --s3.access-key-id                                            $OP_ALT_DA_S3_ACCESS_KEY_ID	Access key id for S3 storage.
-    --s3.access-key-secret                                            $OP_ALT_DA_S3_ACCESS_KEY_SECRET	Access key secret for S3 storage.
-    --s3.bucket                                            $OP_ALT_DA_S3_BUCKET	Bucket name for S3 storage.
-    --s3.path                                            $OP_ALT_DA_S3_PATH
-    --routing.fallback          (default: false)	$OP_ALT_DA_FALLBACK_TARGET	Fall back backend target. Supports S3.
-    --routing.cache             (default: false)	$OP_ALT_DA_CACHE
-
+   --celestia.addr value                      celestia rpc endpoint (default: "http://localhost:26658") [$OP_ALTDA_CELESTIA_ADDR]
+   --celestia.auth-token value                celestia rpc auth token [$OP_ALTDA_CELESTIA_AUTH_TOKEN]
+   --celestia.namespace value                 celestia namespace [$OP_ALTDA_CELESTIA_NAMESPACE]
+   --celestia.core.grpc.addr value            celestia core grpc addr (default: "http://localhost:9090") [$OP_ALTDA_CELESTIA_CORE_GRPC_ADDR]
+   --celestia.p2p-network value               celestia p2p network (default: "mocha-4") [$OP_ALTDA_CELESTIA_P2P_NETWORK]
+   --addr value                               alt da server listening address (default: "127.0.0.1") [$OP_ALTDA_ADDR]
+   --port value                               alt da server listening port (default: 3100) [$OP_ALTDA_PORT]
+   --generic-commitment                       enable generic commitments for testing. Not for production use. (default: true) [$OP_ALTDA_GENERIC_COMMITMENT]
+   --celestia.tls-enabled                     celestia rpc TLS (default: true) [$OP_ALTDA_CELESTIA_TLS_ENABLED]
+   --celestia.core.grpc.tls-enabled           enable core grpc TLS (default: true) [$OP_ALTDA_CELESTIA_CORE_GRPC_TLS_ENABLED]
+   --celestia.core.grpc.auth-token value      celestia core grpc auth token [$OP_ALTDA_CELESTIA_CORE_GRPC_AUTH_TOKEN]
+   --celestia.keyring.default-key-name value  celestia default key name (default: "my_celes_key") [$OP_ALTDA_CELESTIA_DEFAULT_KEY_NAME]
+   --celestia.keyring.path value              celestia keyring path e.g. ~/.celestia-light-mocha-4/keys [$OP_ALTDA_CELESTIA_KEYRING_PATH]
+   --s3.credential-type value                 The way to authenticate to S3, options are [iam, static] [$OP_ALTDA_S3_CREDENTIAL_TYPE]
+   --s3.bucket value                          bucket name for S3 storage [$OP_ALTDA_S3_BUCKET]
+   --s3.path value                            path for S3 storage [$OP_ALTDA_S3_PATH]
+   --s3.endpoint value                        endpoint for S3 storage [$OP_ALTDA_S3_ENDPOINT]
+   --s3.access-key-id value                   access key id for S3 storage [$OP_ALTDA_S3_ACCESS_KEY_ID]
+   --s3.access-key-secret value               access key secret for S3 storage [$OP_ALTDA_S3_ACCESS_KEY_SECRET]
+   --s3.timeout value                         S3 timeout (default: 5s) [$OP_ALTDA_S3_TIMEOUT]
+   --routing.fallback                         Enable fallback (default: false) [$OP_ALTDA_FALLBACK]
+   --routing.cache                            Enable cache. (default: false) [$OP_ALTDA_CACHE]
+   --log.level value                          The lowest log level that will be output (default: INFO) [$OP_ALTDA_LOG_LEVEL]
+   --log.format value                         Format the log output. Supported formats: 'text', 'terminal', 'logfmt', 'json', 'json-pretty', (default: text) [$OP_ALTDA_LOG_FORMAT]
+   --log.color                                Color the log output if in terminal mode (default: false) [$OP_ALTDA_LOG_COLOR]
+   --log.pid                                  Show pid in the log (default: false) [$OP_ALTDA_LOG_PID]
+   --help, -h                                 show help
+   --version, -v                              print the version
 ````
 
 The celestia server endpoint should be set to the celestia-node rpc server,
@@ -251,7 +261,7 @@ op-batcher
 ```sh
 da-server
       --generic-commitment=true
-      --celestia.server=http://localhost:26658
+      --celestia.addr=http://localhost:26658
       --celestia.auth-token=$CELESTIA_NODE_AUTH_TOKEN
       --celestia.namespace=$NAMESPACE
 ```
@@ -271,3 +281,20 @@ Additionally verify that the batcher is able to submit transactions to the celes
 ```sh
 docker logs -f ops-bedrock-op-batcher-1
 ```
+
+If you see the following error:
+
+```
+panic: runtime error: invalid memory address or nil pointer dereference
+[signal SIGSEGV: segmentation violation code=0x2 addr=0x0 pc=0x10964251c]
+
+goroutine 1 [running]:
+github.com/celestiaorg/celestia-node/api/client.(*Client).Close(0x140005daaf0)
+        /Users/tuxcanfly/Work/celestia-node/api/client/client.go:147 +0x2c
+```
+
+it means that the client was not able to connect to the core gRPC server,
+please ensure your `--celestia.core.grpc.addr`,
+`--celestia.core.grpc.auth-token` and `--celestia.core.grpc.tls-enabled` flags are correct.
+Note that boolean flags like `--celestia.tls-enabled` and `--celestia.tls-enabled` should be set as
+`--celestia.tls-enabled=false` and `--celestia.core.grpc.tls-enabled=true` respectively, for example.
