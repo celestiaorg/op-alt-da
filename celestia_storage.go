@@ -19,24 +19,30 @@ import (
 
 const VersionByte = 0x0c
 
-// heightLen is a length (in bytes) of serialized height.
-//
-// This is 8 as uint64 consist of 8 bytes.
-const heightLen = 8
+const commitmentOffset = 8
+const commitmentSize = 32
+// idLen is the length of the on-chain identifier to the celestia blob (in bytes).
+// 8 bytes for the height ++ 32 bytes for the commitment ++ 4 bytes for the offset ++ 4 bytes for the length
+const idLen = commitmentOffset + commitmentSize + 4 + 4
 
-func MakeID(height uint64, commitment []byte) []byte {
-	id := make([]byte, heightLen+len(commitment))
+func MakeID(height uint64, commitment []byte, shareOffset, shareSize uint32) []byte {
+	id := make([]byte, idLen)
 	binary.LittleEndian.PutUint64(id, height)
-	copy(id[heightLen:], commitment)
+	copy(id[commitmentOffset:commitmentOffset+commitmentSize], commitment)
+	binary.LittleEndian.PutUint32(id[commitmentOffset+commitmentSize:commitmentOffset+commitmentSize+4], shareOffset)
+	binary.LittleEndian.PutUint32(id[commitmentOffset+commitmentSize+4:commitmentOffset+commitmentSize+8], shareSize)
 	return id
 }
 
-func SplitID(id []byte) (uint64, []byte) {
-	if len(id) <= heightLen {
-		return 0, nil
+func SplitID(id []byte) (uint64, uint32, uint32, []byte) {
+	if len(id) < idLen {
+		return 0, 0, 0, nil
 	}
-	commitment := id[heightLen:]
-	return binary.LittleEndian.Uint64(id[:heightLen]), commitment
+	height := binary.LittleEndian.Uint64(id[:commitmentOffset])
+	commitment := id[commitmentOffset : commitmentOffset+commitmentSize]
+	shareOffset := binary.LittleEndian.Uint32(id[commitmentOffset+commitmentSize : commitmentOffset+commitmentSize+4])
+	shareSize := binary.LittleEndian.Uint32(id[commitmentOffset+commitmentSize+4 : commitmentOffset+commitmentSize+8])
+	return height, shareOffset, shareSize, commitment
 }
 
 type CelestiaConfig struct {
@@ -112,7 +118,7 @@ func NewCelestiaStore(cfg CelestiaConfig) *CelestiaStore {
 func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	log.Info("celestia: blob request", "id", hex.EncodeToString(key))
 	ctx, cancel := context.WithTimeout(context.Background(), d.GetTimeout)
-	height, commitment := SplitID(key[2:])
+	height, _, _, commitment := SplitID(key[2:])
 	blob, err := d.Client.Blob.Get(ctx, height, d.Namespace, commitment)
 	cancel()
 	if err != nil {
@@ -130,13 +136,22 @@ func (d *CelestiaStore) Put(ctx context.Context, data []byte) ([]byte, error) {
 		return nil, err
 	}
 	height, err := d.Client.Blob.Submit(ctx, []*blob.Blob{b}, state.NewTxConfig())
-	if err == nil {
-		id := MakeID(height, b.Commitment)
-		d.Log.Info("celestia: blob successfully submitted", "id", hex.EncodeToString(id))
-		commitment := altda.NewGenericCommitment(append([]byte{VersionByte}, id...))
-		return commitment.Encode(), nil
+	if err != nil {
+		return nil, err
 	}
-	return nil, err
+	b, err = d.Client.Blob.Get(ctx, height, d.Namespace, b.Commitment)
+	if err != nil {
+		return nil, err
+	}
+	index := b.Index()
+	size, err := b.Length()
+	if err != nil {
+		return nil, err
+	}
+	id := MakeID(height, b.Commitment, uint32(index), uint32(size))
+	d.Log.Info("celestia: blob successfully submitted", "id", hex.EncodeToString(id))
+	commitment := altda.NewGenericCommitment(append([]byte{VersionByte}, id...))
+	return commitment.Encode(), nil
 }
 
 func (d *CelestiaStore) CreateCommitment(data []byte) ([]byte, error) {
