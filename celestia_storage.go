@@ -115,8 +115,11 @@ func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	height, commitment := SplitID(key[2:])
 	blob, err := d.Client.Blob.Get(ctx, height, d.Namespace, commitment)
 	cancel()
-	if err != nil || blob == nil {
+	if err != nil {
 		return nil, fmt.Errorf("celestia: failed to resolve frame: %w", err)
+	}
+	if blob == nil {
+		return nil, fmt.Errorf("celestia: failed to resolve frame: nil blob")
 	}
 	return blob.Data(), nil
 }
