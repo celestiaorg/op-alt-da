@@ -44,7 +44,15 @@ func (id *CelestiaBlobID) UnmarshalBinary(data []byte) error {
 	// Expected length: 8 bytes for Height + 32 bytes for Commitment + 4 bytes for ShareOffset + 4 bytes for ShareSize
 	expectedLen := 8 + 32 + 4 + 4
 	if len(data) < expectedLen {
-		return fmt.Errorf("invalid ID length: expected at least %d bytes, got %d", expectedLen, len(data))
+		// Expected length: 8 bytes for Height + 32 bytes for Commitment
+		expectedLen = 8 + 32
+		if len(data) < expectedLen {
+			return fmt.Errorf("invalid ID length: expected at least %d bytes, got %d", expectedLen, len(data))
+		}
+		id.Height = binary.LittleEndian.Uint64(data[0:8])
+		id.Commitment = make([]byte, 32)
+		copy(id.Commitment, data[8:40]) // Commitment is 32 bytes
+		return nil
 	}
 
 	id.Height = binary.LittleEndian.Uint64(data[0:8])
