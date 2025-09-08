@@ -56,7 +56,7 @@ func TestCelestiaBlobIDMarshalUnmarshal(t *testing.T) {
 	assert.True(t, bytes.Equal(id2.Commitment, unmarshaled2.Commitment))
 
 	// Test case 3: Invalid length for UnmarshalBinary
-	invalidData := make([]byte, 40) // Too short
+	invalidData := make([]byte, 32) // Too short
 	var invalidID CelestiaBlobID
 	err = invalidID.UnmarshalBinary(invalidData)
 	require.Error(t, err)
