@@ -55,7 +55,24 @@ func TestCelestiaBlobIDMarshalUnmarshal(t *testing.T) {
 	assert.Equal(t, id2.ShareSize, unmarshaled2.ShareSize)
 	assert.True(t, bytes.Equal(id2.Commitment, unmarshaled2.Commitment))
 
-	// Test case 3: Invalid length for UnmarshalBinary
+	// Test case 3: Legacy id format (height, commitment) 8 + 32 = 40 bytes
+	commitment3 := make([]byte, 32)
+	rnd.Read(commitment1)
+	id3 := CelestiaBlobID{
+		Height:      rnd.Uint64(),
+		Commitment:  commitment3,
+		ShareOffset: rnd.Uint32(),
+		ShareSize:   rnd.Uint32(),
+	}
+	marshaled3, err := id3.MarshalBinary()
+	require.NoError(t, err)
+	var unmarshaled3 CelestiaBlobID
+	err = unmarshaled3.UnmarshalBinary(marshaled3[:40])
+	require.NoError(t, err)
+	require.Equal(t, unmarshaled3.ShareOffset, uint32(0))
+	require.Equal(t, unmarshaled3.ShareSize, uint32(0))
+
+	// Test case 4: Invalid length for UnmarshalBinary
 	invalidData := make([]byte, 32) // Too short
 	var invalidID CelestiaBlobID
 	err = invalidID.UnmarshalBinary(invalidData)
