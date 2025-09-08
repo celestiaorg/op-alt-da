@@ -26,21 +26,21 @@ type CelestiaBlobID struct {
 }
 
 // MarshalBinary serializes the CelestiaBlobID struct into a byte slice.
-func (id *CelestiaBlobID) MarshalBinary() ([]byte, error) {
+func (c *CelestiaBlobID) MarshalBinary() ([]byte, error) {
 	// Calculate the total length of the marshaled ID
 	// 8 bytes for Height + 32 bytes for Commitment + 4 bytes for ShareOffset + 4 bytes for ShareSize
-	marshaledID := make([]byte, 8+32+4+4)
+	id := make([]byte, 8+32+4+4)
 
-	binary.LittleEndian.PutUint64(marshaledID[0:8], id.Height)
-	copy(marshaledID[8:40], id.Commitment) // Commitment is 32 bytes
-	binary.LittleEndian.PutUint32(marshaledID[40:44], id.ShareOffset)
-	binary.LittleEndian.PutUint32(marshaledID[44:48], id.ShareSize)
+	binary.LittleEndian.PutUint64(id[0:8], c.Height)
+	copy(id[8:40], c.Commitment) // Commitment is 32 bytes
+	binary.LittleEndian.PutUint32(id[40:44], c.ShareOffset)
+	binary.LittleEndian.PutUint32(id[44:48], c.ShareSize)
 
-	return marshaledID, nil
+	return id, nil
 }
 
 // UnmarshalBinary deserializes a byte slice into a CelestiaBlobID struct.
-func (id *CelestiaBlobID) UnmarshalBinary(data []byte) error {
+func (c *CelestiaBlobID) UnmarshalBinary(data []byte) error {
 	// Expected length: 8 bytes for Height + 32 bytes for Commitment + 4 bytes for ShareOffset + 4 bytes for ShareSize
 	expectedLen := 8 + 32 + 4 + 4
 	if len(data) < expectedLen {
@@ -49,17 +49,17 @@ func (id *CelestiaBlobID) UnmarshalBinary(data []byte) error {
 		if len(data) < expectedLen {
 			return fmt.Errorf("invalid ID length: expected at least %d bytes, got %d", expectedLen, len(data))
 		}
-		id.Height = binary.LittleEndian.Uint64(data[0:8])
-		id.Commitment = make([]byte, 32)
-		copy(id.Commitment, data[8:40]) // Commitment is 32 bytes
+		c.Height = binary.LittleEndian.Uint64(data[0:8])
+		c.Commitment = make([]byte, 32)
+		copy(c.Commitment, data[8:40]) // Commitment is 32 bytes
 		return nil
 	}
 
-	id.Height = binary.LittleEndian.Uint64(data[0:8])
-	id.Commitment = make([]byte, 32)
-	copy(id.Commitment, data[8:40]) // Commitment is 32 bytes
-	id.ShareOffset = binary.LittleEndian.Uint32(data[40:44])
-	id.ShareSize = binary.LittleEndian.Uint32(data[44:48])
+	c.Height = binary.LittleEndian.Uint64(data[0:8])
+	c.Commitment = make([]byte, 32)
+	copy(c.Commitment, data[8:40]) // Commitment is 32 bytes
+	c.ShareOffset = binary.LittleEndian.Uint32(data[40:44])
+	c.ShareSize = binary.LittleEndian.Uint32(data[44:48])
 
 	return nil
 }
@@ -186,13 +186,13 @@ func (d *CelestiaStore) Put(ctx context.Context, data []byte) ([]byte, error) {
 		ShareSize:   uint32(size),
 	}
 
-	marshaledID, err := blobID.MarshalBinary()
+	id, err := blobID.MarshalBinary()
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal blob ID: %w", err)
 	}
 
-	d.Log.Info("celestia: blob successfully submitted", "id", hex.EncodeToString(marshaledID))
-	commitment := altda.NewGenericCommitment(append([]byte{VersionByte}, marshaledID...))
+	d.Log.Info("celestia: blob successfully submitted", "id", hex.EncodeToString(id))
+	commitment := altda.NewGenericCommitment(append([]byte{VersionByte}, id...))
 	return commitment.Encode(), nil
 }
 
