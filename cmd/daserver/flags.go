@@ -20,7 +20,6 @@ import (
 const (
 	ListenAddrFlagName                 = "addr"
 	PortFlagName                       = "port"
-	GenericCommFlagName                = "generic-commitment"
 	CelestiaAddrFlagName               = "celestia.addr"
 	CelestiaTLSEnabledFlagName         = "celestia.tls-enabled"
 	CelestiaAuthTokenFlagName          = "celestia.auth-token"
@@ -87,12 +86,6 @@ var (
 		Usage:   "alt da server listening port",
 		Value:   3100,
 		EnvVars: prefixEnvVars("PORT"),
-	}
-	GenericCommFlag = &cli.BoolFlag{
-		Name:    GenericCommFlagName,
-		Usage:   "enable generic commitments for testing. Not for production use.",
-		EnvVars: prefixEnvVars("GENERIC_COMMITMENT"),
-		Value:   true,
 	}
 	CelestiaAddrFlag = &cli.StringFlag{
 		Name:    CelestiaAddrFlagName,
@@ -231,7 +224,6 @@ var requiredFlags = []cli.Flag{
 var optionalFlags = []cli.Flag{
 	ListenAddrFlag,
 	PortFlag,
-	GenericCommFlag,
 	CelestiaTLSEnabledFlag,
 	CelestiaCoreGRPCTLSEnabledFlag,
 	CelestiaCoreGRPCAuthTokenFlag,
@@ -258,7 +250,6 @@ func init() {
 var Flags []cli.Flag
 
 type CLIConfig struct {
-	UseGenericComm        bool
 	CelestiaEndpoint      string
 	CelestiaTLSEnabled    bool
 	CelestiaAuthToken     string
@@ -277,7 +268,6 @@ type CLIConfig struct {
 
 func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 	return CLIConfig{
-		UseGenericComm:        ctx.Bool(GenericCommFlagName),
 		CelestiaEndpoint:      ctx.String(CelestiaAddrFlagName),
 		CelestiaTLSEnabled:    ctx.Bool(CelestiaTLSEnabledFlagName),
 		CelestiaAuthToken:     ctx.String(CelestiaAuthTokenFlagName),
