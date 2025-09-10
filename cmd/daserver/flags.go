@@ -31,6 +31,7 @@ const (
 	CelestiaCoreGRPCTLSEnabledFlagName = "celestia.core.grpc.tls-enabled"
 	CelestiaCoreGRPCAuthTokenFlagName  = "celestia.core.grpc.auth-token"
 	CelestiaP2PNetworkFlagName         = "celestia.p2p-network"
+	CelestiaCompactBlobIDFlagName      = "celestia.compact-blobid"
 	//s3
 	S3CredentialTypeFlagName  = "s3.credential-type" // #nosec G101
 	S3BucketFlagName          = "s3.bucket"          // #nosec G101
@@ -161,6 +162,12 @@ var (
 			return nil
 		},
 	}
+	CelestiaBlobIDCompactFlag = &cli.BoolFlag{
+		Name:    CelestiaCompactBlobIDFlagName,
+		Usage:   "enable compact celestia blob IDs. false indicates share offset and size will be included in the blob ID",
+		Value:   true,
+		EnvVars: prefixEnvVars("CELESTIA_BLOBID_COMPACT"),
+	}
 	S3CredentialTypeFlag = &cli.StringFlag{
 		Name:    S3CredentialTypeFlagName,
 		Usage:   "The way to authenticate to S3, options are [iam, static]",
@@ -239,6 +246,7 @@ var optionalFlags = []cli.Flag{
 	S3TimeoutFlag,
 	FallbackFlag,
 	CacheFlag,
+	CelestiaBlobIDCompactFlag,
 }
 
 func init() {
@@ -250,35 +258,37 @@ func init() {
 var Flags []cli.Flag
 
 type CLIConfig struct {
-	UseGenericComm     bool
-	CelestiaEndpoint   string
-	CelestiaTLSEnabled bool
-	CelestiaAuthToken  string
-	CelestiaNamespace  string
-	DefaultKeyName     string
-	KeyringPath        string
-	CoreGRPCAddr       string
-	CoreGRPCTLSEnabled bool
-	CoreGRPCAuthToken  string
-	P2PNetwork         string
-	S3Config           s3.S3Config
-	Fallback           bool
-	Cache              bool
+	UseGenericComm        bool
+	CelestiaEndpoint      string
+	CelestiaTLSEnabled    bool
+	CelestiaAuthToken     string
+	CelestiaNamespace     string
+	DefaultKeyName        string
+	KeyringPath           string
+	CoreGRPCAddr          string
+	CoreGRPCTLSEnabled    bool
+	CoreGRPCAuthToken     string
+	P2PNetwork            string
+	CelestiaCompactBlobID bool
+	S3Config              s3.S3Config
+	Fallback              bool
+	Cache                 bool
 }
 
 func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 	return CLIConfig{
-		UseGenericComm:     ctx.Bool(GenericCommFlagName),
-		CelestiaEndpoint:   ctx.String(CelestiaAddrFlagName),
-		CelestiaTLSEnabled: ctx.Bool(CelestiaTLSEnabledFlagName),
-		CelestiaAuthToken:  ctx.String(CelestiaAuthTokenFlagName),
-		CelestiaNamespace:  ctx.String(CelestiaNamespaceFlagName),
-		DefaultKeyName:     ctx.String(CelestiaDefaultKeyNameFlagName),
-		KeyringPath:        ctx.String(CelestiaKeyringPathFlagName),
-		CoreGRPCAddr:       ctx.String(CelestiaCoreGRPCAddrFlagName),
-		CoreGRPCTLSEnabled: ctx.Bool(CelestiaCoreGRPCTLSEnabledFlagName),
-		CoreGRPCAuthToken:  ctx.String(CelestiaCoreGRPCAuthTokenFlagName),
-		P2PNetwork:         ctx.String(CelestiaP2PNetworkFlagName),
+		UseGenericComm:        ctx.Bool(GenericCommFlagName),
+		CelestiaEndpoint:      ctx.String(CelestiaAddrFlagName),
+		CelestiaTLSEnabled:    ctx.Bool(CelestiaTLSEnabledFlagName),
+		CelestiaAuthToken:     ctx.String(CelestiaAuthTokenFlagName),
+		CelestiaNamespace:     ctx.String(CelestiaNamespaceFlagName),
+		DefaultKeyName:        ctx.String(CelestiaDefaultKeyNameFlagName),
+		KeyringPath:           ctx.String(CelestiaKeyringPathFlagName),
+		CoreGRPCAddr:          ctx.String(CelestiaCoreGRPCAddrFlagName),
+		CoreGRPCTLSEnabled:    ctx.Bool(CelestiaCoreGRPCTLSEnabledFlagName),
+		CoreGRPCAuthToken:     ctx.String(CelestiaCoreGRPCAuthTokenFlagName),
+		P2PNetwork:            ctx.String(CelestiaP2PNetworkFlagName),
+		CelestiaCompactBlobID: ctx.Bool(CelestiaCompactBlobIDFlagName),
 		S3Config: s3.S3Config{
 			S3CredentialType: toS3CredentialType(ctx.String(S3CredentialTypeFlagName)),
 			Bucket:           ctx.String(S3BucketFlagName),
@@ -318,6 +328,7 @@ func (c CLIConfig) CelestiaConfig() celestia.CelestiaConfig {
 		CoreGRPCTLSEnabled: c.CoreGRPCTLSEnabled,
 		CoreGRPCAuthToken:  c.CoreGRPCAuthToken,
 		P2PNetwork:         c.P2PNetwork,
+		CompactBlobID:      c.CelestiaCompactBlobID,
 	}
 }
 

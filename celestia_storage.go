@@ -19,6 +19,7 @@ import (
 
 // CelestiaBlobID represents the on-chain identifier for a Celestia blob.
 type CelestiaBlobID struct {
+	isCompact   bool
 	Height      uint64
 	Commitment  []byte
 	ShareOffset uint32
@@ -27,6 +28,13 @@ type CelestiaBlobID struct {
 
 // MarshalBinary serializes the CelestiaBlobID struct into a byte slice.
 func (c *CelestiaBlobID) MarshalBinary() ([]byte, error) {
+	if c.isCompact {
+		id := make([]byte, 8+32)
+		binary.LittleEndian.PutUint64(id[0:8], c.Height)
+		copy(id[8:40], c.Commitment)
+		return id, nil
+	}
+
 	// Calculate the total length of the marshaled ID
 	// 8 bytes for Height + 32 bytes for Commitment + 4 bytes for ShareOffset + 4 bytes for ShareSize
 	id := make([]byte, 8+32+4+4)
@@ -77,14 +85,16 @@ type CelestiaConfig struct {
 	CoreGRPCTLSEnabled bool
 	CoreGRPCAuthToken  string
 	P2PNetwork         string
+	CompactBlobID      bool
 }
 
 // CelestiaStore implements DAStorage with celestia backend
 type CelestiaStore struct {
-	Log        log.Logger
-	GetTimeout time.Duration
-	Namespace  libshare.Namespace
-	Client     *client.Client
+	Log           log.Logger
+	GetTimeout    time.Duration
+	Namespace     libshare.Namespace
+	Client        *client.Client
+	CompactBlobID bool
 }
 
 // NewCelestiaStore returns a celestia store.
@@ -129,10 +139,11 @@ func NewCelestiaStore(cfg CelestiaConfig) *CelestiaStore {
 		log.Crit("failed to parse namespace", "err", err)
 	}
 	return &CelestiaStore{
-		Log:        log.New(),
-		Client:     client,
-		GetTimeout: time.Minute,
-		Namespace:  namespace,
+		Log:           log.New(),
+		Client:        client,
+		GetTimeout:    time.Minute,
+		Namespace:     namespace,
+		CompactBlobID: cfg.CompactBlobID,
 	}
 }
 
@@ -184,6 +195,7 @@ func (d *CelestiaStore) Put(ctx context.Context, data []byte) ([]byte, error) {
 		Commitment:  b.Commitment,
 		ShareOffset: uint32(b.Index()),
 		ShareSize:   uint32(size),
+		isCompact:   d.CompactBlobID,
 	}
 
 	id, err := blobID.MarshalBinary()
