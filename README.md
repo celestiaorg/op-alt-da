@@ -90,33 +90,27 @@ Quicknode:
 
 ## Testing:
 
-This integration test configures [alt-da
-mode]()
-to use a mock celestia server for testing.
+To test the integration against devnet, you'll need to configure `kurtosis-devnet/simple.yaml` to use op-alt-da:
 
-Configure the `da_server_params` in `kurtosis-devnet/simple.yaml` to to use the mock celestia server:
+1.  **Configure `da_server_params`** in `kurtosis-devnet/simple.yaml`:
 
-```yaml
-  da_server_params:
-    image: ghcr.io/celestiaorg/localestia:v0.1.2
-```
+    ```yaml
+      da_server_params:
+          image: ghcr.io/celestiaorg/op-alt-da-localestia:latest # TODO
+    ```
 
-And add `da_server` to `additional_services`:
+2.  **Add `da_server` to `additional_services`** in the same `simple.yaml` file:
 
-```yaml
-  addtional_services:
-    - da_server
-```
+    ```yaml
+      additional_services:
+        - da_server
+    ```
 
-Then start the devnet with:
+3.  **Start the devnet** from the `kurtosis-devnet` directory:
 
-```sh
-cd kurtosis-devnet
-just simple-devnet
-```
+    ```sh
+    cd kurtosis-devnet
+    just simple-devnet
+    ```
 
-This will start the devnet configured to use the mock celestia server as the alt-da server.
-
-Check [Optimism Alt-DA
-mode](https://docs.optimism.io/operators/chain-operators/features/alt-da-mode)
-documentation for more details.
+For more detailed information on Optimism's `alt-da` mode, refer to the [Optimism Alt-DA mode documentation](https://docs.optimism.io/operators/chain-operators/features/alt-da-mode).
