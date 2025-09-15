@@ -54,7 +54,7 @@ func prefixEnvVars(name string) []string {
 var DefaultKeyringPath = func(tp string, network string) (string, error) {
 	home := os.Getenv("CELESTIA_HOME")
 	if home != "" {
-		return home, nil
+		return fmt.Sprintf("%s/keys", home), nil
 	}
 
 	home, err := os.UserHomeDir()
@@ -147,6 +147,9 @@ var (
 		Value:   "mocha-4",
 		EnvVars: prefixEnvVars("CELESTIA_P2P_NETWORK"),
 		Action: func(c *cli.Context, network string) error {
+			if c.IsSet(CelestiaKeyringPathFlagName) {
+				return nil
+			}
 			keyringPath, err := DefaultKeyringPath("light", network)
 			if err != nil {
 				return err
@@ -324,6 +327,10 @@ func (c CLIConfig) CelestiaConfig() celestia.CelestiaConfig {
 
 func (c CLIConfig) CelestiaEnabled() bool {
 	return !(c.CelestiaEndpoint == "" && c.CelestiaAuthToken == "" && c.CelestiaNamespace == "")
+}
+
+func (c CLIConfig) S3Enabled() bool {
+	return !(c.S3Config.Endpoint == "" && c.S3Config.AccessKeyID == "" && c.S3Config.AccessKeySecret == "")
 }
 
 func (c CLIConfig) CacheEnabled() bool {

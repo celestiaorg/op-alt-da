@@ -103,6 +103,7 @@ func NewCelestiaStore(cfg CelestiaConfig) *CelestiaStore {
 	if keyname == "" {
 		keyname = "my_celes_key"
 	}
+	log.Info("creating keyring", "keyname", keyname, "keyringpath", cfg.KeyringPath)
 	kr, err := client.KeyringWithNewKey(client.KeyringConfig{
 		KeyName:     keyname,
 		BackendName: keyring.BackendTest,
