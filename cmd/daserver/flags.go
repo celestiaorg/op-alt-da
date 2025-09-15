@@ -4,8 +4,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/urfave/cli/v2"
@@ -18,19 +16,24 @@ import (
 )
 
 const (
-	ListenAddrFlagName                 = "addr"
-	PortFlagName                       = "port"
-	CelestiaAddrFlagName               = "celestia.addr"
-	CelestiaTLSEnabledFlagName         = "celestia.tls-enabled"
-	CelestiaAuthTokenFlagName          = "celestia.auth-token"
-	CelestiaNamespaceFlagName          = "celestia.namespace"
-	CelestiaDefaultKeyNameFlagName     = "celestia.keyring.default-key-name"
-	CelestiaKeyringPathFlagName        = "celestia.keyring.path"
-	CelestiaCoreGRPCAddrFlagName       = "celestia.core.grpc.addr"
-	CelestiaCoreGRPCTLSEnabledFlagName = "celestia.core.grpc.tls-enabled"
-	CelestiaCoreGRPCAuthTokenFlagName  = "celestia.core.grpc.auth-token"
-	CelestiaP2PNetworkFlagName         = "celestia.p2p-network"
-	CelestiaCompactBlobIDFlagName      = "celestia.compact-blobid"
+	ListenAddrFlagName         = "addr"
+	PortFlagName               = "port"
+	CelestiaAddrFlagName       = "celestia.addr"
+	CelestiaTLSEnabledFlagName = "celestia.tls-enabled"
+	CelestiaAuthTokenFlagName  = "celestia.auth-token"
+	CelestiaNamespaceFlagName  = "celestia.namespace"
+
+	// tx client config flags
+	CelestiaTxClientEnabledFlagName    = "celestia.tx-client.enabled"
+	CelestiaDefaultKeyNameFlagName     = "celestia.tx-client.key-name"
+	CelestiaKeyringPathFlagName        = "celestia.tx-client.keyring-path"
+	CelestiaCoreGRPCAddrFlagName       = "celestia.tx-client.core-grpc.addr"
+	CelestiaCoreGRPCTLSEnabledFlagName = "celestia.tx-client.core-grpc.tls-enabled"
+	CelestiaCoreGRPCAuthTokenFlagName  = "celestia.tx-client.core-grpc.auth-token"
+	CelestiaP2PNetworkFlagName         = "celestia.tx-client.p2p-network"
+
+	CelestiaCompactBlobIDFlagName = "celestia.compact-blobid"
+
 	//s3
 	S3CredentialTypeFlagName  = "s3.credential-type" // #nosec G101
 	S3BucketFlagName          = "s3.bucket"          // #nosec G101
@@ -47,31 +50,6 @@ const EnvVarPrefix = "OP_ALTDA"
 
 func prefixEnvVars(name string) []string {
 	return opservice.PrefixEnvVar(EnvVarPrefix, name)
-}
-
-// DefaultKeyringPath constructs the default keyring path using the given
-// node type and network.
-var DefaultKeyringPath = func(tp string, network string) (string, error) {
-	home := os.Getenv("CELESTIA_HOME")
-	if home != "" {
-		return home, nil
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-
-	if network == "mainnet" {
-		return fmt.Sprintf("%s/.celestia-%s/keys", home, strings.ToLower(tp)), nil
-	}
-	// only include network name in path for testnets and custom networks
-	return fmt.Sprintf(
-		"%s/.celestia-%s-%s/keys",
-		home,
-		strings.ToLower(tp),
-		strings.ToLower(network),
-	), nil
 }
 
 var (
@@ -111,49 +89,47 @@ var (
 		Value:   "",
 		EnvVars: prefixEnvVars("CELESTIA_NAMESPACE"),
 	}
+	CelestiaTxClientEnabledFlag = &cli.BoolFlag{
+		Name:    CelestiaTxClientEnabledFlagName,
+		Usage:   "enable celestia tx client",
+		Value:   false,
+		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_ENABLED"),
+	}
 	CelestiaDefaultKeyNameFlag = &cli.StringFlag{
 		Name:    CelestiaDefaultKeyNameFlagName,
-		Usage:   "celestia default key name",
+		Usage:   "celestia tx client key name",
 		Value:   "my_celes_key",
-		EnvVars: prefixEnvVars("CELESTIA_DEFAULT_KEY_NAME"),
+		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_KEY_NAME"),
 	}
 	CelestiaKeyringPathFlag = &cli.StringFlag{
 		Name:    CelestiaKeyringPathFlagName,
-		Usage:   "celestia keyring path e.g. ~/.celestia-light-mocha-4/keys",
+		Usage:   "celestia tx client keyring path e.g. ~/.celestia-light-mocha-4/keys",
 		Value:   "",
-		EnvVars: prefixEnvVars("CELESTIA_KEYRING_PATH"),
+		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_KEYRING_PATH"),
 	}
 	CelestiaCoreGRPCAddrFlag = &cli.StringFlag{
 		Name:    CelestiaCoreGRPCAddrFlagName,
-		Usage:   "celestia core grpc addr",
+		Usage:   "celestia tx client core grpc addr",
 		Value:   "http://localhost:9090",
-		EnvVars: prefixEnvVars("CELESTIA_CORE_GRPC_ADDR"),
+		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_CORE_GRPC_ADDR"),
 	}
 	CelestiaCoreGRPCTLSEnabledFlag = &cli.BoolFlag{
 		Name:    CelestiaCoreGRPCTLSEnabledFlagName,
-		Usage:   "enable core grpc TLS",
-		EnvVars: prefixEnvVars("CELESTIA_CORE_GRPC_TLS_ENABLED"),
+		Usage:   "celestia tx client core grpc TLS",
+		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_CORE_GRPC_TLS_ENABLED"),
 		Value:   true,
 	}
 	CelestiaCoreGRPCAuthTokenFlag = &cli.StringFlag{
 		Name:    CelestiaCoreGRPCAuthTokenFlagName,
-		Usage:   "celestia core grpc auth token",
+		Usage:   "celestia tx client core grpc auth token",
 		Value:   "",
-		EnvVars: prefixEnvVars("CELESTIA_CORE_GRPC_AUTH_TOKEN"),
+		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_CORE_GRPC_AUTH_TOKEN"),
 	}
 	CelestiaP2PNetworkFlag = &cli.StringFlag{
 		Name:    CelestiaP2PNetworkFlagName,
-		Usage:   "celestia p2p network",
+		Usage:   "celestia tx client p2p network",
 		Value:   "mocha-4",
-		EnvVars: prefixEnvVars("CELESTIA_P2P_NETWORK"),
-		Action: func(c *cli.Context, network string) error {
-			keyringPath, err := DefaultKeyringPath("light", network)
-			if err != nil {
-				return err
-			}
-			c.Set(CelestiaKeyringPathFlagName, keyringPath)
-			return nil
-		},
+		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_P2P_NETWORK"),
 	}
 	CelestiaBlobIDCompactFlag = &cli.BoolFlag{
 		Name:    CelestiaCompactBlobIDFlagName,
@@ -213,22 +189,27 @@ var (
 		EnvVars: prefixEnvVars("CACHE"),
 	}
 )
-var requiredFlags = []cli.Flag{
+var celestiaRPCClientFlags = []cli.Flag{
 	CelestiaAddrFlag,
+	CelestiaTLSEnabledFlag,
 	CelestiaAuthTokenFlag,
 	CelestiaNamespaceFlag,
+}
+
+var celestiaBlobSubmitterFlags = []cli.Flag{
+	CelestiaDefaultKeyNameFlag,
+	CelestiaKeyringPathFlag,
 	CelestiaCoreGRPCAddrFlag,
+	CelestiaCoreGRPCTLSEnabledFlag,
+	CelestiaCoreGRPCAuthTokenFlag,
 	CelestiaP2PNetworkFlag,
 }
+
+var requiredFlags = []cli.Flag{}
 
 var optionalFlags = []cli.Flag{
 	ListenAddrFlag,
 	PortFlag,
-	CelestiaTLSEnabledFlag,
-	CelestiaCoreGRPCTLSEnabledFlag,
-	CelestiaCoreGRPCAuthTokenFlag,
-	CelestiaDefaultKeyNameFlag,
-	CelestiaKeyringPathFlag,
 	S3CredentialTypeFlag,
 	S3BucketFlag,
 	S3PathFlag,
@@ -243,7 +224,10 @@ var optionalFlags = []cli.Flag{
 
 func init() {
 	optionalFlags = append(optionalFlags, oplog.CLIFlags(EnvVarPrefix)...)
-	Flags = append(requiredFlags, optionalFlags...)
+	Flags = append(Flags, celestiaRPCClientFlags...)
+	Flags = append(Flags, celestiaBlobSubmitterFlags...)
+	Flags = append(Flags, CelestiaTxClientEnabledFlag)
+	Flags = append(Flags, optionalFlags...)
 }
 
 // Flags contains the list of configuration options available to the binary.
@@ -254,6 +238,7 @@ type CLIConfig struct {
 	CelestiaTLSEnabled    bool
 	CelestiaAuthToken     string
 	CelestiaNamespace     string
+	TxClientEnabled       bool
 	DefaultKeyName        string
 	KeyringPath           string
 	CoreGRPCAddr          string
@@ -272,6 +257,7 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 		CelestiaTLSEnabled:    ctx.Bool(CelestiaTLSEnabledFlagName),
 		CelestiaAuthToken:     ctx.String(CelestiaAuthTokenFlagName),
 		CelestiaNamespace:     ctx.String(CelestiaNamespaceFlagName),
+		TxClientEnabled:       ctx.Bool(CelestiaTxClientEnabledFlagName),
 		DefaultKeyName:        ctx.String(CelestiaDefaultKeyNameFlagName),
 		KeyringPath:           ctx.String(CelestiaKeyringPathFlagName),
 		CoreGRPCAddr:          ctx.String(CelestiaCoreGRPCAddrFlagName),
@@ -294,35 +280,58 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 }
 
 func (c CLIConfig) Check() error {
-	if c.CelestiaEnabled() && (c.CelestiaEndpoint == "" || c.CelestiaAuthToken == "" || c.CelestiaNamespace == "") {
-		return errors.New("all Celestia flags must be set")
-	}
-	if c.CelestiaEnabled() {
+	if c.TxClientEnabled {
+		// If tx client is enabled, ensure tx client flags are set
+		if c.DefaultKeyName == "" || c.KeyringPath == "" || c.CoreGRPCAddr == "" || c.P2PNetwork == "" {
+			return errors.New("all celestia blob submitter flags must be set when celestia tx client is enabled")
+		}
+	} else {
+		// If tx client is not enabled, ensure regular celestia client flags are set
+		if c.CelestiaEndpoint == "" || c.CelestiaAuthToken == "" || c.CelestiaNamespace == "" {
+			return errors.New("all celestia rpc client flags must be set when celestia tx client is disabled")
+		}
 		if _, err := hex.DecodeString(c.CelestiaNamespace); err != nil {
 			return err
 		}
 	}
+
+	// S3 config validation (existing logic)
+	if c.S3Config.S3CredentialType != s3.S3CredentialUnknown && c.S3Config.Bucket == "" {
+		return errors.New("S3 bucket must be set when S3 is enabled")
+	}
+	if c.S3Config.S3CredentialType == s3.S3CredentialStatic {
+		if c.S3Config.AccessKeyID == "" || c.S3Config.AccessKeySecret == "" {
+			return errors.New("S3 access key ID and secret must be set for static credentials")
+		}
+	}
+
 	return nil
 }
 
-func (c CLIConfig) CelestiaConfig() celestia.CelestiaConfig {
+func (c CLIConfig) CelestiaConfig() celestia.RPCClientConfig {
 	ns, _ := hex.DecodeString(c.CelestiaNamespace)
-	return celestia.CelestiaConfig{
-		URL:                c.CelestiaEndpoint,
-		TLSEnabled:         c.CelestiaTLSEnabled,
-		AuthToken:          c.CelestiaAuthToken,
-		Namespace:          ns,
-		DefaultKeyName:     c.DefaultKeyName,
-		KeyringPath:        c.KeyringPath,
-		CoreGRPCAddr:       c.CoreGRPCAddr,
-		CoreGRPCTLSEnabled: c.CoreGRPCTLSEnabled,
-		CoreGRPCAuthToken:  c.CoreGRPCAuthToken,
-		P2PNetwork:         c.P2PNetwork,
-		CompactBlobID:      c.CelestiaCompactBlobID,
+	var cfg *celestia.TxClientConfig
+	if c.TxClientEnabled {
+		cfg = &celestia.TxClientConfig{
+			DefaultKeyName:     c.DefaultKeyName,
+			KeyringPath:        c.KeyringPath,
+			CoreGRPCAddr:       c.CoreGRPCAddr,
+			CoreGRPCTLSEnabled: c.CoreGRPCTLSEnabled,
+			CoreGRPCAuthToken:  c.CoreGRPCAuthToken,
+			P2PNetwork:         c.P2PNetwork,
+		}
+	}
+	return celestia.RPCClientConfig{
+		URL:            c.CelestiaEndpoint,
+		TLSEnabled:     c.CelestiaTLSEnabled,
+		AuthToken:      c.CelestiaAuthToken,
+		Namespace:      ns,
+		CompactBlobID:  c.CelestiaCompactBlobID,
+		TxClientConfig: cfg,
 	}
 }
 
-func (c CLIConfig) CelestiaEnabled() bool {
+func (c CLIConfig) CelestiaRPCClientEnabled() bool {
 	return !(c.CelestiaEndpoint == "" && c.CelestiaAuthToken == "" && c.CelestiaNamespace == "")
 }
 

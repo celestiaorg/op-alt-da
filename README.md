@@ -11,33 +11,35 @@ celestia da-server accepts the following flags for celestia storage using
 [celestia go client](https://docs.celestia.org/how-to-guides/client/go#create-main-go)
 
 ````
-   --celestia.addr value                      celestia rpc endpoint (default: "http://localhost:26658") [$OP_ALTDA_CELESTIA_ADDR]
-   --celestia.auth-token value                celestia rpc auth token [$OP_ALTDA_CELESTIA_AUTH_TOKEN]
-   --celestia.namespace value                 celestia namespace [$OP_ALTDA_CELESTIA_NAMESPACE]
-   --celestia.core.grpc.addr value            celestia core grpc addr (default: "http://localhost:9090") [$OP_ALTDA_CELESTIA_CORE_GRPC_ADDR]
-   --celestia.p2p-network value               celestia p2p network (default: "mocha-4") [$OP_ALTDA_CELESTIA_P2P_NETWORK]
-   --addr value                               alt da server listening address (default: "127.0.0.1") [$OP_ALTDA_ADDR]
-   --port value                               alt da server listening port (default: 3100) [$OP_ALTDA_PORT]
-   --celestia.tls-enabled                     celestia rpc TLS (default: true) [$OP_ALTDA_CELESTIA_TLS_ENABLED]
-   --celestia.core.grpc.tls-enabled           enable core grpc TLS (default: true) [$OP_ALTDA_CELESTIA_CORE_GRPC_TLS_ENABLED]
-   --celestia.core.grpc.auth-token value      celestia core grpc auth token [$OP_ALTDA_CELESTIA_CORE_GRPC_AUTH_TOKEN]
-   --celestia.keyring.default-key-name value  celestia default key name (default: "my_celes_key") [$OP_ALTDA_CELESTIA_DEFAULT_KEY_NAME]
-   --celestia.keyring.path value              celestia keyring path e.g. ~/.celestia-light-mocha-4/keys [$OP_ALTDA_CELESTIA_KEYRING_PATH]
-   --s3.credential-type value                 The way to authenticate to S3, options are [iam, static] [$OP_ALTDA_S3_CREDENTIAL_TYPE]
-   --s3.bucket value                          bucket name for S3 storage [$OP_ALTDA_S3_BUCKET]
-   --s3.path value                            path for S3 storage [$OP_ALTDA_S3_PATH]
-   --s3.endpoint value                        endpoint for S3 storage [$OP_ALTDA_S3_ENDPOINT]
-   --s3.access-key-id value                   access key id for S3 storage [$OP_ALTDA_S3_ACCESS_KEY_ID]
-   --s3.access-key-secret value               access key secret for S3 storage [$OP_ALTDA_S3_ACCESS_KEY_SECRET]
-   --s3.timeout value                         S3 timeout (default: 5s) [$OP_ALTDA_S3_TIMEOUT]
-   --routing.fallback                         Enable fallback (default: false) [$OP_ALTDA_FALLBACK]
-   --routing.cache                            Enable cache. (default: false) [$OP_ALTDA_CACHE]
-   --log.level value                          The lowest log level that will be output (default: INFO) [$OP_ALTDA_LOG_LEVEL]
-   --log.format value                         Format the log output. Supported formats: 'text', 'terminal', 'logfmt', 'json', 'json-pretty', (default: text) [$OP_ALTDA_LOG_FORMAT]
-   --log.color                                Color the log output if in terminal mode (default: false) [$OP_ALTDA_LOG_COLOR]
-   --log.pid                                  Show pid in the log (default: false) [$OP_ALTDA_LOG_PID]
-   --help, -h                                 show help
-   --version, -v                              print the version
+   --celestia.addr value                            celestia rpc endpoint (default: "http://localhost:26658") [$OP_ALTDA_CELESTIA_ADDR]
+   --celestia.tls-enabled                           celestia rpc TLS (default: true) [$OP_ALTDA_CELESTIA_TLS_ENABLED]
+   --celestia.auth-token value                      celestia rpc auth token [$OP_ALTDA_CELESTIA_AUTH_TOKEN]
+   --celestia.namespace value                       celestia namespace [$OP_ALTDA_CELESTIA_NAMESPACE]
+   --celestia.tx-client.key-name value              celestia tx client key name (default: "my_celes_key") [$OP_ALTDA_CELESTIA_TX_CLIENT_KEY_NAME]
+   --celestia.tx-client.keyring-path value          celestia tx client keyring path e.g. ~/.celestia-light-mocha-4/keys [$OP_ALTDA_CELESTIA_TX_CLIENT_KEYRING_PATH]
+   --celestia.tx-client.core-grpc.addr value        celestia tx client core grpc addr (default: "http://localhost:9090") [$OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_ADDR]
+   --celestia.tx-client.core-grpc.tls-enabled       celestia tx client core grpc TLS (default: true) [$OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_TLS_ENABLED]
+   --celestia.tx-client.core-grpc.auth-token value  celestia tx client core grpc auth token [$OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_AUTH_TOKEN]
+   --celestia.tx-client.p2p-network value           celestia tx client p2p network (default: "mocha-4") [$OP_ALTDA_CELESTIA_TX_CLIENT_P2P_NETWORK]
+   --celestia.tx-client.enabled                     enable celestia tx client (default: false) [$OP_ALTDA_CELESTIA_TX_CLIENT_ENABLED]
+   --addr value                                     alt da server listening address (default: "127.0.0.1") [$OP_ALTDA_ADDR]
+   --port value                                     alt da server listening port (default: 3100) [$OP_ALTDA_PORT]
+   --s3.credential-type value                       The way to authenticate to S3, options are [iam, static] [$OP_ALTDA_S3_CREDENTIAL_TYPE]
+   --s3.bucket value                                bucket name for S3 storage [$OP_ALTDA_S3_BUCKET]
+   --s3.path value                                  path for S3 storage [$OP_ALTDA_S3_PATH]
+   --s3.endpoint value                              endpoint for S3 storage [$OP_ALTDA_S3_ENDPOINT]
+   --s3.access-key-id value                         access key id for S3 storage [$OP_ALTDA_S3_ACCESS_KEY_ID]
+   --s3.access-key-secret value                     access key secret for S3 storage [$OP_ALTDA_S3_ACCESS_KEY_SECRET]
+   --s3.timeout value                               S3 timeout (default: 5s) [$OP_ALTDA_S3_TIMEOUT]
+   --routing.fallback                               Enable fallback (default: false) [$OP_ALTDA_FALLBACK]
+   --routing.cache                                  Enable cache. (default: false) [$OP_ALTDA_CACHE]
+   --celestia.compact-blobid                        enable compact celestia blob IDs. false indicates share offset and size will be included in the blob ID (default: true) [$OP_ALTDA_CELESTIA_BLOBID_COMPACT]
+   --log.level value                                The lowest log level that will be output (default: INFO) [$OP_ALTDA_LOG_LEVEL]
+   --log.format value                               Format the log output. Supported formats: 'text', 'terminal', 'logfmt', 'json', 'json-pretty', (default: text) [$OP_ALTDA_LOG_FORMAT]
+   --log.color                                      Color the log output if in terminal mode (default: false) [$OP_ALTDA_LOG_COLOR]
+   --log.pid                                        Show pid in the log (default: false) [$OP_ALTDA_LOG_PID]
+   --help, -h                                       show help
+   --version, -v                                    print the version
 ````
 
 The celestia server endpoint should be set to the celestia-node rpc server,
@@ -292,7 +294,7 @@ github.com/celestiaorg/celestia-node/api/client.(*Client).Close(0x140005daaf0)
 ```
 
 it means that the client was not able to connect to the core gRPC server,
-please ensure your `--celestia.core.grpc.addr`,
-`--celestia.core.grpc.auth-token` and `--celestia.core.grpc.tls-enabled` flags are correct.
-Note that boolean flags like `--celestia.tls-enabled` and `--celestia.tls-enabled` should be set as
-`--celestia.tls-enabled=false` and `--celestia.core.grpc.tls-enabled=true` respectively, for example.
+please ensure your `--celestia.tx-client.core-grpc.addr`,
+`--celestia.tx-client.core-grpc.auth-token` and `--celestia.tx-client.core-grpc.tls-enabled` flags are correct.
+Note that boolean flags like `--celestia.tls-enabled` and `--celestia.tx-client.core-grpc.tls-enabled` should be set as
+`--celestia.tls-enabled=false` and `--celestia.tx-client.core-grpc.tls-enabled=true` respectively, for example.

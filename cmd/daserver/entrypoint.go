@@ -36,7 +36,7 @@ func StartDAServer(cliCtx *cli.Context) error {
 	var server Server
 
 	switch {
-	case cfg.CelestiaEnabled():
+	case cfg.CelestiaRPCClientEnabled():
 		l.Info("Using celestia storage", "url", cfg.CelestiaConfig().URL)
 		store := celestia.NewCelestiaStore(cfg.CelestiaConfig())
 		l.Info("Using s3 storage", "config", cfg.S3Config)
@@ -48,7 +48,7 @@ func StartDAServer(cliCtx *cli.Context) error {
 	}
 
 	if err := server.Start(); err != nil {
-		return fmt.Errorf("failed to start the DA server")
+		return fmt.Errorf("failed to start the DA server: %w", err)
 	} else {
 		l.Info("Started DA Server")
 	}

@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/celestiaorg/celestia-node/api/client"
+	txClient "github.com/celestiaorg/celestia-node/api/client"
+	"github.com/celestiaorg/celestia-node/api/rpc/client"
 	"github.com/celestiaorg/celestia-node/blob"
+	blobAPI "github.com/celestiaorg/celestia-node/nodebuilder/blob"
 	"github.com/celestiaorg/celestia-node/nodebuilder/p2p"
 	"github.com/celestiaorg/celestia-node/state"
 	libshare "github.com/celestiaorg/go-square/v2/share"
@@ -74,18 +76,22 @@ func (c *CelestiaBlobID) UnmarshalBinary(data []byte) error {
 
 const VersionByte = 0x0c
 
-type CelestiaConfig struct {
-	URL                string
-	TLSEnabled         bool
-	AuthToken          string
-	Namespace          []byte
+type TxClientConfig struct {
 	DefaultKeyName     string
 	KeyringPath        string
 	CoreGRPCAddr       string
 	CoreGRPCTLSEnabled bool
 	CoreGRPCAuthToken  string
 	P2PNetwork         string
-	CompactBlobID      bool
+}
+
+type RPCClientConfig struct {
+	URL            string
+	TLSEnabled     bool
+	AuthToken      string
+	Namespace      []byte
+	CompactBlobID  bool
+	TxClientConfig *TxClientConfig
 }
 
 // CelestiaStore implements DAStorage with celestia backend
@@ -93,46 +99,21 @@ type CelestiaStore struct {
 	Log           log.Logger
 	GetTimeout    time.Duration
 	Namespace     libshare.Namespace
-	Client        *client.Client
+	Client        blobAPI.Module
 	CompactBlobID bool
 }
 
 // NewCelestiaStore returns a celestia store.
-func NewCelestiaStore(cfg CelestiaConfig) *CelestiaStore {
-	keyname := cfg.DefaultKeyName
-	if keyname == "" {
-		keyname = "my_celes_key"
+func NewCelestiaStore(cfg RPCClientConfig) *CelestiaStore {
+	var blobClient blobAPI.Module
+	var err error
+	if cfg.TxClientConfig != nil {
+		blobClient, err = initTxClient(cfg)
+	} else {
+		blobClient, err = initRPCClient(cfg)
 	}
-	kr, err := client.KeyringWithNewKey(client.KeyringConfig{
-		KeyName:     keyname,
-		BackendName: keyring.BackendTest,
-	}, cfg.KeyringPath)
 	if err != nil {
-		log.Crit("failed to create keyring", "err", err)
-	}
-
-	// Configure client
-	config := client.Config{
-		ReadConfig: client.ReadConfig{
-			BridgeDAAddr: cfg.URL,
-			DAAuthToken:  cfg.AuthToken,
-			EnableDATLS:  cfg.TLSEnabled,
-		},
-		SubmitConfig: client.SubmitConfig{
-			DefaultKeyName: cfg.DefaultKeyName,
-			Network:        p2p.Network(cfg.P2PNetwork),
-			CoreGRPCConfig: client.CoreGRPCConfig{
-				Addr:       cfg.CoreGRPCAddr,
-				TLSEnabled: cfg.CoreGRPCTLSEnabled,
-				AuthToken:  cfg.CoreGRPCAuthToken,
-			},
-		},
-	}
-
-	ctx := context.Background()
-	client, err := client.New(ctx, config, kr)
-	if err != nil {
-		log.Crit("failed to create celestia client", "err", err)
+		log.Crit("failed to initialize celestia client", "err", err)
 	}
 	namespace, err := libshare.NewNamespaceFromBytes(cfg.Namespace)
 	if err != nil {
@@ -140,11 +121,59 @@ func NewCelestiaStore(cfg CelestiaConfig) *CelestiaStore {
 	}
 	return &CelestiaStore{
 		Log:           log.New(),
-		Client:        client,
+		Client:        blobClient,
 		GetTimeout:    time.Minute,
 		Namespace:     namespace,
 		CompactBlobID: cfg.CompactBlobID,
 	}
+}
+
+// initTxClient initializes a transaction client for Celestia.
+func initTxClient(cfg RPCClientConfig) (blobAPI.Module, error) {
+	keyname := cfg.TxClientConfig.DefaultKeyName
+	if keyname == "" {
+		keyname = "my_celes_key"
+	}
+	kr, err := txClient.KeyringWithNewKey(txClient.KeyringConfig{
+		KeyName:     keyname,
+		BackendName: keyring.BackendTest,
+	}, cfg.TxClientConfig.KeyringPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create keyring: %w", err)
+	}
+
+	// Configure client
+	config := txClient.Config{
+		ReadConfig: txClient.ReadConfig{
+			BridgeDAAddr: cfg.URL,
+			DAAuthToken:  cfg.AuthToken,
+			EnableDATLS:  cfg.TLSEnabled,
+		},
+		SubmitConfig: txClient.SubmitConfig{
+			DefaultKeyName: cfg.TxClientConfig.DefaultKeyName,
+			Network:        p2p.Network(cfg.TxClientConfig.P2PNetwork),
+			CoreGRPCConfig: txClient.CoreGRPCConfig{
+				Addr:       cfg.TxClientConfig.CoreGRPCAddr,
+				TLSEnabled: cfg.TxClientConfig.CoreGRPCTLSEnabled,
+				AuthToken:  cfg.TxClientConfig.CoreGRPCAuthToken,
+			},
+		},
+	}
+	ctx := context.Background()
+	celestiaClient, err := txClient.New(ctx, config, kr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create tx client: %w", err)
+	}
+	return celestiaClient.Blob, nil
+}
+
+// initRPCClient initializes an RPC client for Celestia.
+func initRPCClient(cfg RPCClientConfig) (blobAPI.Module, error) {
+	celestiaClient, err := client.NewClient(context.Background(), cfg.URL, cfg.AuthToken)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create rpc client: %w", err)
+	}
+	return &celestiaClient.Blob, nil
 }
 
 func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
@@ -158,7 +187,7 @@ func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to unmarshal blob ID: %w", err)
 	}
 
-	blob, err := d.Client.Blob.Get(ctx, blobID.Height, d.Namespace, blobID.Commitment)
+	blob, err := d.Client.Get(ctx, blobID.Height, d.Namespace, blobID.Commitment)
 	if err != nil {
 		return nil, fmt.Errorf("celestia: failed to resolve frame: %w", err)
 	}
@@ -174,28 +203,37 @@ func (d *CelestiaStore) Put(ctx context.Context, data []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	height, err := d.Client.Blob.Submit(ctx, []*blob.Blob{b}, state.NewTxConfig())
+	height, err := d.Client.Submit(ctx, []*blob.Blob{b}, state.NewTxConfig())
 	if err != nil {
 		return nil, err
 	}
 
-	// Re-fetch the blob to get its index and length
-	b, err = d.Client.Blob.Get(ctx, height, d.Namespace, b.Commitment)
-	if err != nil {
-		return nil, err
-	}
+	var blobID CelestiaBlobID
+	if d.CompactBlobID {
+		// Re-fetch the blob to get its index and length
+		b, err = d.Client.Get(ctx, height, d.Namespace, b.Commitment)
+		if err != nil {
+			return nil, err
+		}
 
-	size, err := b.Length()
-	if err != nil {
-		return nil, err
-	}
+		size, err := b.Length()
+		if err != nil {
+			return nil, err
+		}
 
-	blobID := CelestiaBlobID{
-		Height:      height,
-		Commitment:  b.Commitment,
-		ShareOffset: uint32(b.Index()),
-		ShareSize:   uint32(size),
-		isCompact:   d.CompactBlobID,
+		blobID = CelestiaBlobID{
+			Height:      height,
+			Commitment:  b.Commitment,
+			ShareOffset: uint32(b.Index()),
+			ShareSize:   uint32(size),
+			isCompact:   d.CompactBlobID,
+		}
+	} else {
+		blobID = CelestiaBlobID{
+			Height:     height,
+			Commitment: b.Commitment,
+			isCompact:  d.CompactBlobID,
+		}
 	}
 
 	id, err := blobID.MarshalBinary()
