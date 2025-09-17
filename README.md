@@ -90,20 +90,25 @@ Quicknode:
 
 ## Testing:
 
-To test the integration against devnet, you'll need to configure `kurtosis-devnet/simple.yaml` to use op-alt-da:
+To test the integration against devnet, you'll need to configure `kurtosis-devnet/simple.yaml`:
 
 1.  **Configure `da_server_params`** in `kurtosis-devnet/simple.yaml`:
 
     ```yaml
-      da_server_params:
-          image: ghcr.io/celestiaorg/op-alt-da-localestia:latest # TODO
+      da_params:
+          image: opcelestia/localestia-da-server:latest
     ```
 
-2.  **Add `da_server` to `additional_services`** in the same `simple.yaml` file:
+2.  **Add `altda_deploy_config` to `optimism_package`** in the same `simple.yaml` file:
 
     ```yaml
-      additional_services:
-        - da_server
+      altda_deploy_config:
+        use_altda: false
+        da_commitment_type: GenericCommitment
+        da_challenge_window: 100
+        da_resolve_window: 100
+        da_bond_size: 0
+        da_resolver_refund_percentage: 0
     ```
 
 3.  **Start the devnet** from the `kurtosis-devnet` directory:
@@ -113,4 +118,6 @@ To test the integration against devnet, you'll need to configure `kurtosis-devne
     just simple-devnet
     ```
 
-For more detailed information on Optimism's `alt-da` mode, refer to the [Optimism Alt-DA mode documentation](https://docs.optimism.io/operators/chain-operators/features/alt-da-mode).
+The `da_params` docker image uses [localestia](https://github.com/celestiaorg/localestia) to simulate a celestia network.
+
+For more detailed information refer to the [Optimism Alt-DA mode documentation](https://docs.optimism.io/operators/chain-operators/features/alt-da-mode).
