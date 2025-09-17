@@ -182,18 +182,23 @@ var (
 		EnvVars: prefixEnvVars("CACHE"),
 	}
 )
-var celestiaRPCClientFlags = []cli.Flag{
-	CelestiaTLSEnabledFlag,
-}
-
 var requiredFlags = []cli.Flag{
-	CelestiaServerFlag,
 	CelestiaNamespaceFlag,
 }
 
 var optionalFlags = []cli.Flag{
 	ListenAddrFlag,
 	PortFlag,
+	CelestiaServerFlag,
+	CelestiaTLSEnabledFlag,
+	CelestiaAuthTokenFlag,
+	CelestiaBlobIDCompactFlag,
+	CelestiaDefaultKeyNameFlag,
+	CelestiaKeyringPathFlag,
+	CelestiaCoreGRPCAddrFlag,
+	CelestiaCoreGRPCTLSEnabledFlag,
+	CelestiaCoreGRPCAuthTokenFlag,
+	CelestiaP2PNetworkFlag,
 	S3CredentialTypeFlag,
 	S3BucketFlag,
 	S3PathFlag,
@@ -203,14 +208,6 @@ var optionalFlags = []cli.Flag{
 	S3TimeoutFlag,
 	FallbackFlag,
 	CacheFlag,
-	CelestiaAuthTokenFlag,
-	CelestiaDefaultKeyNameFlag,
-	CelestiaKeyringPathFlag,
-	CelestiaCoreGRPCAddrFlag,
-	CelestiaCoreGRPCTLSEnabledFlag,
-	CelestiaCoreGRPCAuthTokenFlag,
-	CelestiaP2PNetworkFlag,
-	CelestiaBlobIDCompactFlag,
 }
 
 // Flags contains the list of configuration options available to the binary.
