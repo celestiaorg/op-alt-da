@@ -24,7 +24,6 @@ const (
 	CelestiaNamespaceFlagName  = "celestia.namespace"
 
 	// tx client config flags
-	CelestiaTxClientEnabledFlagName    = "celestia.tx-client.enabled"
 	CelestiaDefaultKeyNameFlagName     = "celestia.tx-client.key-name"
 	CelestiaKeyringPathFlagName        = "celestia.tx-client.keyring-path"
 	CelestiaCoreGRPCAddrFlagName       = "celestia.tx-client.core-grpc.addr"
@@ -89,11 +88,11 @@ var (
 		Value:   "",
 		EnvVars: prefixEnvVars("CELESTIA_NAMESPACE"),
 	}
-	CelestiaTxClientEnabledFlag = &cli.BoolFlag{
-		Name:    CelestiaTxClientEnabledFlagName,
-		Usage:   "enable celestia tx client",
-		Value:   false,
-		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_ENABLED"),
+	CelestiaBlobIDCompactFlag = &cli.BoolFlag{
+		Name:    CelestiaCompactBlobIDFlagName,
+		Usage:   "enable compact celestia blob IDs. false indicates share offset and size will be included in the blob ID",
+		Value:   true,
+		EnvVars: prefixEnvVars("CELESTIA_BLOBID_COMPACT"),
 	}
 	CelestiaDefaultKeyNameFlag = &cli.StringFlag{
 		Name:    CelestiaDefaultKeyNameFlagName,
@@ -130,12 +129,6 @@ var (
 		Usage:   "celestia tx client p2p network",
 		Value:   "mocha-4",
 		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_P2P_NETWORK"),
-	}
-	CelestiaBlobIDCompactFlag = &cli.BoolFlag{
-		Name:    CelestiaCompactBlobIDFlagName,
-		Usage:   "enable compact celestia blob IDs. false indicates share offset and size will be included in the blob ID",
-		Value:   true,
-		EnvVars: prefixEnvVars("CELESTIA_BLOBID_COMPACT"),
 	}
 	S3CredentialTypeFlag = &cli.StringFlag{
 		Name:    S3CredentialTypeFlagName,
@@ -190,22 +183,13 @@ var (
 	}
 )
 var celestiaRPCClientFlags = []cli.Flag{
-	CelestiaServerFlag,
 	CelestiaTLSEnabledFlag,
-	CelestiaAuthTokenFlag,
+}
+
+var requiredFlags = []cli.Flag{
+	CelestiaServerFlag,
 	CelestiaNamespaceFlag,
 }
-
-var celestiaBlobSubmitterFlags = []cli.Flag{
-	CelestiaDefaultKeyNameFlag,
-	CelestiaKeyringPathFlag,
-	CelestiaCoreGRPCAddrFlag,
-	CelestiaCoreGRPCTLSEnabledFlag,
-	CelestiaCoreGRPCAuthTokenFlag,
-	CelestiaP2PNetworkFlag,
-}
-
-var requiredFlags = []cli.Flag{}
 
 var optionalFlags = []cli.Flag{
 	ListenAddrFlag,
@@ -219,33 +203,31 @@ var optionalFlags = []cli.Flag{
 	S3TimeoutFlag,
 	FallbackFlag,
 	CacheFlag,
+	CelestiaAuthTokenFlag,
+	CelestiaDefaultKeyNameFlag,
+	CelestiaKeyringPathFlag,
+	CelestiaCoreGRPCAddrFlag,
+	CelestiaCoreGRPCTLSEnabledFlag,
+	CelestiaCoreGRPCAuthTokenFlag,
+	CelestiaP2PNetworkFlag,
 	CelestiaBlobIDCompactFlag,
-}
-
-func init() {
-	optionalFlags = append(optionalFlags, oplog.CLIFlags(EnvVarPrefix)...)
-	Flags = append(Flags, celestiaRPCClientFlags...)
-	Flags = append(Flags, celestiaBlobSubmitterFlags...)
-	Flags = append(Flags, CelestiaTxClientEnabledFlag)
-	Flags = append(Flags, optionalFlags...)
 }
 
 // Flags contains the list of configuration options available to the binary.
 var Flags []cli.Flag
+
+func init() {
+	optionalFlags = append(optionalFlags, oplog.CLIFlags(EnvVarPrefix)...)
+	Flags = append(requiredFlags, optionalFlags...)
+}
 
 type CLIConfig struct {
 	CelestiaEndpoint      string
 	CelestiaTLSEnabled    bool
 	CelestiaAuthToken     string
 	CelestiaNamespace     string
-	TxClientEnabled       bool
-	DefaultKeyName        string
-	KeyringPath           string
-	CoreGRPCAddr          string
-	CoreGRPCTLSEnabled    bool
-	CoreGRPCAuthToken     string
-	P2PNetwork            string
 	CelestiaCompactBlobID bool
+	TxClientCOnfig        celestia.TxClientConfig
 	S3Config              s3.S3Config
 	Fallback              bool
 	Cache                 bool
@@ -257,14 +239,15 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 		CelestiaTLSEnabled:    ctx.Bool(CelestiaTLSEnabledFlagName),
 		CelestiaAuthToken:     ctx.String(CelestiaAuthTokenFlagName),
 		CelestiaNamespace:     ctx.String(CelestiaNamespaceFlagName),
-		TxClientEnabled:       ctx.Bool(CelestiaTxClientEnabledFlagName),
-		DefaultKeyName:        ctx.String(CelestiaDefaultKeyNameFlagName),
-		KeyringPath:           ctx.String(CelestiaKeyringPathFlagName),
-		CoreGRPCAddr:          ctx.String(CelestiaCoreGRPCAddrFlagName),
-		CoreGRPCTLSEnabled:    ctx.Bool(CelestiaCoreGRPCTLSEnabledFlagName),
-		CoreGRPCAuthToken:     ctx.String(CelestiaCoreGRPCAuthTokenFlagName),
-		P2PNetwork:            ctx.String(CelestiaP2PNetworkFlagName),
 		CelestiaCompactBlobID: ctx.Bool(CelestiaCompactBlobIDFlagName),
+		TxClientCOnfig: celestia.TxClientConfig{
+			DefaultKeyName:     ctx.String(CelestiaDefaultKeyNameFlagName),
+			KeyringPath:        ctx.String(CelestiaKeyringPathFlagName),
+			CoreGRPCAddr:       ctx.String(CelestiaCoreGRPCAddrFlagName),
+			CoreGRPCTLSEnabled: ctx.Bool(CelestiaCoreGRPCTLSEnabledFlagName),
+			CoreGRPCAuthToken:  ctx.String(CelestiaCoreGRPCAuthTokenFlagName),
+			P2PNetwork:         ctx.String(CelestiaP2PNetworkFlagName),
+		},
 		S3Config: s3.S3Config{
 			S3CredentialType: toS3CredentialType(ctx.String(S3CredentialTypeFlagName)),
 			Bucket:           ctx.String(S3BucketFlagName),
@@ -279,29 +262,37 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 	}
 }
 
+func (c CLIConfig) TxClientEnabled() bool {
+	return c.TxClientCOnfig.KeyringPath != "" || c.TxClientCOnfig.CoreGRPCAuthToken != ""
+}
+
 func (c CLIConfig) Check() error {
-	if c.TxClientEnabled {
+	if c.TxClientEnabled() {
 		// If tx client is enabled, ensure tx client flags are set
-		if c.DefaultKeyName == "" || c.KeyringPath == "" || c.CoreGRPCAddr == "" || c.P2PNetwork == "" {
-			return errors.New("all celestia blob submitter flags must be set when celestia tx client is enabled")
+		if c.TxClientCOnfig.DefaultKeyName == "" {
+			return errors.New("--celestia.tx-client.key-name must be set")
 		}
-	} else {
-		// If tx client is not enabled, ensure regular celestia client flags are set
-		if c.CelestiaEndpoint == "" || c.CelestiaAuthToken == "" || c.CelestiaNamespace == "" {
-			return errors.New("all celestia rpc client flags must be set when celestia tx client is disabled")
+		if c.TxClientCOnfig.KeyringPath == "" {
+			return errors.New("--celestia.tx-client.keyring-path must be set")
 		}
-		if _, err := hex.DecodeString(c.CelestiaNamespace); err != nil {
-			return err
+		if c.TxClientCOnfig.CoreGRPCAddr == "" {
+			return errors.New("--celestia.tx-client.core-grpc.addr must be set")
 		}
+		if c.TxClientCOnfig.P2PNetwork == "" {
+			return errors.New("--celestia.tx-client.p2p-network must be set")
+		}
+	}
+	if _, err := hex.DecodeString(c.CelestiaNamespace); err != nil {
+		return fmt.Errorf("celestia namespace: %w", err)
 	}
 
 	// S3 config validation (existing logic)
 	if c.S3Config.S3CredentialType != s3.S3CredentialUnknown && c.S3Config.Bucket == "" {
-		return errors.New("S3 bucket must be set when S3 is enabled")
+		return errors.New("s3: bucket must be set when S3 is enabled")
 	}
 	if c.S3Config.S3CredentialType == s3.S3CredentialStatic {
 		if c.S3Config.AccessKeyID == "" || c.S3Config.AccessKeySecret == "" {
-			return errors.New("S3 access key ID and secret must be set for static credentials")
+			return errors.New("s3 static credentials: access key ID and secret must be set")
 		}
 	}
 
@@ -311,15 +302,8 @@ func (c CLIConfig) Check() error {
 func (c CLIConfig) CelestiaConfig() celestia.RPCClientConfig {
 	ns, _ := hex.DecodeString(c.CelestiaNamespace)
 	var cfg *celestia.TxClientConfig
-	if c.TxClientEnabled {
-		cfg = &celestia.TxClientConfig{
-			DefaultKeyName:     c.DefaultKeyName,
-			KeyringPath:        c.KeyringPath,
-			CoreGRPCAddr:       c.CoreGRPCAddr,
-			CoreGRPCTLSEnabled: c.CoreGRPCTLSEnabled,
-			CoreGRPCAuthToken:  c.CoreGRPCAuthToken,
-			P2PNetwork:         c.P2PNetwork,
-		}
+	if c.TxClientEnabled() {
+		cfg = &c.TxClientCOnfig
 	}
 	return celestia.RPCClientConfig{
 		URL:            c.CelestiaEndpoint,
@@ -343,15 +327,6 @@ func (c CLIConfig) FallbackEnabled() bool {
 	return c.Fallback
 }
 
-func CheckRequired(ctx *cli.Context) error {
-	for _, f := range requiredFlags {
-		if !ctx.IsSet(f.Names()[0]) {
-			return fmt.Errorf("flag %s is required", f.Names()[0])
-		}
-	}
-	return nil
-}
-
 func toS3CredentialType(s string) s3.S3CredentialType {
 	if s == string(s3.S3CredentialStatic) {
 		return s3.S3CredentialStatic
@@ -359,4 +334,13 @@ func toS3CredentialType(s string) s3.S3CredentialType {
 		return s3.S3CredentialIAM
 	}
 	return s3.S3CredentialUnknown
+}
+
+func CheckRequired(ctx *cli.Context) error {
+	for _, f := range requiredFlags {
+		if !ctx.IsSet(f.Names()[0]) {
+			return fmt.Errorf("flag %s is required", f.Names()[0])
+		}
+	}
+	return nil
 }

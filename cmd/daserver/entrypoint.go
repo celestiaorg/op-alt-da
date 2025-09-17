@@ -39,10 +39,14 @@ func StartDAServer(cliCtx *cli.Context) error {
 	case cfg.CelestiaRPCClientEnabled():
 		l.Info("Using celestia storage", "url", cfg.CelestiaConfig().URL)
 		store := celestia.NewCelestiaStore(cfg.CelestiaConfig())
-		l.Info("Using s3 storage", "config", cfg.S3Config)
-		s3Store, err := s3.NewS3(cfg.S3Config)
-		if err != nil {
-			return err
+		var s3Store *s3.S3Store
+		var err error
+		if cfg.FallbackEnabled() || cfg.CacheEnabled() {
+			l.Info("Using s3 storage", "config", cfg.S3Config)
+			s3Store, err = s3.NewS3(cfg.S3Config)
+			if err != nil {
+				return err
+			}
 		}
 		server = celestia.NewCelestiaServer(cliCtx.String(ListenAddrFlagName), cliCtx.Int(PortFlagName), store, s3Store, cfg.FallbackEnabled(), cfg.CacheEnabled(), l)
 	}
