@@ -18,7 +18,7 @@ import (
 const (
 	ListenAddrFlagName         = "addr"
 	PortFlagName               = "port"
-	CelestiaAddrFlagName       = "celestia.addr"
+	CelestiaServerFlagName     = "celestia.server"
 	CelestiaTLSEnabledFlagName = "celestia.tls-enabled"
 	CelestiaAuthTokenFlagName  = "celestia.auth-token"
 	CelestiaNamespaceFlagName  = "celestia.namespace"
@@ -65,8 +65,8 @@ var (
 		Value:   3100,
 		EnvVars: prefixEnvVars("PORT"),
 	}
-	CelestiaAddrFlag = &cli.StringFlag{
-		Name:    CelestiaAddrFlagName,
+	CelestiaServerFlag = &cli.StringFlag{
+		Name:    CelestiaServerFlagName,
 		Usage:   "celestia rpc endpoint",
 		Value:   "http://localhost:26658",
 		EnvVars: prefixEnvVars("CELESTIA_ADDR"),
@@ -190,7 +190,7 @@ var (
 	}
 )
 var celestiaRPCClientFlags = []cli.Flag{
-	CelestiaAddrFlag,
+	CelestiaServerFlag,
 	CelestiaTLSEnabledFlag,
 	CelestiaAuthTokenFlag,
 	CelestiaNamespaceFlag,
@@ -253,7 +253,7 @@ type CLIConfig struct {
 
 func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 	return CLIConfig{
-		CelestiaEndpoint:      ctx.String(CelestiaAddrFlagName),
+		CelestiaEndpoint:      ctx.String(CelestiaServerFlagName),
 		CelestiaTLSEnabled:    ctx.Bool(CelestiaTLSEnabledFlagName),
 		CelestiaAuthToken:     ctx.String(CelestiaAuthTokenFlagName),
 		CelestiaNamespace:     ctx.String(CelestiaNamespaceFlagName),

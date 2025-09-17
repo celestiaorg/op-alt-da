@@ -11,7 +11,7 @@ celestia da-server accepts the following flags for celestia storage using
 [celestia go client](https://docs.celestia.org/how-to-guides/client/go#create-main-go)
 
 ````
-   --celestia.addr value                            celestia rpc endpoint (default: "http://localhost:26658") [$OP_ALTDA_CELESTIA_ADDR]
+   --celestia.server value                            celestia rpc endpoint (default: "http://localhost:26658") [$OP_ALTDA_CELESTIA_SERVER]
    --celestia.tls-enabled                           celestia rpc TLS (default: true) [$OP_ALTDA_CELESTIA_TLS_ENABLED]
    --celestia.auth-token value                      celestia rpc auth token [$OP_ALTDA_CELESTIA_AUTH_TOKEN]
    --celestia.namespace value                       celestia namespace [$OP_ALTDA_CELESTIA_NAMESPACE]
@@ -261,7 +261,7 @@ op-batcher
 
 ```sh
 da-server
-      --celestia.addr=http://localhost:26658
+      --celestia.server=http://localhost:26658
       --celestia.auth-token=$CELESTIA_NODE_AUTH_TOKEN
       --celestia.namespace=$NAMESPACE
 ```
