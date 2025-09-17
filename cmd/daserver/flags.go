@@ -68,7 +68,7 @@ var (
 		Name:    CelestiaServerFlagName,
 		Usage:   "celestia rpc endpoint",
 		Value:   "http://localhost:26658",
-		EnvVars: prefixEnvVars("CELESTIA_ADDR"),
+		EnvVars: prefixEnvVars("CELESTIA_SERVER"),
 	}
 	CelestiaTLSEnabledFlag = &cli.BoolFlag{
 		Name:    CelestiaTLSEnabledFlagName,

@@ -11,7 +11,7 @@ celestia da-server accepts the following flags for celestia storage using
 [celestia go client](https://docs.celestia.org/how-to-guides/client/go#create-main-go)
 
 ````
-   --celestia.server value                          celestia rpc endpoint (default: "http://localhost:26658") [$OP_ALTDA_CELESTIA_ADDR]
+   --celestia.server value                          celestia rpc endpoint (default: "http://localhost:26658") [$OP_ALTDA_CELESTIA_SERVER]
    --celestia.namespace value                       celestia namespace [$OP_ALTDA_CELESTIA_NAMESPACE]
    --addr value                                     alt da server listening address (default: "127.0.0.1") [$OP_ALTDA_ADDR]
    --port value                                     alt da server listening port (default: 3100) [$OP_ALTDA_PORT]
