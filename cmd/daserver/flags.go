@@ -224,7 +224,7 @@ type CLIConfig struct {
 	CelestiaAuthToken     string
 	CelestiaNamespace     string
 	CelestiaCompactBlobID bool
-	TxClientCOnfig        celestia.TxClientConfig
+	TxClientConfig        celestia.TxClientConfig
 	S3Config              s3.S3Config
 	Fallback              bool
 	Cache                 bool
@@ -237,7 +237,7 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 		CelestiaAuthToken:     ctx.String(CelestiaAuthTokenFlagName),
 		CelestiaNamespace:     ctx.String(CelestiaNamespaceFlagName),
 		CelestiaCompactBlobID: ctx.Bool(CelestiaCompactBlobIDFlagName),
-		TxClientCOnfig: celestia.TxClientConfig{
+		TxClientConfig: celestia.TxClientConfig{
 			DefaultKeyName:     ctx.String(CelestiaDefaultKeyNameFlagName),
 			KeyringPath:        ctx.String(CelestiaKeyringPathFlagName),
 			CoreGRPCAddr:       ctx.String(CelestiaCoreGRPCAddrFlagName),
@@ -260,22 +260,22 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 }
 
 func (c CLIConfig) TxClientEnabled() bool {
-	return c.TxClientCOnfig.KeyringPath != "" || c.TxClientCOnfig.CoreGRPCAuthToken != ""
+	return c.TxClientConfig.KeyringPath != "" || c.TxClientConfig.CoreGRPCAuthToken != ""
 }
 
 func (c CLIConfig) Check() error {
 	if c.TxClientEnabled() {
 		// If tx client is enabled, ensure tx client flags are set
-		if c.TxClientCOnfig.DefaultKeyName == "" {
+		if c.TxClientConfig.DefaultKeyName == "" {
 			return errors.New("--celestia.tx-client.key-name must be set")
 		}
-		if c.TxClientCOnfig.KeyringPath == "" {
+		if c.TxClientConfig.KeyringPath == "" {
 			return errors.New("--celestia.tx-client.keyring-path must be set")
 		}
-		if c.TxClientCOnfig.CoreGRPCAddr == "" {
+		if c.TxClientConfig.CoreGRPCAddr == "" {
 			return errors.New("--celestia.tx-client.core-grpc.addr must be set")
 		}
-		if c.TxClientCOnfig.P2PNetwork == "" {
+		if c.TxClientConfig.P2PNetwork == "" {
 			return errors.New("--celestia.tx-client.p2p-network must be set")
 		}
 	}
@@ -300,7 +300,7 @@ func (c CLIConfig) CelestiaConfig() celestia.RPCClientConfig {
 	ns, _ := hex.DecodeString(c.CelestiaNamespace)
 	var cfg *celestia.TxClientConfig
 	if c.TxClientEnabled() {
-		cfg = &c.TxClientCOnfig
+		cfg = &c.TxClientConfig
 	}
 	return celestia.RPCClientConfig{
 		URL:            c.CelestiaEndpoint,
