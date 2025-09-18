@@ -90,244 +90,34 @@ Quicknode:
 
 ## Testing:
 
-Follow the usual instructions for setting up devnet.
+To test the integration against devnet, you'll need to configure `kurtosis-devnet/simple.yaml`:
 
-There are two ways to test the celestia `da-server` in devnet and testnet
-modes.
+1.  **Configure `da_server_params`** in `kurtosis-devnet/simple.yaml`:
 
-### Using rollop:
+    ```yaml
+      da_params:
+          image: opcelestia/localestia-da-server:latest
+    ```
 
-The first way uses a fork of [rollop](https://github.com/0xFableOrg/roll-op) to
-automate deployment. This method is recommended for beginners.
+2.  **Add `altda_deploy_config` to `optimism_package`** in the same `simple.yaml` file:
 
-Clone the [rollop](https://github.com/celestiaorg/roll-op) repository, checkout
-the `alt-da` branch and follow the instructions in the README to setup the
-rollop stack.
+    ```yaml
+      altda_deploy_config:
+        use_altda: false
+        da_commitment_type: GenericCommitment
+        da_challenge_window: 100
+        da_resolve_window: 100
+        da_bond_size: 0
+        da_resolver_refund_percentage: 0
+    ```
 
-```sh
-git clone https://github.com/celestiaorg/roll-op.git
-cd roll-op
-git checkout alt-da
-./rollop setup --yes
-````
+3.  **Start the devnet** from the `kurtosis-devnet` directory:
 
-rollop is configured to use `mocha-4` celestia network by default in both
-devnet and testnet modes.
+    ```sh
+    cd kurtosis-devnet
+    just simple-devnet
+    ```
 
-#### Devnet
+The `da_params` docker image uses [localestia](https://github.com/celestiaorg/localestia) to simulate a celestia network.
 
-Once the rollop stack is setup, you can start the devnet with the following
-command:
-
-```sh
-./rollop --clean devnet
-```
-
-This will start the devnet in Alt-DA mode with celestia-node running in testnet
-mode.
-
-You can verify that the devnet is running by checking da-server logs:
-
-```sh
-tail -f deployments/rollup/logs/da_server.log
-```
-
-Upon successful operation, the logs should contain the following message:
-
-```sh
-t=2024-05-30T19:08:30+0000 lvl=info msg="Using celestia storage" url=http://127.0.0.1:26658
-t=2024-05-30T19:08:32+0000 lvl=info msg="celestia: blob successfully submitted" id=0900000000000000b25a32154ab00902cfc0269b3239b612ebfe7f7263545119ee7251cc72728142
-t=2024-05-30T19:08:34+0000 lvl=info msg="celestia: blob successfully submitted" id=0a00000000000000cb559bc3c6a01b0819460ce86c13165fdc58ac9c81c1e52404f8c4b36097db87
-t=2024-05-30T19:08:34+0000 lvl=info msg="celestia: blob request" id=010c0900000000000000b25a32154ab00902cfc0269b3239b612ebfe7f7263545119ee7251cc72728142
-```
-
-#### Testnet
-
-Copy example config `config.toml.example` to `config.toml` and update any
-fields as required.
-
-Next start the testnet with the following command:
-
-
-```sh
-./rollop --name=celopstia-11177111 --preset=prod --config=config.toml l2
-```
-
-You can verify that the testnet is running by checking da-server logs:
-
-```sh
-tail -f deployments/celopstia-11177111/logs/da_server.log
-```
-
-Upon successful operation, the logs should contain the following message:
-
-```sh
-t=2024-06-03T21:36:32+0000 lvl=info msg="Using celestia storage" url=http://127.0.0.1:26658
-t=2024-06-03T21:36:32+0000 lvl=info msg="Started DA Server"
-t=2024-06-03T21:37:16+0000 lvl=debug msg=PUT url=/put/
-t=2024-06-03T21:37:19+0000 lvl=info msg="celestia: blob successfully submitted" id=430f1e0000000000f34842f2c61d3b1fc1fad749ed442320fdce7023669f3116ea8df024ce792b7f
-t=2024-06-03T21:38:23+0000 lvl=debug msg=PUT url=/put/
-t=2024-06-03T21:38:28+0000 lvl=debug msg=GET url=/get/0x010c430f1e0000000000f34842f2c61d3b1fc1fad749ed442320fdce7023669f3116ea8df024ce792b7f
-t=2024-06-03T21:38:28+0000 lvl=info msg="celestia: blob request" id=010c430f1e0000000000f34842f2c61d3b1fc1fad749ed442320fdce7023669f3116ea8df024ce792b7f
-```
-
-To configure the da-server to use a different namespace, update the
-`da_namespace` field in `config.toml`.
-
-To configure the da-server to use a different celestia network, you'll need to
-update the `--p2p.network` flag in `l2_batcher.py`, `l2_node.py` and
-`celestia_light_node.py` for now. This will be configurable in the future.
-
-##### Troubleshooting:
-
-Check the logs for the `da-server` to see if it is running successfully:
-
-```sh
-tail -f deployments/rollup/logs/da_server.log
-```
-
-Additionally verify that the batcher is able to submit transactions to the celestia-node:
-
-```sh
-tail -f deployments/rollup/logs/l2_batcher.log
-```
-
-### Using docker-compose:
-
-The second way to test the celestia `da-server` uses docker-compose to deploy
-the rollup stack. This method reuses the bedrock devnet docker-compose setup
-and is recommended for developers.
-
-#### Devnet:
-
-For testing devnet, we'll use the local-celestia-devnet docker image which
-simulates the whole celestia network including a local celestia-node and does
-not require a peer-to-peer connection.
-
-To run a local devnet with local-celestia-devnet:
-
-```sh
-DEVNET_ALT_DA="true" GENERIC_ALT_DA="true"  make devnet-up
-```
-
-This will start the devnet in Alt-DA mode with local-celestia-devnet.
-
-You can verify that the devnet is running by checking da-server logs:
-
-```sh
-docker logs -f ops-da-server-1 | grep celestia
-```
-
-Upon successful operation, the logs should contain the following message:
-
-```sh
-t=2024-05-30T19:08:30+0000 lvl=info msg="Using celestia storage" url=http://da:26658
-t=2024-05-30T19:08:32+0000 lvl=info msg="celestia: blob successfully submitted" id=0900000000000000b25a32154ab00902cfc0269b3239b612ebfe7f7263545119ee7251cc72728142
-t=2024-05-30T19:08:34+0000 lvl=info msg="celestia: blob successfully submitted" id=0a00000000000000cb559bc3c6a01b0819460ce86c13165fdc58ac9c81c1e52404f8c4b36097db87
-t=2024-05-30T19:08:34+0000 lvl=info msg="celestia: blob request" id=010c0900000000000000b25a32154ab00902cfc0269b3239b612ebfe7f7263545119ee7251cc72728142
-```
-
-#### Testnet:
-
-Usually, it's better to deploy both OP stack and celestia-node in the same
-network, but for ease of testing, we will modify the devnet docker-compose
-file to submit to celestia testnet instead.
-
-For running Alt-DA in celestia testnet mode, we'll use the celestia-node docker
-image which requires a [celestia testnet network like mocha or
-arabica](https://docs.celestia.org/nodes/participate).
-
-To run a celestia-node in testnet mode,
-follow the instructions for [setting up a light node](https://docs.celestia.org/developers/optimism#setting-up-your-light-node)
-and changes required to the [docker-compose file](https://docs.celestia.org/developers/optimism#docker-changes)
-
-Note that in this case, the auth token needs to be configured using the
-CELESTIA_NODE_AUTH_TOKEN environment variable.
-
-To obtain the auth token for celestia-node,
-check [the documentation for the node type you are using](https://docs.celestia.org/developers/node-tutorial#auth-token)
-
-Once the docker compose file is modified, you can run the devnet with the following command:
-
-```sh
-DEVNET_ALT_DA="true" GENERIC_ALT_DA="true"  make devnet-up
-```
-
-This will start the devnet in Alt-DA mode with celestia-node running in testnet
-mode.
-
-You can verify that the devnet is running by checking da-server logs:
-
-```sh
-docker logs -f ops-bedrock-da-server-1 | grep celestia
-```
-
-Once again, upon successful operation, the logs should contain the following
-message:
-
-```sh
-t=2024-05-30T19:08:30+0000 lvl=info msg="Using celestia storage" url=http://da:26658
-t=2024-05-30T19:08:32+0000 lvl=info msg="celestia: blob successfully submitted" id=0900000000000000b25a32154ab00902cfc0269b3239b612ebfe7f7263545119ee7251cc72728142
-t=2024-05-30T19:08:34+0000 lvl=info msg="celestia: blob successfully submitted" id=0a00000000000000cb559bc3c6a01b0819460ce86c13165fdc58ac9c81c1e52404f8c4b36097db87
-t=2024-05-30T19:08:34+0000 lvl=info msg="celestia: blob request" id=010c0900000000000000b25a32154ab00902cfc0269b3239b612ebfe7f7263545119ee7251cc72728142
-```
-
-As an alternative, you may wish to deploy OP stack and celestia-node both to
-testnets e.g. sepolia and mocha.
-
-In this case, run a [celestia light node](https://docs.celestia.org/nodes/light-node#setting-up-your-light-node)
-and da-server, then follow the instructions for
-[creating your own L2 rollup testnet](https://docs.optimism.io/builders/chain-operators/tutorials/create-l2-rollup)
-including the following flags:
-
-```sh
-op-node
-      --alt-da.enabled=true
-      --alt-da.da-service=true
-```
-
-```sh
-op-batcher
-      --alt-da.enabled=true
-      --alt-da.da-service=true
-```
-
-```sh
-da-server
-      --celestia.server=http://localhost:26658
-      --celestia.auth-token=$CELESTIA_NODE_AUTH_TOKEN
-      --celestia.namespace=$NAMESPACE
-```
-
-where `$CELESTIA_NODE_AUTH_TOKEN` is the auth token for the celestia-node and `$NAMESPACE` is a random valid namespace.
-
-##### Troubleshooting:
-
-Check the logs for the `da-server` to see if it is running successfully:
-
-```sh
-docker logs -f ops-bedrock-da-server-1
-```
-
-Additionally verify that the batcher is able to submit transactions to the celestia-node:
-
-```sh
-docker logs -f ops-bedrock-op-batcher-1
-```
-
-If you see the following error:
-
-```
-panic: runtime error: invalid memory address or nil pointer dereference
-[signal SIGSEGV: segmentation violation code=0x2 addr=0x0 pc=0x10964251c]
-
-goroutine 1 [running]:
-github.com/celestiaorg/celestia-node/api/client.(*Client).Close(0x140005daaf0)
-        /Users/tuxcanfly/Work/celestia-node/api/client/client.go:147 +0x2c
-```
-
-it means that the client was not able to connect to the core gRPC server,
-please ensure your `--celestia.tx-client.core-grpc.addr`,
-`--celestia.tx-client.core-grpc.auth-token` and `--celestia.tx-client.core-grpc.tls-enabled` flags are correct.
-Note that boolean flags like `--celestia.tls-enabled` and `--celestia.tx-client.core-grpc.tls-enabled` should be set as
-`--celestia.tls-enabled=false` and `--celestia.tx-client.core-grpc.tls-enabled=true` respectively, for example.
+For more detailed information refer to the [Optimism Alt-DA mode documentation](https://docs.optimism.io/operators/chain-operators/features/alt-da-mode).
