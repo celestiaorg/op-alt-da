@@ -43,6 +43,10 @@ const (
 	S3TimeoutFlagName         = "s3.timeout"
 	FallbackFlagName          = "routing.fallback"
 	CacheFlagName             = "routing.cache"
+
+	// metrics
+	MetricsEnabledFlagName = "metrics.enabled"
+	MetricsPortFlagName    = "metrics.port"
 )
 
 const EnvVarPrefix = "OP_ALTDA"
@@ -181,6 +185,18 @@ var (
 		Value:   false,
 		EnvVars: prefixEnvVars("CACHE"),
 	}
+	MetricsEnabledFlag = &cli.BoolFlag{
+		Name:    MetricsEnabledFlagName,
+		Usage:   "Enable Prometheus metrics",
+		Value:   false,
+		EnvVars: prefixEnvVars("METRICS_ENABLED"),
+	}
+	MetricsPortFlag = &cli.IntFlag{
+		Name:    MetricsPortFlagName,
+		Usage:   "Port for Prometheus metrics server",
+		Value:   6060,
+		EnvVars: prefixEnvVars("METRICS_PORT"),
+	}
 )
 var requiredFlags = []cli.Flag{
 	CelestiaNamespaceFlag,
@@ -208,6 +224,8 @@ var optionalFlags = []cli.Flag{
 	S3TimeoutFlag,
 	FallbackFlag,
 	CacheFlag,
+	MetricsEnabledFlag,
+	MetricsPortFlag,
 }
 
 // Flags contains the list of configuration options available to the binary.
@@ -228,6 +246,8 @@ type CLIConfig struct {
 	S3Config              s3.S3Config
 	Fallback              bool
 	Cache                 bool
+	MetricsEnabled        bool
+	MetricsPort           int
 }
 
 func ReadCLIConfig(ctx *cli.Context) CLIConfig {
@@ -254,8 +274,10 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 			AccessKeySecret:  ctx.String(S3AccessKeySecretFlagName),
 			Timeout:          ctx.Duration(S3TimeoutFlagName),
 		},
-		Fallback: ctx.Bool(FallbackFlagName),
-		Cache:    ctx.Bool(CacheFlagName),
+		Fallback:       ctx.Bool(FallbackFlagName),
+		Cache:          ctx.Bool(CacheFlagName),
+		MetricsEnabled: ctx.Bool(MetricsEnabledFlagName),
+		MetricsPort:    ctx.Int(MetricsPortFlagName),
 	}
 }
 
