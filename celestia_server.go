@@ -19,6 +19,32 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+var (
+	requestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "op_altda_request_duration_seconds",
+			Help:    "Duration of requests",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"method"},
+	)
+	blobSize = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "op_altda_blob_size_bytes",
+			Help:    "Size of blobs",
+			Buckets: []float64{1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 8388608}, // 1k to 8M
+		},
+	)
+	inclusionHeight = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "op_altda_inclusion_height",
+			Help: "Inclusion height of blobs",
+		},
+	)
 )
 
 type CelestiaServer struct {
@@ -34,11 +60,14 @@ type CelestiaServer struct {
 	fallback     bool
 	cacheLock    sync.RWMutex
 	fallbackLock sync.RWMutex
+
+	metricsEnabled bool
+	metricsPort    int
 }
 
-func NewCelestiaServer(host string, port int, store *CelestiaStore, s3Store *s3.S3Store, fallback bool, cache bool, log log.Logger) *CelestiaServer {
+func NewCelestiaServer(host string, port int, store *CelestiaStore, s3Store *s3.S3Store, fallback bool, cache bool, metricsEnabled bool, metricsPort int, log log.Logger) *CelestiaServer {
 	endpoint := net.JoinHostPort(host, strconv.Itoa(port))
-	return &CelestiaServer{
+	server := &CelestiaServer{
 		log:      log,
 		endpoint: endpoint,
 		store:    store,
@@ -46,9 +75,15 @@ func NewCelestiaServer(host string, port int, store *CelestiaStore, s3Store *s3.
 		httpServer: &http.Server{
 			Addr: endpoint,
 		},
-		fallback: fallback,
-		cache:    cache,
+		fallback:       fallback,
+		cache:          cache,
+		metricsEnabled: metricsEnabled,
+		metricsPort:    metricsPort,
 	}
+	if metricsEnabled {
+		prometheus.MustRegister(requestDuration, blobSize, inclusionHeight)
+	}
+	return server
 }
 
 func (d *CelestiaServer) Start() error {
@@ -80,6 +115,16 @@ func (d *CelestiaServer) Start() error {
 		}
 	}()
 
+	if d.metricsEnabled {
+		go func() {
+			metricsAddr := fmt.Sprintf(":%d", d.metricsPort)
+			d.log.Info("Starting metrics server", "addr", metricsAddr)
+			if err := http.ListenAndServe(metricsAddr, promhttp.Handler()); err != nil {
+				d.log.Error("Metrics server failed", "err", err)
+			}
+		}()
+	}
+
 	// verify that the server comes up
 	tick := time.NewTimer(10 * time.Millisecond)
 	defer tick.Stop()
@@ -93,6 +138,9 @@ func (d *CelestiaServer) Start() error {
 }
 
 func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
+	timer := prometheus.NewTimer(requestDuration.WithLabelValues("get"))
+	defer timer.ObserveDuration()
+
 	d.log.Debug("GET", "url", r.URL)
 
 	route := path.Dir(r.URL.Path)
@@ -154,6 +202,9 @@ func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
+	timer := prometheus.NewTimer(requestDuration.WithLabelValues("put"))
+	defer timer.ObserveDuration()
+
 	d.log.Debug("PUT", "url", r.URL)
 
 	route := path.Base(r.URL.Path)
@@ -174,6 +225,17 @@ func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 		d.log.Info("Failed to store commitment to the DA server", "err", err, "key", key)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
+	}
+
+	// Observe metrics for blob size and height
+	if d.metricsEnabled {
+		blobSize.Observe(float64(len(input)))
+		var blobID CelestiaBlobID
+		// Skip first 2 bytes which are frame version and altda version
+		if err := blobID.UnmarshalBinary(commitment[2:]); err != nil {
+			return
+		}
+		inclusionHeight.Set(float64(blobID.Height))
 	}
 
 	if d.cache || d.fallback {

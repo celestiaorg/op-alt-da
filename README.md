@@ -32,12 +32,14 @@ celestia da-server accepts the following flags for celestia storage using
    --celestia.tx-client.core-grpc.auth-token value  celestia tx client core grpc auth token [$OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_AUTH_TOKEN]
    --celestia.tx-client.p2p-network value           celestia tx client p2p network (default: "mocha-4") [$OP_ALTDA_CELESTIA_TX_CLIENT_P2P_NETWORK]
    --celestia.compact-blobid                        enable compact celestia blob IDs. false indicates share offset and size will be included in the blob ID (default: true) [$OP_ALTDA_CELESTIA_BLOBID_COMPACT]
-   --log.level value                                The lowest log level that will be output (default: INFO) [$OP_ALTDA_LOG_LEVEL]
-   --log.format value                               Format the log output. Supported formats: 'text', 'terminal', 'logfmt', 'json', 'json-pretty', (default: text) [$OP_ALTDA_LOG_FORMAT]
-   --log.color                                      Color the log output if in terminal mode (default: false) [$OP_ALTDA_LOG_COLOR]
-   --log.pid                                        Show pid in the log (default: false) [$OP_ALTDA_LOG_PID]
-   --help, -h                                       show help
-   --version, -v                                    print the version
+    --log.level value                                The lowest log level that will be output (default: INFO) [$OP_ALTDA_LOG_LEVEL]
+    --log.format value                               Format the log output. Supported formats: 'text', 'terminal', 'logfmt', 'json', 'json-pretty', (default: text) [$OP_ALTDA_LOG_FORMAT]
+    --log.color                                      Color the log output if in terminal mode (default: false) [$OP_ALTDA_LOG_COLOR]
+    --log.pid                                        Show pid in the log (default: false) [$OP_ALTDA_LOG_PID]
+    --metrics.enabled                                Enable Prometheus metrics (default: false) [$OP_ALTDA_METRICS_ENABLED]
+    --metrics.port value                             Port for Prometheus metrics server (default: 6060) [$OP_ALTDA_METRICS_PORT]
+    --help, -h                                       show help
+    --version, -v                                    print the version
 ````
 
 ## RPC Connection
