@@ -138,8 +138,10 @@ func (d *CelestiaServer) Start() error {
 }
 
 func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
-	timer := prometheus.NewTimer(requestDuration.WithLabelValues("get"))
-	defer timer.ObserveDuration()
+	if d.metricsEnabled {
+		timer := prometheus.NewTimer(requestDuration.WithLabelValues("get"))
+		defer timer.ObserveDuration()
+	}
 
 	d.log.Debug("GET", "url", r.URL)
 
@@ -202,8 +204,10 @@ func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
-	timer := prometheus.NewTimer(requestDuration.WithLabelValues("put"))
-	defer timer.ObserveDuration()
+	if d.metricsEnabled {
+		timer := prometheus.NewTimer(requestDuration.WithLabelValues("put"))
+		defer timer.ObserveDuration()
+	}
 
 	d.log.Debug("PUT", "url", r.URL)
 
@@ -233,7 +237,7 @@ func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 		var blobID CelestiaBlobID
 		// Skip first 2 bytes which are frame version and altda version
 		if err := blobID.UnmarshalBinary(commitment[2:]); err != nil {
-			return
+			d.log.Error("Failed to unmarshal blob ID", "err", err)
 		}
 		inclusionHeight.Set(float64(blobID.Height))
 	}
@@ -241,7 +245,7 @@ func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 	if d.cache || d.fallback {
 		err = d.handleRedundantWrites(r.Context(), commitment, input)
 		if err != nil {
-			log.Error("Failed to write to redundant backends", "err", err)
+			d.log.Error("Failed to write to redundant backends", "err", err)
 		}
 	}
 
