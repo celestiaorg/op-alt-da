@@ -2,9 +2,9 @@ FROM golang:1.24-alpine3.22 as builder
 
 WORKDIR /
 COPY . op-alt-da
-RUN apk add --no-cache make
+RUN apk add --no-cache make ca-certificates
 WORKDIR /op-alt-da
-RUN make da-server ca-certificates
+RUN make da-server 
 
 FROM alpine:3.18
 
