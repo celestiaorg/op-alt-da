@@ -4,7 +4,7 @@ WORKDIR /
 COPY . op-alt-da
 RUN apk add --no-cache make
 WORKDIR /op-alt-da
-RUN make da-server
+RUN make da-server ca-certificates
 
 FROM alpine:3.18
 
