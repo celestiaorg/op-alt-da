@@ -176,6 +176,62 @@ func initRPCClient(cfg RPCClientConfig) (blobAPI.Module, error) {
 	return &celestiaClient.Blob, nil
 }
 
+// submitAndCreateBlobID submits a blob to Celestia and creates a marshaled blob ID.
+// If compactBlobID is true, it re-fetches the blob to get its index and length.
+func SubmitAndCreateBlobID(
+	ctx context.Context,
+	client blobAPI.Module,
+	submitFunc func(context.Context, blobAPI.Module, []*blob.Blob) (uint64, error),
+	namespace libshare.Namespace,
+	data []byte,
+	compactBlobID bool,
+) ([]byte, []byte, error) {
+	b, err := blob.NewBlob(libshare.ShareVersionZero, namespace, data, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	height, err := submitFunc(ctx, client, []*blob.Blob{b})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var blobID CelestiaBlobID
+	if compactBlobID {
+		// Re-fetch the blob to get its index and length
+		b, err = client.Get(ctx, height, namespace, b.Commitment)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		size, err := b.Length()
+		if err != nil {
+			return nil, nil, err
+		}
+
+		blobID = CelestiaBlobID{
+			Height:      height,
+			Commitment:  b.Commitment,
+			ShareOffset: uint32(b.Index()),
+			ShareSize:   uint32(size),
+			isCompact:   compactBlobID,
+		}
+	} else {
+		blobID = CelestiaBlobID{
+			Height:     height,
+			Commitment: b.Commitment,
+			isCompact:  compactBlobID,
+		}
+	}
+
+	id, err := blobID.MarshalBinary()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal blob ID: %w", err)
+	}
+
+	return id, b.Data(), nil
+}
+
 func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	d.Log.Info("celestia: blob request", "id", hex.EncodeToString(key))
 	ctx, cancel := context.WithTimeout(context.Background(), d.GetTimeout)
@@ -197,53 +253,18 @@ func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	return blob.Data(), nil
 }
 
-func (d *CelestiaStore) Put(ctx context.Context, data []byte) ([]byte, error) {
-	b, err := blob.NewBlob(libshare.ShareVersionZero, d.Namespace, data, nil)
-	if err != nil {
-		return nil, err
+func (d *CelestiaStore) Put(ctx context.Context, data []byte) ([]byte, []byte, error) {
+	var submitFunc = func(ctx context.Context, client blobAPI.Module, b []*blob.Blob) (uint64, error) {
+		return d.Client.Submit(ctx, b, state.NewTxConfig())
 	}
-
-	height, err := d.Client.Submit(ctx, []*blob.Blob{b}, state.NewTxConfig())
+	id, blobData, err := SubmitAndCreateBlobID(ctx, d.Client, submitFunc, d.Namespace, data, d.CompactBlobID)
 	if err != nil {
-		return nil, err
-	}
-
-	var blobID CelestiaBlobID
-	if d.CompactBlobID {
-		// Re-fetch the blob to get its index and length
-		b, err = d.Client.Get(ctx, height, d.Namespace, b.Commitment)
-		if err != nil {
-			return nil, err
-		}
-
-		size, err := b.Length()
-		if err != nil {
-			return nil, err
-		}
-
-		blobID = CelestiaBlobID{
-			Height:      height,
-			Commitment:  b.Commitment,
-			ShareOffset: uint32(b.Index()),
-			ShareSize:   uint32(size),
-			isCompact:   d.CompactBlobID,
-		}
-	} else {
-		blobID = CelestiaBlobID{
-			Height:     height,
-			Commitment: b.Commitment,
-			isCompact:  d.CompactBlobID,
-		}
-	}
-
-	id, err := blobID.MarshalBinary()
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal blob ID: %w", err)
+		return nil, nil, err
 	}
 
 	d.Log.Info("celestia: blob successfully submitted", "id", hex.EncodeToString(id))
 	commitment := altda.NewGenericCommitment(append([]byte{VersionByte}, id...))
-	return commitment.Encode(), nil
+	return commitment.Encode(), blobData, nil
 }
 
 func (d *CelestiaStore) CreateCommitment(data []byte) ([]byte, error) {
