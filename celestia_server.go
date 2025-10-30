@@ -3,6 +3,7 @@ package celestia
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/celestiaorg/celestia-node/blob"
+	libshare "github.com/celestiaorg/go-square/v2/share"
 	s3 "github.com/celestiaorg/op-alt-da/s3"
 	altda "github.com/ethereum-optimism/optimism/op-alt-da"
 	"github.com/ethereum-optimism/optimism/op-service/httputil"
@@ -159,48 +162,45 @@ func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1 read blob from cache if enabled
-	responseSent := false
 	if d.cache {
-		d.log.Debug("Retrieving data from cached backends")
-		input, err := d.multiSourceRead(r.Context(), comm, false)
-		if err == nil {
-			responseSent = true
-			if _, err := w.Write(input); err != nil {
+		cachedData, cacheErr := d.multiSourceRead(r.Context(), comm, d.store.Namespace, false)
+		if cacheErr == nil && cachedData != nil {
+			// Successfully got data from cache
+			if _, err := w.Write(cachedData); err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
-				return
 			}
+			return
 		}
 	}
 	// 2 read blob from Celestia
-	input, err := d.store.Get(r.Context(), comm)
-	if err != nil && errors.Is(err, altda.ErrNotFound) {
-		responseSent = true
-		w.WriteHeader(http.StatusNotFound)
+	celestiaData, err := d.store.Get(r.Context(), comm)
+	if err != nil {
+		if errors.Is(err, altda.ErrNotFound) {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
 		return
-	} else {
-		if input == nil {
-			responseSent = true
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		responseSent = true
-		if _, err := w.Write(input); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
 	}
 
-	//3 fallback
-	if d.fallback && err != nil {
-		input, err = d.multiSourceRead(r.Context(), comm, true)
-		if err != nil {
-			d.log.Error("Failed to read from fallback", "err", err)
+	if celestiaData != nil {
+		if _, err := w.Write(celestiaData); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
+		}
+		return
+	}
+	// 3 fallback
+	if d.fallback {
+		fallbackData, fallbackErr := d.multiSourceRead(r.Context(), comm, d.store.Namespace, true)
+		if fallbackErr == nil && fallbackData != nil {
+			if _, err := w.Write(fallbackData); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+			}
 			return
 		}
-	} else if !responseSent {
-		w.WriteHeader(http.StatusInternalServerError)
 	}
+	// if we goy here then no data was found
+	w.WriteHeader(http.StatusInternalServerError)
 }
 
 func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
@@ -223,7 +223,7 @@ func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	commitment, err := d.store.Put(r.Context(), input)
+	commitment, blobData, err := d.store.Put(r.Context(), input)
 	if err != nil {
 		key := hexutil.Encode(commitment)
 		d.log.Info("Failed to store commitment to the DA server", "err", err, "key", key)
@@ -243,7 +243,7 @@ func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if d.cache || d.fallback {
-		err = d.handleRedundantWrites(r.Context(), commitment, input)
+		err = d.handleRedundantWrites(r.Context(), commitment, blobData)
 		if err != nil {
 			d.log.Error("Failed to write to redundant backends", "err", err)
 		}
@@ -267,7 +267,7 @@ func (b *CelestiaServer) Stop() error {
 }
 
 // multiSourceRead ... reads from a set of backends and returns the first successfully read blob
-func (b *CelestiaServer) multiSourceRead(ctx context.Context, commitment []byte, fallback bool) ([]byte, error) {
+func (b *CelestiaServer) multiSourceRead(ctx context.Context, commitment []byte, namespace libshare.Namespace, fallback bool) ([]byte, error) {
 
 	if fallback {
 		b.fallbackLock.RLock()
@@ -277,7 +277,14 @@ func (b *CelestiaServer) multiSourceRead(ctx context.Context, commitment []byte,
 		defer b.cacheLock.RUnlock()
 	}
 
+	var blobID CelestiaBlobID
+	// Skip first 2 bytes which are frame version and altda version
+	if err := blobID.UnmarshalBinary(commitment[2:]); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal blob ID: %w", err)
+	}
+
 	key := crypto.Keccak256(commitment)
+	b.log.Debug("s3 key", "key", hex.EncodeToString(key))
 	ctx, cancel := context.WithTimeout(ctx, b.s3Store.Timeout())
 	data, err := b.s3Store.Get(ctx, key)
 	defer cancel()
@@ -286,9 +293,13 @@ func (b *CelestiaServer) multiSourceRead(ctx context.Context, commitment []byte,
 		return nil, errors.New("no data found in any redundant backend")
 	}
 
-	commit, err := b.store.CreateCommitment(data)
-	if err != nil || !bytes.Equal(commit, commitment[10:]) {
-		return nil, fmt.Errorf("celestia: invalid commitment: commit=%x commitment=%x err=%w", commit, commitment[10:], err)
+	blob, err := blob.NewBlob(libshare.ShareVersionZero, namespace, data, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create blob: %w", err)
+	}
+
+	if err != nil || !bytes.Equal(blob.Commitment, blobID.Commitment) {
+		return nil, fmt.Errorf("celestia: invalid commitment in multiSourceRead: commit=%x commitment=%x err=%w", blob.Commitment, blobID.Commitment, err)
 	}
 
 	return data, nil
