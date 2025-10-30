@@ -3,6 +3,7 @@ package celestia
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -161,48 +162,45 @@ func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1 read blob from cache if enabled
-	responseSent := false
 	if d.cache {
-		d.log.Debug("Retrieving data from cached backends")
-		input, err := d.multiSourceRead(r.Context(), comm, d.store.Namespace, false)
-		if err == nil {
-			responseSent = true
-			if _, err := w.Write(input); err != nil {
+		cachedData, cacheErr := d.multiSourceRead(r.Context(), comm, d.store.Namespace, false)
+		if cacheErr == nil && cachedData != nil {
+			// Successfully got data from cache
+			if _, err := w.Write(cachedData); err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
-				return
 			}
+			return
 		}
 	}
 	// 2 read blob from Celestia
-	input, err := d.store.Get(r.Context(), comm)
-	if err != nil && errors.Is(err, altda.ErrNotFound) {
-		responseSent = true
-		w.WriteHeader(http.StatusNotFound)
+	celestiaData, err := d.store.Get(r.Context(), comm)
+	if err != nil {
+		if errors.Is(err, altda.ErrNotFound) {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
 		return
-	} else {
-		if input == nil {
-			responseSent = true
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		responseSent = true
-		if _, err := w.Write(input); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
 	}
 
-	//3 fallback
-	if d.fallback && err != nil {
-		input, err = d.multiSourceRead(r.Context(), comm, d.store.Namespace, true)
-		if err != nil {
-			d.log.Error("Failed to read from fallback", "err", err)
+	if celestiaData != nil {
+		if _, err := w.Write(celestiaData); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
+		}
+		return
+	}
+	// 3 fallback
+	if d.fallback {
+		fallbackData, fallbackErr := d.multiSourceRead(r.Context(), comm, d.store.Namespace, true)
+		if fallbackErr == nil && fallbackData != nil {
+			if _, err := w.Write(fallbackData); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+			}
 			return
 		}
-	} else if !responseSent {
-		w.WriteHeader(http.StatusInternalServerError)
 	}
+	// if we goy here then no data was found
+	w.WriteHeader(http.StatusInternalServerError)
 }
 
 func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
@@ -286,6 +284,7 @@ func (b *CelestiaServer) multiSourceRead(ctx context.Context, commitment []byte,
 	}
 
 	key := crypto.Keccak256(commitment)
+	b.log.Debug("s3 key", "key", hex.EncodeToString(key))
 	ctx, cancel := context.WithTimeout(ctx, b.s3Store.Timeout())
 	data, err := b.s3Store.Get(ctx, key)
 	defer cancel()

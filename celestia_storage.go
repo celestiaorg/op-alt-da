@@ -186,7 +186,7 @@ func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	if err := blobID.UnmarshalBinary(key[2:]); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal blob ID: %w", err)
 	}
-
+	log.Info("blobID.Commitment", "blobID.Commitment", hex.EncodeToString(blobID.Commitment))
 	blob, err := d.Client.Get(ctx, blobID.Height, d.Namespace, blobID.Commitment)
 	if err != nil {
 		return nil, fmt.Errorf("celestia: failed to resolve frame: %w", err)
@@ -208,6 +208,7 @@ func (d *CelestiaStore) Put(ctx context.Context, data []byte) ([]byte, []byte, e
 
 	d.Log.Info("celestia: blob successfully submitted", "id", hex.EncodeToString(id))
 	commitment := altda.NewGenericCommitment(append([]byte{VersionByte}, id...))
+	d.Log.Info("celestia: blob successfully submitted", "commitment.Encode()", commitment.Encode())
 	return commitment.Encode(), blobData, nil
 }
 
