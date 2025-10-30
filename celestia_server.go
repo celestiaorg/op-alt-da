@@ -299,7 +299,7 @@ func (b *CelestiaServer) multiSourceRead(ctx context.Context, commitment []byte,
 	}
 
 	if err != nil || !bytes.Equal(blob.Commitment, blobID.Commitment) {
-		return nil, fmt.Errorf("celestia: invalid commitment: commit=%x commitment=%x err=%w", blob.Commitment, blobID.Commitment, err)
+		return nil, fmt.Errorf("celestia: invalid commitment in multiSourceRead: commit=%x commitment=%x err=%w", blob.Commitment, blobID.Commitment, err)
 	}
 
 	return data, nil
