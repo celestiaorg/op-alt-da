@@ -201,7 +201,7 @@ func (d *CelestiaStore) Put(ctx context.Context, data []byte) ([]byte, []byte, e
 	var submitFunc = func(ctx context.Context, client blobAPI.Module, b []*blob.Blob) (uint64, error) {
 		return d.Client.Submit(ctx, b, state.NewTxConfig())
 	}
-	id, blobData, err := SubmitAndCreateBlobID(ctx, d.Client, submitFunc, d.Namespace, data, d.CompactBlobID)
+	id, blobData, err := submitAndCreateBlobID(ctx, d.Client, submitFunc, d.Namespace, data, d.CompactBlobID)
 	if err != nil {
 		return nil, nil, err
 	}
