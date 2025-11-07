@@ -1,0 +1,221 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  integration-localestia:
+    name: Integration Test with Localestia
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Start Localestia
+        run: |
+          # Pull and run localestia container
+          docker run -d \
+            --name localestia \
+            -p 26658:26658 \
+            -p 9090:9090 \
+            ghcr.io/celestiaorg/localestia:latest
+
+          # Wait for localestia to be ready
+          echo "Waiting for Localestia to start..."
+          for i in {1..60}; do
+            if curl -s http://localhost:26658/status > /dev/null 2>&1; then
+              echo "Localestia is ready!"
+              break
+            fi
+            echo "Waiting... ($i/60)"
+            sleep 2
+          done
+
+          # Get auth token from container
+          export AUTH_TOKEN=$(docker exec localestia cat /home/celestia/.celestia-light/auth_token)
+          echo "AUTH_TOKEN=${AUTH_TOKEN}" >> $GITHUB_ENV
+
+      - name: Build DA Server
+        run: |
+          go build -v -o da-server ./cmd/da-server
+
+      - name: Run DA Server Tests
+        env:
+          CELESTIA_SERVER: http://localhost:26658
+          CELESTIA_AUTH_TOKEN: ${{ env.AUTH_TOKEN }}
+          CELESTIA_NAMESPACE: "0000000000000000000000000000000000000000000000000000000000000000"
+        run: |
+          # Start DA server in background
+          ./da-server \
+            --celestia.server=$CELESTIA_SERVER \
+            --celestia.auth-token=$CELESTIA_AUTH_TOKEN \
+            --celestia.namespace=$CELESTIA_NAMESPACE \
+            --addr=127.0.0.1 \
+            --port=3100 &
+          
+          DA_SERVER_PID=$!
+          echo "DA Server PID: $DA_SERVER_PID"
+          
+          # Wait for DA server to be ready
+          sleep 5
+          
+          # Run integration tests
+          go test -v -tags=integration ./test/integration/...
+          
+          # Cleanup
+          kill $DA_SERVER_PID || true
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop localestia || true
+          docker rm localestia || true
+
+  integration-kurtosis:
+    name: Integration Test with Kurtosis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Install Kurtosis
+        run: |
+          echo "Installing Kurtosis CLI..."
+          curl -s https://raw.githubusercontent.com/kurtosis-tech/kurtosis/main/scripts/install.sh | bash
+
+      - name: Start Kurtosis Engine
+        run: |
+          kurtosis engine start
+
+      - name: Run Kurtosis Devnet
+        run: |
+          # Create kurtosis configuration
+          cat > devnet-config.yaml << EOF
+          participants:
+            - el_type: op-geth
+              cl_type: op-node
+              count: 1
+          
+          da_params:
+            image: ghcr.io/celestiaorg/localestia-da-server:latest
+          
+          altda_deploy_config:
+            use_altda: true
+            da_commitment_type: GenericCommitment
+            da_challenge_window: 100
+            da_resolve_window: 100
+            da_bond_size: 0
+            da_resolver_refund_percentage: 0
+          EOF
+          
+          # Run the devnet
+          kurtosis run github.com/ethpandaops/optimism-package --args-file devnet-config.yaml
+
+      - name: Run Integration Tests
+        run: |
+          # Get service details from Kurtosis
+          DA_SERVER_URL=$(kurtosis port print optimism-devnet da-server http)
+          
+          # Run tests against the devnet
+          go test -v -tags=kurtosis ./test/kurtosis/...
+
+      - name: Cleanup
+        if: always()
+        run: |
+          kurtosis clean -a || true
+          kurtosis engine stop || true
+
+  e2e-test:
+    name: End-to-End Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Setup Docker Compose
+        run: |
+          # Create docker-compose for e2e testing
+          cat > docker-compose.e2e.yml << 'EOF'
+          version: '3.8'
+          
+          services:
+            localestia:
+              image: ghcr.io/celestiaorg/localestia:latest
+              ports:
+                - "26658:26658"
+                - "9090:9090"
+              healthcheck:
+                test: ["CMD", "curl", "-f", "http://localhost:26658/status"]
+                interval: 10s
+                timeout: 5s
+                retries: 5
+          
+            da-server:
+              build:
+                context: .
+                dockerfile: Dockerfile
+              depends_on:
+                localestia:
+                  condition: service_healthy
+              environment:
+                - OP_ALTDA_CELESTIA_SERVER=http://localestia:26658
+                - OP_ALTDA_CELESTIA_NAMESPACE=0000000000000000000000000000000000000000000000000000000000000000
+                - OP_ALTDA_ADDR=0.0.0.0
+                - OP_ALTDA_PORT=3100
+              ports:
+                - "3100:3100"
+              healthcheck:
+                test: ["CMD", "curl", "-f", "http://localhost:3100/health"]
+                interval: 10s
+                timeout: 5s
+                retries: 5
+          EOF
+
+      - name: Run E2E Tests
+        run: |
+          docker-compose -f docker-compose.e2e.yml up -d
+          
+          # Wait for services to be ready
+          sleep 30
+          
+          # Run e2e tests
+          go test -v -tags=e2e ./test/e2e/...
+
+      - name: Collect Logs
+        if: failure()
+        run: |
+          docker-compose -f docker-compose.e2e.yml logs > e2e-logs.txt
+          
+      - name: Upload Logs
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: e2e-logs
+          path: e2e-logs.txt
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker-compose -f docker-compose.e2e.yml down -v

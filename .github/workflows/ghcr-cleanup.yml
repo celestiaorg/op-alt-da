@@ -1,0 +1,67 @@
+name: Cleanup GHCR Packages
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sunday at midnight UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (no deletions)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      keep_versions:
+        description: 'Number of versions to keep'
+        required: false
+        default: '10'
+        type: string
+
+permissions:
+  packages: write
+
+jobs:
+  cleanup-untagged:
+    name: Delete Untagged Images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete untagged images
+        uses: actions/delete-package-versions@v4
+        with:
+          package-name: 'op-alt-da'
+          package-type: 'container'
+          delete-only-untagged-versions: 'true'
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  cleanup-old-versions:
+    name: Delete Old Versions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old package versions
+        uses: actions/delete-package-versions@v4
+        with:
+          package-name: 'op-alt-da'
+          package-type: 'container'
+          min-versions-to-keep: ${{ github.event.inputs.keep_versions || 10 }}
+          delete-only-pre-release-versions: 'true'
+          ignore-versions: '^(latest|main|develop|v\d+\.\d+\.\d+)$'
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  cleanup-pr-images:
+    name: Delete Old PR Images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete PR images older than 30 days
+        uses: snok/container-retention-policy@v2
+        with:
+          image-names: 'op-alt-da'
+          cut-off: 30 days ago UTC
+          timestamp-to-use: created_at
+          account-type: org
+          org-name: ${{ github.repository_owner }}
+          filter-tags: 'pr-*'
+          skip-tags: 'latest,main,develop,v*'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          dry-run: ${{ github.event.inputs.dry_run || 'false' }}

@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/celestiaorg/celestia-node/blob"
-	libshare "github.com/celestiaorg/go-square/v2/share"
+	libshare "github.com/celestiaorg/go-square/v3/share"
 	s3 "github.com/celestiaorg/op-alt-da/s3"
 	altda "github.com/ethereum-optimism/optimism/op-alt-da"
 	"github.com/ethereum-optimism/optimism/op-service/httputil"
