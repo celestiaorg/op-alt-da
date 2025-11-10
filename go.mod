@@ -3,7 +3,7 @@ module github.com/celestiaorg/op-alt-da
 go 1.24.6
 
 require (
-	github.com/celestiaorg/celestia-node v0.28.2-mocha
+	github.com/celestiaorg/celestia-node v0.28.2
 	github.com/celestiaorg/go-square/v3 v3.0.2
 	github.com/cosmos/cosmos-sdk v0.50.13
 	github.com/ethereum-optimism/optimism v1.13.5
