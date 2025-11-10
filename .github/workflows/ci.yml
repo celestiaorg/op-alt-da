@@ -1,0 +1,99 @@
+# CI workflow to test the software on pushes and pull requests.
+name: CI
+
+on:
+  push:
+    branches: [ main, master, develop, "release/**" ]
+  pull_request:
+    branches: [ "**" ]
+
+# Use minimal permissions for CI.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Go Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Show Go environment
+        run: |
+          go version
+          go env
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests
+        run: |
+          set -euo pipefail
+          go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.run_id }}
+          path: coverage.out
+          if-no-files-found: warn
+
+  test-e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    # E2E tests require Docker and may take longer, so we run them separately
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Show Go environment
+        run: |
+          go version
+          go env
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Verify Docker is running
+        run: |
+          docker --version
+          docker info
+
+      - name: Run E2E tests
+        run: |
+          set -euo pipefail
+          # E2E tests may take a while, so we set a longer timeout
+          go test -v -timeout 30m ./tests/...
+        env:
+          # Increase Docker timeout for long-running tests
+          DOCKER_CLIENT_TIMEOUT: 300
+          COMPOSE_HTTP_TIMEOUT: 300
+
+      - name: Cleanup Docker resources
+        if: always()
+        run: |
+          docker system prune -af --volumes || true
+

@@ -22,6 +22,9 @@ clean:
 test:
 	go test -v ./...
 
+test-e2e:
+	go test -v ./tests/...
+
 .PHONY: \
 	clean \
 	test
