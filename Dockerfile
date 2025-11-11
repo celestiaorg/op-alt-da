@@ -8,6 +8,8 @@ RUN make da-server
 
 FROM alpine:3.18
 
+RUN apk add --no-cache ca-certificates
+
 COPY --from=builder /op-alt-da/bin/da-server /usr/local/bin/da-server
 
 EXPOSE 3100
