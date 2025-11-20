@@ -47,9 +47,10 @@ func TestIntegration_PutThenGet_RoundTrip(t *testing.T) {
 		t.Skip("CELESTIA_BRIDGE, CELESTIA_AUTH_TOKEN, and CELESTIA_NAMESPACE must be set to run this integration test")
 	}
 
-	// Build the server binary from the repo root (parent of ./tests)
+	// Build the server binary from the repo root
+	// When running from tests/integration/, we need to go up two levels
 	cwd, _ := os.Getwd()
-	repoRoot := filepath.Dir(cwd)
+	repoRoot := filepath.Dir(filepath.Dir(cwd))
 	binPath := filepath.Join(repoRoot, "bin", "da-server")
 	if _, err := os.Stat(binPath); err != nil {
 		build := exec.Command("go", "build", "-o", binPath, "./cmd/daserver")

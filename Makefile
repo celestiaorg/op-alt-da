@@ -19,20 +19,32 @@ fmt:
 clean:
 	rm bin/da-server
 
+# Run all tests (unit tests only, excludes integration tests)
 test:
-	go test -v ./...
+	go test -v ./... -tags='!integration'
 
-# Run integration tests that live under the ./tests directory
-# Usage:
-#   make test-integration                 # run all integration tests in ./tests
-#   make test-integration TEST_REGEX=Name # run tests matching regex "Name"
-#   make test-integration TIMEOUT=5m      # override timeout (default 10m)
+# Run unit tests that live under the ./tests/unit directory
+test-unit:
+	go test -v ./tests/unit/...
+
+# Run integration tests that live under the ./tests/integration directory
 TEST_REGEX ?=
 TIMEOUT ?= 10m
 test-integration:
-	go test -v -tags=integration -timeout=$(TIMEOUT) ./tests $(if $(TEST_REGEX),-run $(TEST_REGEX),)
+	go test -v -tags=integration -timeout=$(TIMEOUT) ./tests/integration $(if $(TEST_REGEX),-run $(TEST_REGEX),)
+
+# Run E2E tests that live under the ./tests/e2e directory
+E2E_TIMEOUT ?= 20m
+test-e2e:
+	go test -v -tags=e2e -timeout=$(E2E_TIMEOUT) ./tests/e2e $(if $(TEST_REGEX),-run $(TEST_REGEX),)
+
+# Run all tests (unit + integration)
+test-all: test-unit test-integration
 
 .PHONY: \
 	clean \
 	test \
-	test-integration
+	test-unit \
+	test-integration \
+	test-e2e \
+	test-all
