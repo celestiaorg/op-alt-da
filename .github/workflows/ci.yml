@@ -1,4 +1,6 @@
 name: CI (integration tests in ./tests)
+permissions:
+  contents: read
 
 on:
   workflow_dispatch:
