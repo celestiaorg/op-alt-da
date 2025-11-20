@@ -22,6 +22,17 @@ clean:
 test:
 	go test -v ./...
 
+# Run integration tests that live under the ./tests directory
+# Usage:
+#   make test-integration                 # run all integration tests in ./tests
+#   make test-integration TEST_REGEX=Name # run tests matching regex "Name"
+#   make test-integration TIMEOUT=5m      # override timeout (default 10m)
+TEST_REGEX ?=
+TIMEOUT ?= 10m
+test-integration:
+	go test -v -tags=integration -timeout=$(TIMEOUT) ./tests $(if $(TEST_REGEX),-run $(TEST_REGEX),)
+
 .PHONY: \
 	clean \
-	test
+	test \
+	test-integration
