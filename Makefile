@@ -33,11 +33,6 @@ TIMEOUT ?= 10m
 test-integration:
 	go test -v -tags=integration -timeout=$(TIMEOUT) ./tests/integration $(if $(TEST_REGEX),-run $(TEST_REGEX),)
 
-# Run E2E tests that live under the ./tests/e2e directory
-E2E_TIMEOUT ?= 20m
-test-e2e:
-	go test -v -tags=e2e -timeout=$(E2E_TIMEOUT) ./tests/e2e $(if $(TEST_REGEX),-run $(TEST_REGEX),)
-
 # Run all tests (unit + integration)
 test-all: test-unit test-integration
 

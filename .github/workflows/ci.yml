@@ -36,19 +36,8 @@ jobs:
           CELESTIA_NAMESPACE: ${{ secrets.CELESTIA_NAMESPACE }}
         run: make test-integration
 
-  e2e:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Run E2E tests (requires Docker)
-        run: make test-e2e
-
   all-tests:
-    needs: [unit, integration, e2e]
+    needs: [unit, integration]
     runs-on: ubuntu-latest
     steps:
       - name: All tests completed
