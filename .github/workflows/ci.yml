@@ -1,4 +1,4 @@
-name: CI (integration tests in ./tests)
+name: CI (all tests)
 
 on:
   workflow_dispatch:
@@ -7,8 +7,18 @@ on:
   pull_request:
     branches: [ main, dev ]
 
-
 jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run unit tests
+        run: make test-unit
+
   integration:
     runs-on: ubuntu-latest
     steps:
@@ -17,10 +27,27 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Run integration test (devnet must be accessible)
+      - name: Run integration tests (devnet must be accessible)
         env:
           CELESTIA_BRIDGE: ${{ secrets.CELESTIA_BRIDGE }}
           CELESTIA_AUTH_TOKEN: ${{ secrets.CELESTIA_AUTH_TOKEN }}
           CELESTIA_NAMESPACE: ${{ secrets.CELESTIA_NAMESPACE }}
-        run: |
-          make test-integration TEST_REGEX=TestIntegration_PutThenGet_RoundTrip
+        run: make test-integration
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run E2E tests (requires Docker)
+        run: make test-e2e
+
+  all-tests:
+    needs: [unit, integration, e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All tests completed
+        run: echo "All test jobs completed successfully"
