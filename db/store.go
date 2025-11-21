@@ -246,6 +246,17 @@ func (s *BlobStore) MarkBatchSubmitted(ctx context.Context, batchID int64) error
 	return err
 }
 
+// UpdateBatchHeight updates the Celestia height for a submitted batch
+func (s *BlobStore) UpdateBatchHeight(ctx context.Context, batchID int64, height uint64) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE batches
+		SET celestia_height = ?
+		WHERE batch_id = ?
+	`, height, batchID)
+
+	return err
+}
+
 // MarkBatchConfirmed marks a batch and all its blobs as confirmed
 func (s *BlobStore) MarkBatchConfirmed(ctx context.Context, batchCommitment []byte, height uint64) error {
 	tx, err := s.db.BeginTx(ctx, nil)

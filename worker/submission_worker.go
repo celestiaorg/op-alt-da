@@ -159,12 +159,20 @@ func (w *SubmissionWorker) processBatch(ctx context.Context) error {
 	w.log.Info("Created batch", "batch_id", batchID, "blob_count", len(selectedBlobs))
 
 	// Submit to Celestia
-	if err := w.submitBatch(ctx, batchCommitment, packedData); err != nil {
+	height, err := w.submitBatch(ctx, batchCommitment, packedData)
+	if err != nil {
 		w.log.Error("Submit batch failed", "batch_id", batchID, "error", err)
 		return err
 	}
 
-	w.log.Info("Batch submitted to Celestia", "batch_id", batchID)
+	// Update batch with Celestia height
+	if err := w.store.UpdateBatchHeight(ctx, batchID, height); err != nil {
+		w.log.Error("Failed to update batch height", "batch_id", batchID, "height", height, "error", err)
+		// Don't fail the whole operation - the batch was submitted successfully
+		// The confirmation worker will still be able to confirm it
+	}
+
+	w.log.Info("Batch submitted to Celestia", "batch_id", batchID, "height", height)
 	return nil
 }
 
@@ -223,11 +231,11 @@ func (w *SubmissionWorker) selectBlobsForBatch(blobs []*db.Blob) []*db.Blob {
 	return selected
 }
 
-func (w *SubmissionWorker) submitBatch(ctx context.Context, batchCommitment, packedData []byte) error {
+func (w *SubmissionWorker) submitBatch(ctx context.Context, batchCommitment, packedData []byte) (uint64, error) {
 	// Create Celestia blob
 	celestiaBlob, err := blob.NewBlobV0(w.namespace, packedData)
 	if err != nil {
-		return fmt.Errorf("create celestia blob: %w", err)
+		return 0, fmt.Errorf("create celestia blob: %w", err)
 	}
 
 	// Implement retry logic with exponential backoff
@@ -240,7 +248,7 @@ func (w *SubmissionWorker) submitBatch(ctx context.Context, batchCommitment, pac
 			// Wait with exponential backoff before retry
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return 0, ctx.Err()
 			case <-time.After(backoff):
 				// Double backoff for next attempt, cap at 60s
 				backoff *= 2
@@ -265,7 +273,7 @@ func (w *SubmissionWorker) submitBatch(ctx context.Context, batchCommitment, pac
 		cancel() // Clean up context
 
 		if lastErr == nil {
-			// Success! Record metrics and return
+			// Success! Record metrics and return height
 			if w.metrics != nil {
 				w.metrics.RecordSubmission(duration, len(packedData))
 			}
@@ -277,7 +285,7 @@ func (w *SubmissionWorker) submitBatch(ctx context.Context, batchCommitment, pac
 				"duration_ms", duration.Milliseconds(),
 				"attempts", attempt+1)
 
-			return nil
+			return height, nil
 		}
 
 		// Failed - log and potentially retry
@@ -291,5 +299,5 @@ func (w *SubmissionWorker) submitBatch(ctx context.Context, batchCommitment, pac
 		w.metrics.RecordSubmissionError()
 	}
 
-	return fmt.Errorf("celestia submit failed after %d attempts: %w", w.workerCfg.MaxRetries+1, lastErr)
+	return 0, fmt.Errorf("celestia submit failed after %d attempts: %w", w.workerCfg.MaxRetries+1, lastErr)
 }
