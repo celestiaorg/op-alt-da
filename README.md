@@ -210,11 +210,55 @@ This makes it immediately obvious which mode is running and helps catch configur
 --port                   # Server listening port (default: 3100)
 ```
 
-### Database Flags
+### Database Configuration
+
+**SQLite is embedded - no separate database server needed!**
+
+SQLite is a **file-based embedded database** compiled directly into the da-server binary. Unlike PostgreSQL or MySQL, there's **no separate database process** to install, configure, or manage.
+
+#### What Happens Automatically:
+
+When you start the server, it automatically:
+1. ✅ Creates the database file if it doesn't exist
+2. ✅ Creates all tables and indexes using the embedded schema
+3. ✅ Opens in WAL mode for crash safety
+4. ✅ Starts accepting requests immediately
+
+#### Database Location:
 
 ```bash
---db.path               # SQLite database file path (default: ./blobs.db)
+--db.path               # SQLite database file path (default: ./data/blobs.db)
 ```
+
+**What gets created:**
+```
+./data/blobs.db       # Main database file (auto-created)
+./data/blobs.db-wal   # Write-ahead log (auto-created)
+./data/blobs.db-shm   # Shared memory (auto-created)
+```
+
+**First-time startup:**
+```bash
+# No database setup needed - just run the server!
+./bin/da-server --celestia.namespace <ns> --celestia.auth-token <token>
+
+# Output shows automatic database initialization:
+# INFO Opening database path=./data/blobs.db
+# INFO Database initialized successfully
+```
+
+**Changing the location:**
+```bash
+# Store database in a different location
+./bin/da-server --db.path /var/lib/da-server/blobs.db ...
+```
+
+**Important notes:**
+- 💾 **Persistent** - All data survives server restarts
+- 🔒 **ACID compliant** - Crash-safe with WAL mode
+- 📦 **Zero dependencies** - No database server to install
+- 🚀 **Fast** - Local file access, no network overhead
+- 🔧 **Easy backups** - Just copy the .db file (or use S3 backup feature)
 
 ### Batch Configuration Flags
 
@@ -546,11 +590,65 @@ The devnet uses [localestia](https://github.com/celestiaorg/localestia) to simul
 
 ### Prometheus Metrics
 
-When `--metrics.enabled` is set, the server exposes Prometheus metrics on the configured port (default: 6060):
+#### Enabling Metrics
+
+The server provides Prometheus metrics for monitoring Celestia DA operations. Metrics are **disabled by default**.
+
+**To enable metrics:**
+
+```bash
+# Option 1: Command-line flags
+./bin/da-server \
+  --metrics.enabled \
+  --metrics.port 6060 \
+  ... other flags ...
+
+# Option 2: Environment variables
+export OP_ALTDA_METRICS_ENABLED=true
+export OP_ALTDA_METRICS_PORT=6060
+./bin/da-server ...
+
+# Option 3: In .env file
+OP_ALTDA_METRICS_ENABLED=true
+OP_ALTDA_METRICS_PORT=6060
+```
+
+**Verify metrics are enabled:**
+
+When you start the server with metrics enabled, you should see:
+
+```
+INFO ========================================
+INFO Prometheus Metrics: ENABLED port=6060
+INFO ========================================
+...
+INFO ========================================
+INFO Metrics server starting endpoint="http://127.0.0.1:6060/metrics"
+INFO Access metrics at: url="http://127.0.0.1:6060/metrics"
+INFO ========================================
+```
+
+**If metrics are disabled, you'll see:**
+```
+INFO ========================================
+INFO Prometheus Metrics: DISABLED note="Set --metrics.enabled or OP_ALTDA_METRICS_ENABLED=true to enable"
+INFO ========================================
+```
+
+**Test metrics endpoint:**
 
 ```bash
 curl http://localhost:6060/metrics
 ```
+
+**Troubleshooting:**
+
+If you don't see metrics logs or can't access the endpoint:
+1. ✅ Check you're using `--metrics.enabled` (not `--metrics.enable`)
+2. ✅ Check environment variable is `OP_ALTDA_METRICS_ENABLED=true` (not `"true"` in quotes for shell)
+3. ✅ Verify port 6060 isn't already in use: `lsof -i :6060`
+4. ✅ Check logs for "Prometheus Metrics: ENABLED" message
+5. ✅ Ensure you're connecting to the right host (metrics binds to same host as main server)
 
 #### Celestia DA Layer Metrics
 

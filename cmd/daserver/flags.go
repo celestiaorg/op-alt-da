@@ -41,8 +41,6 @@ const (
 	S3AccessKeyIDFlagName     = "s3.access-key-id"     // #nosec G101
 	S3AccessKeySecretFlagName = "s3.access-key-secret" // #nosec G101
 	S3TimeoutFlagName         = "s3.timeout"
-	FallbackFlagName          = "routing.fallback"
-	CacheFlagName             = "routing.cache"
 
 	// metrics
 	MetricsEnabledFlagName = "metrics.enabled"
@@ -173,18 +171,6 @@ var (
 		Value:   5 * time.Second,
 		EnvVars: prefixEnvVars("S3_TIMEOUT"),
 	}
-	FallbackFlag = &cli.BoolFlag{
-		Name:    FallbackFlagName,
-		Usage:   "Enable fallback",
-		Value:   false,
-		EnvVars: prefixEnvVars("FALLBACK"),
-	}
-	CacheFlag = &cli.BoolFlag{
-		Name:    CacheFlagName,
-		Usage:   "Enable cache.",
-		Value:   false,
-		EnvVars: prefixEnvVars("CACHE"),
-	}
 	MetricsEnabledFlag = &cli.BoolFlag{
 		Name:    MetricsEnabledFlagName,
 		Usage:   "Enable Prometheus metrics",
@@ -222,8 +208,6 @@ var optionalFlags = []cli.Flag{
 	S3AccessKeyIDFlag,
 	S3AccessKeySecretFlag,
 	S3TimeoutFlag,
-	FallbackFlag,
-	CacheFlag,
 	MetricsEnabledFlag,
 	MetricsPortFlag,
 }
@@ -244,8 +228,6 @@ type CLIConfig struct {
 	CelestiaCompactBlobID bool
 	TxClientConfig        celestia.TxClientConfig
 	S3Config              s3.S3Config
-	Fallback              bool
-	Cache                 bool
 	MetricsEnabled        bool
 	MetricsPort           int
 }
@@ -274,8 +256,6 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 			AccessKeySecret:  ctx.String(S3AccessKeySecretFlagName),
 			Timeout:          ctx.Duration(S3TimeoutFlagName),
 		},
-		Fallback:       ctx.Bool(FallbackFlagName),
-		Cache:          ctx.Bool(CacheFlagName),
 		MetricsEnabled: ctx.Bool(MetricsEnabledFlagName),
 		MetricsPort:    ctx.Int(MetricsPortFlagName),
 	}
@@ -420,14 +400,6 @@ func (c CLIConfig) CelestiaConfig() celestia.RPCClientConfig {
 
 func (c CLIConfig) CelestiaRPCClientEnabled() bool {
 	return !(c.CelestiaEndpoint == "" && c.CelestiaAuthToken == "" && c.CelestiaNamespace == "")
-}
-
-func (c CLIConfig) CacheEnabled() bool {
-	return c.Cache
-}
-
-func (c CLIConfig) FallbackEnabled() bool {
-	return c.Fallback
 }
 
 func toS3CredentialType(s string) s3.S3CredentialType {

@@ -126,6 +126,7 @@ func (l *EventListener) reconcileUnconfirmed(ctx context.Context) error {
 	}
 
 	if len(batches) == 0 {
+		l.log.Debug("No unconfirmed batches to reconcile")
 		return nil
 	}
 

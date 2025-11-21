@@ -185,7 +185,11 @@ func (s *CelestiaServer) Start(ctx context.Context) error {
 		}
 
 		g.Go(func() error {
-			s.log.Info("Metrics server starting", "port", s.metricsPort)
+			metricsURL := fmt.Sprintf("http://%s/metrics", net.JoinHostPort(s.host, strconv.Itoa(s.metricsPort)))
+			s.log.Info("========================================")
+			s.log.Info("Metrics server starting", "endpoint", metricsURL)
+			s.log.Info("Access metrics at:", "url", metricsURL)
+			s.log.Info("========================================")
 			if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				return fmt.Errorf("metrics server error: %w", err)
 			}

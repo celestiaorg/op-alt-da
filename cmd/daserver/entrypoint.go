@@ -141,6 +141,15 @@ func StartDAServer(cliCtx *cli.Context) error {
 
 	l.Info("Initializing Async Alt-DA server...")
 
+	// Display metrics configuration prominently
+	l.Info("========================================")
+	if cfg.MetricsEnabled {
+		l.Info("Prometheus Metrics: ENABLED", "port", cfg.MetricsPort)
+	} else {
+		l.Info("Prometheus Metrics: DISABLED", "note", "Set --metrics.enabled or OP_ALTDA_METRICS_ENABLED=true to enable")
+	}
+	l.Info("========================================")
+
 	// Display detected Celestia connection mode prominently
 	l.Info("========================================")
 	l.Info("Celestia Connection Mode Detected", "mode", cfg.GetCelestiaMode())

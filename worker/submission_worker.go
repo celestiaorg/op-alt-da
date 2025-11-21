@@ -78,6 +78,7 @@ func (w *SubmissionWorker) processBatch(ctx context.Context) error {
 	}
 
 	if len(blobs) == 0 {
+		w.log.Debug("No pending blobs found, waiting for new submissions")
 		return nil // No work to do
 	}
 
@@ -90,10 +91,15 @@ func (w *SubmissionWorker) processBatch(ctx context.Context) error {
 	// Only batch if we have enough blobs or enough data
 	if !w.batchCfg.ShouldBatch(len(blobs), totalSize) {
 		// Not enough blobs yet, wait for more
+		w.log.Info("Waiting for more blobs before batching",
+			"current_blobs", len(blobs),
+			"min_required", w.batchCfg.MinBlobs,
+			"current_size_kb", totalSize/1024,
+			"min_size_kb", w.batchCfg.MinBatchSizeBytes/1024)
 		return nil
 	}
 
-	w.log.Info("Processing batch", "blob_count", len(blobs), "total_size", totalSize)
+	w.log.Info("Processing batch", "blob_count", len(blobs), "total_size_kb", totalSize/1024)
 
 	// Pack blobs into one batch
 	packedData, err := batch.PackBlobs(blobs, w.batchCfg)
