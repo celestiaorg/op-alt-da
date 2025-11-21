@@ -163,11 +163,11 @@ func (s *CelestiaServer) Start(ctx context.Context) error {
 		return nil
 	})
 
-	// Start event listener
+	// Start reconciliation worker
 	g.Go(func() error {
-		s.log.Info("Starting event listener")
+		s.log.Info("Starting reconciliation worker")
 		if err := s.eventListener.Run(ctx); err != nil && err != context.Canceled {
-			return fmt.Errorf("event listener error: %w", err)
+			return fmt.Errorf("reconciliation worker error: %w", err)
 		}
 		return nil
 	})

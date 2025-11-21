@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/celestiaorg/celestia-node/blob"
 	blobAPI "github.com/celestiaorg/celestia-node/nodebuilder/blob"
 	libshare "github.com/celestiaorg/go-square/v3/share"
 	"github.com/ethereum/go-ethereum/log"
@@ -42,59 +41,20 @@ func NewEventListener(
 }
 
 func (l *EventListener) Run(ctx context.Context) error {
-	l.log.Info("Event listener starting",
+	l.log.Info("Reconciliation worker starting (using Get operations only)",
 		"reconcile_period", l.workerCfg.ReconcilePeriod,
 		"reconcile_age", l.workerCfg.ReconcileAge,
 		"get_timeout", l.workerCfg.GetTimeout)
 
-	// Try to start event subscription with timeout
-	var eventChan <-chan *blob.SubscriptionResponse
-	subCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-
-	eventChan, err := l.celestia.Subscribe(subCtx, l.namespace)
-	cancel() // Clean up subscription context
-
-	if err != nil {
-		// Subscription failed - warn but continue with reconciliation-only mode
-		l.log.Warn("Failed to subscribe to namespace events, falling back to reconciliation-only mode",
-			"error", err,
-			"namespace", l.namespace.String(),
-			"reconcile_period", l.workerCfg.ReconcilePeriod)
-		eventChan = nil // Set to nil so we don't read from it
-	} else {
-		l.log.Info("Subscribed to namespace events", "namespace", l.namespace.String())
-	}
-
-	// Start reconciliation ticker (works even without subscriptions)
+	// Start reconciliation ticker
 	reconcileTicker := time.NewTicker(l.workerCfg.ReconcilePeriod)
 	defer reconcileTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			l.log.Info("Event listener stopping")
+			l.log.Info("Reconciliation worker stopping")
 			return ctx.Err()
-
-		case event, ok := <-eventChan:
-			// Only process events if subscription is active
-			if eventChan == nil {
-				// Subscription disabled, skip this case
-				continue
-			}
-			if !ok {
-				// Channel closed, disable event processing
-				l.log.Warn("Event subscription channel closed, continuing with reconciliation-only")
-				eventChan = nil
-				continue
-			}
-			if event == nil {
-				l.log.Warn("Received nil event, subscription may have closed")
-				continue
-			}
-
-			if err := l.handleEvent(ctx, event); err != nil {
-				l.log.Error("Handle event failed", "error", err)
-			}
 
 		case <-reconcileTicker.C:
 			if err := l.reconcileUnconfirmed(ctx); err != nil {
@@ -102,38 +62,6 @@ func (l *EventListener) Run(ctx context.Context) error {
 			}
 		}
 	}
-}
-
-func (l *EventListener) handleEvent(ctx context.Context, event *blob.SubscriptionResponse) error {
-	if len(event.Blobs) == 0 {
-		// No blobs at this height in our namespace
-		return nil
-	}
-
-	l.log.Info("Received blob event",
-		"height", event.Height,
-		"blob_count", len(event.Blobs))
-
-	// Process each blob in the event
-	for _, b := range event.Blobs {
-		commitment := b.Commitment
-
-		// Try to match event to a batch
-		err := l.store.MarkBatchConfirmed(ctx, commitment, event.Height)
-		if err == db.ErrBatchNotFound {
-			// This might be a blob we don't know about, or already confirmed
-			l.log.Debug("Event for unknown batch", "commitment", fmt.Sprintf("%x", commitment[:8]))
-			continue
-		}
-		if err != nil {
-			l.log.Error("Failed to mark batch confirmed", "error", err)
-			continue
-		}
-
-		l.log.Info("Batch confirmed", "height", event.Height, "commitment", fmt.Sprintf("%x", commitment[:8]))
-	}
-
-	return nil
 }
 
 func (l *EventListener) reconcileUnconfirmed(ctx context.Context) error {

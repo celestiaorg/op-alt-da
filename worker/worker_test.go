@@ -16,10 +16,9 @@ import (
 
 // Mock Celestia API - implements blob.Module interface
 type mockCelestiaAPI struct {
-	submitFunc    func(ctx context.Context, blobs []*blob.Blob) (uint64, error)
-	subscribeFunc func(ctx context.Context, ns libshare.Namespace) (<-chan *blob.SubscriptionResponse, error)
-	getFunc       func(ctx context.Context, height uint64, ns libshare.Namespace, commitment blob.Commitment) (*blob.Blob, error)
-	getAllFunc    func(ctx context.Context, height uint64, namespaces []libshare.Namespace) ([]*blob.Blob, error)
+	submitFunc func(ctx context.Context, blobs []*blob.Blob) (uint64, error)
+	getFunc    func(ctx context.Context, height uint64, ns libshare.Namespace, commitment blob.Commitment) (*blob.Blob, error)
+	getAllFunc func(ctx context.Context, height uint64, namespaces []libshare.Namespace) ([]*blob.Blob, error)
 }
 
 // Submit implements blob.Module interface
@@ -30,15 +29,10 @@ func (m *mockCelestiaAPI) Submit(ctx context.Context, blobs []*blob.Blob, opts *
 	return 12345, nil // Default height
 }
 
-// Subscribe implements blob.Module interface
+// Subscribe implements blob.Module interface (not used - reconciliation only)
 func (m *mockCelestiaAPI) Subscribe(ctx context.Context, ns libshare.Namespace) (<-chan *blob.SubscriptionResponse, error) {
-	if m.subscribeFunc != nil {
-		return m.subscribeFunc(ctx, ns)
-	}
-	// Return empty channel by default
-	ch := make(chan *blob.SubscriptionResponse)
-	close(ch)
-	return ch, nil
+	// Not used in reconciliation-only mode
+	return nil, nil
 }
 
 // Get implements blob.Module interface
@@ -311,89 +305,6 @@ func TestSubmissionWorker_ContextCancellation(t *testing.T) {
 	}
 }
 
-// TestEventListener_HandleEvent tests event processing
-func TestEventListener_HandleEvent(t *testing.T) {
-	store, namespace, cleanup := setupWorkerTest(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	// Create batch in database
-	var blobIDs []int64
-	for i := 0; i < 3; i++ {
-		testBlob := &db.Blob{
-			Commitment: []byte{byte(i)},
-			Namespace:  namespace.Bytes(),
-			Data:       []byte{byte(i)},
-			Size:       1,
-			Status:     "pending_submission",
-		}
-		id, err := store.InsertBlob(ctx, testBlob)
-		if err != nil {
-			t.Fatalf("InsertBlob failed: %v", err)
-		}
-		blobIDs = append(blobIDs, id)
-	}
-
-	batchCommitment := []byte("test-batch-commitment")
-	batchData := []byte("packed-data")
-	batchID, err := store.CreateBatch(ctx, blobIDs, batchCommitment, batchData)
-	if err != nil {
-		t.Fatalf("CreateBatch failed: %v", err)
-	}
-
-	// Mark as submitted
-	err = store.MarkBatchSubmitted(ctx, batchID)
-	if err != nil {
-		t.Fatalf("MarkBatchSubmitted failed: %v", err)
-	}
-
-	// Create event with matching commitment
-	eventChan := make(chan *blob.SubscriptionResponse, 1)
-	mock := &mockCelestiaAPI{
-		subscribeFunc: func(ctx context.Context, ns libshare.Namespace) (<-chan *blob.SubscriptionResponse, error) {
-			return eventChan, nil
-		},
-	}
-
-	logger := log.NewLogger(log.DiscardHandler())
-	workerCfg := DefaultConfig()
-	listener := NewEventListener(store, mock, namespace, workerCfg, nil,  logger)
-
-	// Send event
-	celestiaBlob, _ := blob.NewBlobV0(namespace, []byte("data"))
-	celestiaBlob.Commitment = batchCommitment
-
-	eventChan <- &blob.SubscriptionResponse{
-		Height: 12345,
-		Blobs:  []*blob.Blob{celestiaBlob},
-	}
-	close(eventChan)
-
-	// Handle event
-	event := <-eventChan
-	err = listener.handleEvent(ctx, event)
-	if err != nil {
-		t.Fatalf("handleEvent failed: %v", err)
-	}
-
-	// Verify batch is confirmed
-	for _, blobID := range blobIDs {
-		b, err := store.GetBlobByCommitment(ctx, []byte{byte(blobID - 1)})
-		if err != nil {
-			t.Fatalf("GetBlobByCommitment failed: %v", err)
-		}
-
-		if b.Status != "confirmed" {
-			t.Errorf("Expected status confirmed, got %s", b.Status)
-		}
-
-		if b.CelestiaHeight == nil || *b.CelestiaHeight != 12345 {
-			t.Errorf("Expected height 12345, got %v", b.CelestiaHeight)
-		}
-	}
-}
-
 // TestEventListener_Reconciliation tests reconciliation of unconfirmed batches
 func TestEventListener_Reconciliation(t *testing.T) {
 	store, namespace, cleanup := setupWorkerTest(t)
@@ -423,11 +334,6 @@ func TestEventListener_Reconciliation(t *testing.T) {
 
 	// Create mock that returns blob on Get
 	mock := &mockCelestiaAPI{
-		subscribeFunc: func(ctx context.Context, ns libshare.Namespace) (<-chan *blob.SubscriptionResponse, error) {
-			ch := make(chan *blob.SubscriptionResponse)
-			close(ch)
-			return ch, nil
-		},
 		getFunc: func(ctx context.Context, height uint64, ns libshare.Namespace, commitment blob.Commitment) (*blob.Blob, error) {
 			// Return blob to simulate successful Get
 			b, _ := blob.NewBlobV0(namespace, []byte("data"))
@@ -456,24 +362,17 @@ func TestEventListener_Reconciliation(t *testing.T) {
 	}
 }
 
-// TestEventListener_ContextCancellation tests listener stops on context cancel
+// TestEventListener_ContextCancellation tests reconciliation worker stops on context cancel
 func TestEventListener_ContextCancellation(t *testing.T) {
 	store, namespace, cleanup := setupWorkerTest(t)
 	defer cleanup()
 
-	// Create channel that stays open
-	eventChan := make(chan *blob.SubscriptionResponse)
-
-	mock := &mockCelestiaAPI{
-		subscribeFunc: func(ctx context.Context, ns libshare.Namespace) (<-chan *blob.SubscriptionResponse, error) {
-			return eventChan, nil
-		},
-	}
+	mock := &mockCelestiaAPI{}
 
 	logger := log.NewLogger(log.DiscardHandler())
 	workerCfg := DefaultConfig()
 	workerCfg.ReconcilePeriod = 10 * time.Millisecond
-	listener := NewEventListener(store, mock, namespace, workerCfg, nil,  logger)
+	listener := NewEventListener(store, mock, namespace, workerCfg, nil, logger)
 
 	// Create context with cancel
 	ctx, cancel := context.WithCancel(context.Background())
@@ -495,36 +394,6 @@ func TestEventListener_ContextCancellation(t *testing.T) {
 			t.Errorf("Expected context.Canceled, got: %v", err)
 		}
 	case <-time.After(1 * time.Second):
-		t.Error("Listener did not stop after context cancellation")
-	}
-
-	close(eventChan)
-}
-
-// TestEventListener_UnknownBatch tests handling of events for unknown batches
-func TestEventListener_UnknownBatch(t *testing.T) {
-	store, namespace, cleanup := setupWorkerTest(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	mock := &mockCelestiaAPI{}
-	logger := log.NewLogger(log.DiscardHandler())
-	workerCfg := DefaultConfig()
-	listener := NewEventListener(store, mock, namespace, workerCfg, nil,  logger)
-
-	// Create event for unknown batch
-	celestiaBlob, _ := blob.NewBlobV0(namespace, []byte("data"))
-	celestiaBlob.Commitment = []byte("unknown-commitment")
-
-	event := &blob.SubscriptionResponse{
-		Height: 12345,
-		Blobs:  []*blob.Blob{celestiaBlob},
-	}
-
-	// Should not error on unknown batch
-	err := listener.handleEvent(ctx, event)
-	if err != nil {
-		t.Fatalf("handleEvent failed for unknown batch: %v", err)
+		t.Error("Reconciliation worker did not stop after context cancellation")
 	}
 }
