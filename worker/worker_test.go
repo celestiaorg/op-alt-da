@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -255,7 +256,7 @@ func TestSubmissionWorker_LargeSize(t *testing.T) {
 	logger := log.NewLogger(log.DiscardHandler())
 	batchCfg := batch.DefaultConfig()
 	workerCfg := DefaultConfig()
-	worker := NewSubmissionWorker(store, mock, namespace, batchCfg, workerCfg, nil,  logger)
+	worker := NewSubmissionWorker(store, mock, namespace, batchCfg, workerCfg, nil, logger)
 
 	// Process batch
 	err := worker.processBatch(ctx)
@@ -266,6 +267,77 @@ func TestSubmissionWorker_LargeSize(t *testing.T) {
 	// Should have submitted (size threshold met)
 	if !submitted {
 		t.Error("Batch was not submitted despite large size")
+	}
+}
+
+// TestSubmissionWorker_ManyLargeBlobs tests that batching correctly handles many large blobs
+// by selecting only those that fit within the MaxBatchSizeBytes limit
+func TestSubmissionWorker_ManyLargeBlobs(t *testing.T) {
+	store, namespace, cleanup := setupWorkerTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Insert 20 blobs of 800KB each (16MB total - way over 1MB limit)
+	largeData := make([]byte, 800*1024) // 800KB each
+	for i := 0; i < 20; i++ {
+		testBlob := &db.Blob{
+			Commitment: []byte{byte(i), 0x00, 0x00, 0x00},
+			Namespace:  namespace.Bytes(),
+			Data:       largeData,
+			Size:       len(largeData),
+			Status:     "pending_submission",
+		}
+		_, err := store.InsertBlob(ctx, testBlob)
+		if err != nil {
+			t.Fatalf("InsertBlob failed: %v", err)
+		}
+	}
+
+	submitted := false
+	var submittedBlobCount int
+	mock := &mockCelestiaAPI{
+		submitFunc: func(ctx context.Context, blobs []*blob.Blob) (uint64, error) {
+			submitted = true
+			submittedBlobCount = len(blobs)
+			// Verify the packed data doesn't exceed 1MB
+			if len(blobs) > 0 && len(blobs[0].Data()) > 1*1024*1024 {
+				return 0, fmt.Errorf("batch size %d exceeds 1MB limit", len(blobs[0].Data()))
+			}
+			return 12345, nil
+		},
+	}
+
+	logger := log.NewLogger(log.DiscardHandler())
+	batchCfg := batch.DefaultConfig()
+	workerCfg := DefaultConfig()
+	worker := NewSubmissionWorker(store, mock, namespace, batchCfg, workerCfg, nil, logger)
+
+	// Process batch
+	err := worker.processBatch(ctx)
+	if err != nil {
+		t.Fatalf("processBatch failed: %v", err)
+	}
+
+	// Should have submitted
+	if !submitted {
+		t.Error("Batch was not submitted")
+	}
+
+	// Should have selected only 1 blob (800KB < 1MB, but 2*800KB > 1MB)
+	if submittedBlobCount != 1 {
+		t.Errorf("Expected 1 blob in batch, got %d", submittedBlobCount)
+	}
+
+	// Verify remaining blobs are still pending
+	pending, err := store.GetPendingBlobs(ctx, 30)
+	if err != nil {
+		t.Fatalf("GetPendingBlobs failed: %v", err)
+	}
+
+	// Should have 19 blobs still pending
+	if len(pending) != 19 {
+		t.Errorf("Expected 19 pending blobs remaining, got %d", len(pending))
 	}
 }
 
