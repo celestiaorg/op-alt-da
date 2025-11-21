@@ -90,6 +90,11 @@ func NewBlobStore(dbPath string) (*BlobStore, error) {
 		return nil, fmt.Errorf("set cache size: %w", err)
 	}
 
+	// Apply migrations for existing databases
+	if err := MigrateDatabase(db); err != nil {
+		return nil, fmt.Errorf("migrate database: %w", err)
+	}
+
 	return &BlobStore{db: db}, nil
 }
 

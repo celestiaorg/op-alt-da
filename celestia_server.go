@@ -270,6 +270,12 @@ func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Debug: log full commitment details
+	s.log.Debug("Computed commitment",
+		"length", len(blobCommitment),
+		"full_hex", hex.EncodeToString(blobCommitment),
+		"truncated", hex.EncodeToString(blobCommitment[:min(8, len(blobCommitment))]))
+
 	// Check if blob already exists (idempotent PUT behavior)
 	existingBlob, err := s.store.GetBlobByCommitment(r.Context(), blobCommitment)
 	if err == nil {
@@ -277,7 +283,7 @@ func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 		s.log.Debug("Blob retrieved from cache (already submitted)",
 			"blob_id", existingBlob.ID,
 			"size", len(blobData),
-			"commitment", hex.EncodeToString(blobCommitment[:8]),
+			"commitment", hex.EncodeToString(blobCommitment),
 			"status", existingBlob.Status,
 			"latency_ms", time.Since(startTime).Milliseconds())
 
@@ -317,7 +323,7 @@ func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 	s.log.Info("Blob stored",
 		"blob_id", blobID,
 		"size", len(blobData),
-		"commitment", hex.EncodeToString(blobCommitment[:8]),
+		"commitment", hex.EncodeToString(blobCommitment),
 		"latency_ms", time.Since(startTime).Milliseconds())
 
 	// Return commitment (backward compatible response)
@@ -362,15 +368,15 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Debug: log what we're looking for
+	s.log.Debug("Looking for blob",
+		"commitment_length", len(requestedCommitment),
+		"commitment_hex", hex.EncodeToString(requestedCommitment))
+
 	// Query database for blob metadata
 	blob, err := s.store.GetBlobByCommitment(r.Context(), requestedCommitment)
 	if err == db.ErrBlobNotFound {
-		// Log first 8 bytes or whole commitment if shorter
-		commitmentLog := requestedCommitment
-		if len(requestedCommitment) > 8 {
-			commitmentLog = requestedCommitment[:8]
-		}
-		s.log.Warn("Blob not found", "commitment", hex.EncodeToString(commitmentLog))
+		s.log.Warn("Blob not found", "commitment", hex.EncodeToString(requestedCommitment))
 		http.Error(w, "blob not found", http.StatusNotFound)
 		return
 	}
@@ -465,17 +471,11 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Log first 8 bytes or whole commitment if shorter
-	commitmentLog := requestedCommitment
-	if len(requestedCommitment) > 8 {
-		commitmentLog = requestedCommitment[:8]
-	}
-
 	s.log.Info("Blob retrieved",
 		"blob_id", blob.ID,
 		"size", len(blobData),
 		"status", blob.Status,
-		"commitment", hex.EncodeToString(commitmentLog),
+		"commitment", hex.EncodeToString(requestedCommitment),
 		"latency_ms", time.Since(startTime).Milliseconds())
 
 	// Return blob data

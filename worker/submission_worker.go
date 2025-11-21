@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -138,6 +139,11 @@ func (w *SubmissionWorker) processBatch(ctx context.Context) error {
 		return fmt.Errorf("compute batch commitment: %w", err)
 	}
 
+	w.log.Debug("Computed batch commitment",
+		"length", len(batchCommitment),
+		"full_hex", hex.EncodeToString(batchCommitment),
+		"truncated", hex.EncodeToString(batchCommitment[:min(8, len(batchCommitment))]))
+
 	// Extract blob IDs for database update
 	blobIDs := make([]int64, len(selectedBlobs))
 	for i, b := range selectedBlobs {
@@ -266,7 +272,7 @@ func (w *SubmissionWorker) submitBatch(ctx context.Context, batchCommitment, pac
 
 			w.log.Info("Batch submitted to Celestia",
 				"height", height,
-				"commitment", fmt.Sprintf("%x", batchCommitment[:8]),
+				"commitment", fmt.Sprintf("%x", batchCommitment),
 				"size_bytes", len(packedData),
 				"duration_ms", duration.Milliseconds(),
 				"attempts", attempt+1)
