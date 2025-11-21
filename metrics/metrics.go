@@ -9,13 +9,17 @@ import (
 
 // CelestiaMetrics tracks performance metrics for Celestia DA operations
 type CelestiaMetrics struct {
-	// Submission metrics (from worker perspective)
+	// HTTP-level metrics (from main branch - compatible with existing dashboards)
+	RequestDuration *prometheus.HistogramVec // method label: "get" or "put"
+	BlobSize        prometheus.Histogram
+	InclusionHeight prometheus.Gauge
+
+	// Worker-level metrics (more detailed operational metrics)
 	SubmissionDuration prometheus.Histogram
 	SubmissionSize     prometheus.Histogram
 	SubmissionsTotal   prometheus.Counter
 	SubmissionErrors   prometheus.Counter
 
-	// Retrieval metrics (from worker/handler perspective)
 	RetrievalDuration prometheus.Histogram
 	RetrievalSize     prometheus.Histogram
 	RetrievalsTotal   prometheus.Counter
@@ -31,7 +35,23 @@ func NewCelestiaMetrics(registry prometheus.Registerer) *CelestiaMetrics {
 	factory := promauto.With(registry)
 
 	return &CelestiaMetrics{
-		// Submission metrics
+		// HTTP-level metrics (from main branch)
+		RequestDuration: factory.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "op_altda_request_duration_seconds",
+			Help:    "Duration of HTTP requests",
+			Buckets: prometheus.DefBuckets,
+		}, []string{"method"}),
+		BlobSize: factory.NewHistogram(prometheus.HistogramOpts{
+			Name:    "op_altda_blob_size_bytes",
+			Help:    "Size of blobs in bytes",
+			Buckets: []float64{1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 8388608}, // 1k to 8M
+		}),
+		InclusionHeight: factory.NewGauge(prometheus.GaugeOpts{
+			Name: "op_altda_inclusion_height",
+			Help: "Inclusion height of blobs in Celestia",
+		}),
+
+		// Worker-level submission metrics
 		SubmissionDuration: factory.NewHistogram(prometheus.HistogramOpts{
 			Name: "celestia_submission_duration_seconds",
 			Help: "Time taken to submit batch to Celestia (worker perspective)",
@@ -115,4 +135,19 @@ func (m *CelestiaMetrics) RecordRetrieval(duration time.Duration, sizeBytes int)
 // RecordRetrievalError records a retrieval error
 func (m *CelestiaMetrics) RecordRetrievalError() {
 	m.RetrievalErrors.Inc()
+}
+
+// RecordHTTPRequest records an HTTP request duration (for GET/PUT endpoints)
+func (m *CelestiaMetrics) RecordHTTPRequest(method string, duration time.Duration) {
+	m.RequestDuration.WithLabelValues(method).Observe(duration.Seconds())
+}
+
+// RecordBlobSize records the size of a blob
+func (m *CelestiaMetrics) RecordBlobSize(sizeBytes int) {
+	m.BlobSize.Observe(float64(sizeBytes))
+}
+
+// SetInclusionHeight sets the current inclusion height
+func (m *CelestiaMetrics) SetInclusionHeight(height uint64) {
+	m.InclusionHeight.Set(float64(height))
 }

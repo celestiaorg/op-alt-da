@@ -227,6 +227,12 @@ func (s *CelestiaServer) Stop() error {
 
 func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
+	defer func() {
+		// Record HTTP request duration
+		if s.celestiaMetrics != nil {
+			s.celestiaMetrics.RecordHTTPRequest("put", time.Since(startTime))
+		}
+	}()
 
 	// Limit request body size to prevent DoS attacks
 	// Use max batch size + 10% buffer for overhead
@@ -249,6 +255,11 @@ func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 	if len(blobData) == 0 {
 		http.Error(w, "empty blob data", http.StatusBadRequest)
 		return
+	}
+
+	// Record blob size metric
+	if s.celestiaMetrics != nil {
+		s.celestiaMetrics.RecordBlobSize(len(blobData))
 	}
 
 	// Pre-compute commitment (deterministic)
@@ -291,6 +302,12 @@ func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 
 func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
+	defer func() {
+		// Record HTTP request duration
+		if s.celestiaMetrics != nil {
+			s.celestiaMetrics.RecordHTTPRequest("get", time.Since(startTime))
+		}
+	}()
 
 	// Parse commitment from URL path
 	commitmentHex := strings.TrimPrefix(r.URL.Path, "/get/")
@@ -334,6 +351,11 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("Failed to query blob", "error", err)
 		http.Error(w, "failed to query blob: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Record inclusion height if available
+	if s.celestiaMetrics != nil && blob.CelestiaHeight != nil {
+		s.celestiaMetrics.SetInclusionHeight(*blob.CelestiaHeight)
 	}
 
 	// Update read tracking (async, don't block response)
