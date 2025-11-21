@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	libshare "github.com/celestiaorg/go-square/v3/share"
+	altda "github.com/ethereum-optimism/optimism/op-alt-da"
 	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/celestiaorg/op-alt-da/batch"
@@ -83,19 +84,20 @@ func TestHandlePut(t *testing.T) {
 	}
 
 	body, _ := io.ReadAll(resp.Body)
-	responseStr := string(body)
 
-	// Response should start with 0x0c (version byte)
-	if !strings.HasPrefix(responseStr, "0x0c") {
-		t.Errorf("Response should start with 0x0c, got: %s", responseStr)
+	// Response should be binary GenericCommitment format
+	// Expected: [commitment_type_byte][version_byte][blob_commitment]
+	if len(body) < 34 { // 1 + 1 + 32 minimum
+		t.Errorf("Response too short: got %d bytes, expected at least 34", len(body))
 	}
 
-	// Verify commitment format
-	if len(responseStr) < 6 {
-		t.Errorf("Response too short: %s", responseStr)
+	// Check version byte is at position 1 (after commitment type byte)
+	if body[1] != 0x0c {
+		t.Errorf("Expected version byte 0x0c at position 1, got 0x%02x", body[1])
 	}
 
-	t.Logf("PUT response: %s", responseStr)
+	t.Logf("PUT response (hex): %x", body)
+	t.Logf("PUT response length: %d bytes", len(body))
 }
 
 // TestHandleGet tests the GET endpoint
@@ -339,7 +341,7 @@ func TestHandleStats(t *testing.T) {
 
 // TestPutGetRoundTrip tests a full PUT then GET workflow
 func TestPutGetRoundTrip(t *testing.T) {
-	server, _, cleanup := setupServerTest(t)
+	server, store, cleanup := setupServerTest(t)
 	defer cleanup()
 
 	testData := []byte("round trip test data")
@@ -357,12 +359,37 @@ func TestPutGetRoundTrip(t *testing.T) {
 		t.Fatalf("PUT failed with status %d", putResp.StatusCode)
 	}
 
-	// Get commitment from response
+	// Get commitment from response (binary bytes)
 	putBody, _ := io.ReadAll(putResp.Body)
-	commitmentWithVersion := string(putBody)
 
-	// GET request using the commitment
-	getURL := fmt.Sprintf("/get/%s", commitmentWithVersion)
+	t.Logf("PUT returned commitment (hex): %x", putBody)
+	t.Logf("PUT returned commitment length: %d", len(putBody))
+
+	// Decode what was returned to see the blob commitment
+	comm, err := altda.DecodeCommitmentData(putBody)
+	if err == nil {
+		txData := comm.TxData()
+		t.Logf("TxData from commitment: %x (len=%d)", txData, len(txData))
+		if len(txData) > 1 {
+			t.Logf("Blob commitment (after stripping version): %x (len=%d)", txData[1:], len(txData)-1)
+		}
+	} else {
+		t.Logf("Failed to decode as GenericCommitment: %v", err)
+	}
+
+	// Check what's actually in the DB
+	blobs, _ := store.GetPendingBlobs(context.Background(), 10)
+	if len(blobs) > 0 {
+		t.Logf("DB has blob with commitment: %x (len=%d)", blobs[0].Commitment, len(blobs[0].Commitment))
+	}
+
+	// Hex-encode commitment for URL path
+	commitmentHex := hex.EncodeToString(putBody)
+
+	t.Logf("GET URL: /get/%s", commitmentHex)
+
+	// GET request using the hex-encoded commitment
+	getURL := fmt.Sprintf("/get/%s", commitmentHex)
 	getReq := httptest.NewRequest("GET", getURL, nil)
 	getW := httptest.NewRecorder()
 
@@ -372,7 +399,8 @@ func TestPutGetRoundTrip(t *testing.T) {
 	defer getResp.Body.Close()
 
 	if getResp.StatusCode != http.StatusOK {
-		t.Fatalf("GET failed with status %d", getResp.StatusCode)
+		getBody, _ := io.ReadAll(getResp.Body)
+		t.Fatalf("GET failed with status %d: %s", getResp.StatusCode, getBody)
 	}
 
 	// Verify data matches
@@ -405,7 +433,6 @@ func TestMultiplePutsSameData(t *testing.T) {
 	}
 
 	body1, _ := io.ReadAll(resp1.Body)
-	commitment1 := string(body1)
 
 	// Second PUT (same data) - should succeed (idempotent)
 	req2 := httptest.NewRequest("PUT", "/put/", bytes.NewReader(testData))
@@ -422,14 +449,13 @@ func TestMultiplePutsSameData(t *testing.T) {
 	}
 
 	body2, _ := io.ReadAll(resp2.Body)
-	commitment2 := string(body2)
 
-	// Commitments should be identical
-	if commitment1 != commitment2 {
-		t.Errorf("Same data produced different commitments: %s vs %s", commitment1, commitment2)
+	// Commitments should be identical (binary comparison)
+	if !bytes.Equal(body1, body2) {
+		t.Errorf("Same data produced different commitments: %x vs %x", body1, body2)
 	}
 
-	t.Logf("Idempotent PUT verified: both returned %s", commitment1)
+	t.Logf("Idempotent PUT verified: both returned %x", body1)
 }
 
 // TestLargeBlobPut tests PUT with large blob
@@ -466,8 +492,8 @@ func TestConcurrentPutGet(t *testing.T) {
 
 	numRequests := 20
 
-	// Channel to collect commitments from PUTs
-	commitments := make(chan string, numRequests)
+	// Channel to collect commitments from PUTs (binary bytes)
+	commitments := make(chan []byte, numRequests)
 	errors := make(chan error, numRequests*2)
 
 	// Concurrent PUTs
@@ -488,12 +514,12 @@ func TestConcurrentPutGet(t *testing.T) {
 			}
 
 			body, _ := io.ReadAll(resp.Body)
-			commitments <- string(body)
+			commitments <- body
 		}(i)
 	}
 
 	// Wait for all PUTs to complete
-	var collectedCommitments []string
+	var collectedCommitments [][]byte
 	for i := 0; i < numRequests; i++ {
 		select {
 		case comm := <-commitments:
@@ -505,8 +531,10 @@ func TestConcurrentPutGet(t *testing.T) {
 
 	// Concurrent GETs
 	for _, comm := range collectedCommitments {
-		go func(commitment string) {
-			url := fmt.Sprintf("/get/%s", commitment)
+		go func(commitment []byte) {
+			// Hex-encode for URL
+			commitmentHex := hex.EncodeToString(commitment)
+			url := fmt.Sprintf("/get/%s", commitmentHex)
 			req := httptest.NewRequest("GET", url, nil)
 			w := httptest.NewRecorder()
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	libshare "github.com/celestiaorg/go-square/v3/share"
+	altda "github.com/ethereum-optimism/optimism/op-alt-da"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -287,10 +288,15 @@ func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 			"status", existingBlob.Status,
 			"latency_ms", time.Since(startTime).Milliseconds())
 
-		// Return commitment (backward compatible response)
-		response := fmt.Sprintf("0x%02x%x", 0x0c, blobCommitment)
+		// Return commitment in GenericCommitment format (binary bytes)
+		// Format: [commitment_type_byte][version_byte][blob_commitment]
+		genericComm := altda.NewGenericCommitment(append([]byte{VersionByte}, blobCommitment...))
+		encodedComm := genericComm.Encode()
+
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(response))
+		if _, err := w.Write(encodedComm); err != nil {
+			s.log.Error("Failed to write commitment response", "error", err)
+		}
 		return
 	}
 
@@ -326,11 +332,19 @@ func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 		"commitment", hex.EncodeToString(blobCommitment),
 		"latency_ms", time.Since(startTime).Milliseconds())
 
-	// Return commitment (backward compatible response)
-	// Format: 0x<version_byte><commitment_hex>
-	response := fmt.Sprintf("0x%02x%x", 0x0c, blobCommitment)
+	// Return commitment in GenericCommitment format (binary bytes)
+	// This matches OP-Batcher expectations: [commitment_type_byte][version_byte][blob_commitment]
+	genericComm := altda.NewGenericCommitment(append([]byte{VersionByte}, blobCommitment...))
+	encodedComm := genericComm.Encode()
+
+	s.log.Debug("Returning commitment",
+		"encoded_length", len(encodedComm),
+		"encoded_hex", hex.EncodeToString(encodedComm))
+
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(response))
+	if _, err := w.Write(encodedComm); err != nil {
+		s.log.Error("Failed to write commitment response", "error", err)
+	}
 }
 
 func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
@@ -346,15 +360,7 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	commitmentHex := strings.TrimPrefix(r.URL.Path, "/get/")
 	commitmentHex = strings.TrimPrefix(commitmentHex, "0x")
 
-	// Skip version byte if present (first 2 hex chars = 1 byte)
-	if len(commitmentHex) > 2 {
-		versionByte := commitmentHex[:2]
-		if versionByte == "0c" || versionByte == "0C" {
-			commitmentHex = commitmentHex[2:]
-		}
-	}
-
-	requestedCommitment, err := hex.DecodeString(commitmentHex)
+	encodedCommitment, err := hex.DecodeString(commitmentHex)
 	if err != nil {
 		s.log.Error("Invalid commitment format", "error", err, "hex", commitmentHex)
 		http.Error(w, "invalid commitment format", http.StatusBadRequest)
@@ -362,22 +368,74 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate commitment is not empty
-	if len(requestedCommitment) == 0 {
+	if len(encodedCommitment) == 0 {
 		s.log.Error("Empty commitment")
 		http.Error(w, "invalid commitment format", http.StatusBadRequest)
 		return
 	}
 
+	// Decode GenericCommitment format
+	// Expected format: [commitment_type_byte][version_byte][blob_commitment...]
+	var requestedCommitment []byte
+
+	// Try to decode as GenericCommitment first
+	_, decodeErr := altda.DecodeCommitmentData(encodedCommitment)
+	if decodeErr == nil && len(encodedCommitment) >= 34 {
+		// Successfully decoded GenericCommitment
+		// Format: [type_byte][version_byte][32_byte_blob_commitment]
+		// Extract just the blob commitment (skip first 2 bytes)
+		if encodedCommitment[1] == VersionByte {
+			requestedCommitment = encodedCommitment[2:]
+		} else {
+			// Fallback: might have different format
+			requestedCommitment = encodedCommitment[1:]
+		}
+	} else {
+		// Not GenericCommitment format - treat as raw commitment
+		// Check if it starts with version byte
+		if len(encodedCommitment) > 1 && encodedCommitment[0] == VersionByte {
+			requestedCommitment = encodedCommitment[1:]
+		} else {
+			requestedCommitment = encodedCommitment
+		}
+	}
+
 	// Debug: log what we're looking for
-	s.log.Debug("Looking for blob",
+	s.log.Info("GET request details",
+		"encoded_length", len(encodedCommitment),
+		"encoded_hex", hex.EncodeToString(encodedCommitment),
 		"commitment_length", len(requestedCommitment),
 		"commitment_hex", hex.EncodeToString(requestedCommitment))
 
 	// Query database for blob metadata
 	blob, err := s.store.GetBlobByCommitment(r.Context(), requestedCommitment)
 	if err == db.ErrBlobNotFound {
-		s.log.Warn("Blob not found", "commitment", hex.EncodeToString(requestedCommitment))
-		http.Error(w, "blob not found", http.StatusNotFound)
+		// Not found as individual blob - try as batch commitment
+		batch, batchErr := s.store.GetBatchByCommitment(r.Context(), requestedCommitment)
+		if batchErr == db.ErrBatchNotFound {
+			// Not found in our DB
+			s.log.Warn("Blob not found in DB",
+				"commitment", hex.EncodeToString(requestedCommitment))
+			http.Error(w, "blob not found", http.StatusNotFound)
+			return
+		}
+		if batchErr != nil {
+			s.log.Error("Failed to query batch", "error", batchErr)
+			http.Error(w, "failed to query batch: "+batchErr.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Found as batch - return the packed batch data (what's actually on Celestia)
+		s.log.Info("Batch retrieved",
+			"batch_id", batch.BatchID,
+			"size", batch.BatchSize,
+			"blob_count", batch.BlobCount,
+			"status", batch.Status,
+			"commitment", hex.EncodeToString(requestedCommitment),
+			"latency_ms", time.Since(startTime).Milliseconds())
+
+		w.WriteHeader(http.StatusOK)
+		w.Write(batch.BatchData)
 		return
 	}
 	if err != nil {
