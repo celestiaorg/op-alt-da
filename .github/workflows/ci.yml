@@ -1,0 +1,44 @@
+name: CI (all tests)
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run unit tests
+        run: make test-unit
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run integration tests (devnet must be accessible)
+        env:
+          CELESTIA_BRIDGE: ${{ secrets.CELESTIA_BRIDGE }}
+          CELESTIA_AUTH_TOKEN: ${{ secrets.CELESTIA_AUTH_TOKEN }}
+          CELESTIA_NAMESPACE: ${{ secrets.CELESTIA_NAMESPACE }}
+        run: make test-integration
+
+  all-tests:
+    needs: [unit, integration]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All tests completed
+        run: echo "All test jobs completed successfully"
