@@ -44,6 +44,7 @@ type Batch struct {
 	BatchID          int64
 	BatchCommitment  []byte
 	BatchData        []byte
+	BatchSize        int
 	BlobCount        int
 	Status           string
 	CelestiaHeight   *uint64
@@ -314,6 +315,50 @@ func (s *BlobStore) GetUnconfirmedBatches(ctx context.Context, olderThan time.Du
 	}
 
 	return batches, rows.Err()
+}
+
+// GetBatchByID retrieves a batch by its ID with full batch data
+func (s *BlobStore) GetBatchByID(ctx context.Context, batchID int64) (*Batch, error) {
+	var batch Batch
+	var celestiaHeight sql.NullInt64
+	var celestiaTxHash sql.NullString
+
+	err := s.db.QueryRowContext(ctx, `
+		SELECT batch_id, batch_commitment, batch_data, batch_size, blob_count,
+		       celestia_height, celestia_tx_hash, status, created_at, submitted_at, confirmed_at
+		FROM batches
+		WHERE batch_id = ?
+	`, batchID).Scan(
+		&batch.BatchID,
+		&batch.BatchCommitment,
+		&batch.BatchData,
+		&batch.BatchSize,
+		&batch.BlobCount,
+		&celestiaHeight,
+		&celestiaTxHash,
+		&batch.Status,
+		&batch.CreatedAt,
+		&batch.SubmittedAt,
+		&batch.ConfirmedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, ErrBlobNotFound // Reuse same error for "not found"
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query batch: %w", err)
+	}
+
+	if celestiaHeight.Valid {
+		height := uint64(celestiaHeight.Int64)
+		batch.CelestiaHeight = &height
+	}
+	if celestiaTxHash.Valid {
+		txHash := celestiaTxHash.String
+		batch.CelestiaTxHash = &txHash
+	}
+
+	return &batch, nil
 }
 
 // MarkRead updates read tracking for a blob

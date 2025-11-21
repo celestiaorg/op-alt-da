@@ -1,6 +1,7 @@
 package celestia
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -348,7 +349,7 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	commitment, err := hex.DecodeString(commitmentHex)
+	requestedCommitment, err := hex.DecodeString(commitmentHex)
 	if err != nil {
 		s.log.Error("Invalid commitment format", "error", err, "hex", commitmentHex)
 		http.Error(w, "invalid commitment format", http.StatusBadRequest)
@@ -356,19 +357,19 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate commitment is not empty
-	if len(commitment) == 0 {
+	if len(requestedCommitment) == 0 {
 		s.log.Error("Empty commitment")
 		http.Error(w, "invalid commitment format", http.StatusBadRequest)
 		return
 	}
 
-	// Query database for blob
-	blob, err := s.store.GetBlobByCommitment(r.Context(), commitment)
+	// Query database for blob metadata
+	blob, err := s.store.GetBlobByCommitment(r.Context(), requestedCommitment)
 	if err == db.ErrBlobNotFound {
 		// Log first 8 bytes or whole commitment if shorter
-		commitmentLog := commitment
-		if len(commitment) > 8 {
-			commitmentLog = commitment[:8]
+		commitmentLog := requestedCommitment
+		if len(requestedCommitment) > 8 {
+			commitmentLog = requestedCommitment[:8]
 		}
 		s.log.Warn("Blob not found", "commitment", hex.EncodeToString(commitmentLog))
 		http.Error(w, "blob not found", http.StatusNotFound)
@@ -378,6 +379,85 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("Failed to query blob", "error", err)
 		http.Error(w, "failed to query blob: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	var blobData []byte
+
+	// If blob is in a confirmed batch, retrieve from Celestia
+	if blob.BatchID != nil && blob.Status == "confirmed" && blob.CelestiaHeight != nil {
+		s.log.Debug("Retrieving blob from Celestia (in batch)",
+			"blob_id", blob.ID,
+			"batch_id", *blob.BatchID,
+			"height", *blob.CelestiaHeight)
+
+		// Get batch metadata
+		batchRecord, err := s.store.GetBatchByID(r.Context(), *blob.BatchID)
+		if err != nil {
+			s.log.Error("Failed to get batch metadata", "batch_id", *blob.BatchID, "error", err)
+			http.Error(w, "failed to get batch metadata: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Retrieve batch from Celestia
+		retrieveStart := time.Now()
+		celestiaBlob, err := s.celestiaStore.Client.Get(r.Context(), *blob.CelestiaHeight, s.namespace, batchRecord.BatchCommitment)
+		retrieveDuration := time.Since(retrieveStart)
+
+		if err != nil {
+			s.log.Error("Failed to retrieve batch from Celestia",
+				"batch_id", *blob.BatchID,
+				"height", *blob.CelestiaHeight,
+				"error", err)
+			// Fall back to cached data
+			s.log.Warn("Falling back to cached blob data", "blob_id", blob.ID)
+			blobData = blob.Data
+		} else {
+			// Record retrieval metrics
+			if s.celestiaMetrics != nil {
+				s.celestiaMetrics.RecordRetrieval(retrieveDuration, len(celestiaBlob.Data()))
+			}
+
+			// Unpack batch to extract individual blob
+			packedData := celestiaBlob.Data()
+			unpackedBlobs, err := batch.UnpackBlobs(packedData, s.batchCfg)
+			if err != nil {
+				s.log.Error("Failed to unpack batch from Celestia", "error", err)
+				// Fall back to cached data
+				blobData = blob.Data
+			} else {
+				// Find blob with matching commitment
+				found := false
+				for _, unpackedBlobData := range unpackedBlobs {
+					// Compute commitment for this blob
+					blobCommitment, err := commitment.ComputeCommitment(unpackedBlobData, s.namespace)
+					if err != nil {
+						continue
+					}
+
+					// Check if this is the blob we're looking for
+					if bytes.Equal(blobCommitment, requestedCommitment) {
+						blobData = unpackedBlobData
+						found = true
+						s.log.Debug("Found blob in unpacked batch",
+							"blob_id", blob.ID,
+							"size", len(blobData))
+						break
+					}
+				}
+
+				if !found {
+					s.log.Error("Blob not found in unpacked batch", "blob_id", blob.ID)
+					// Fall back to cached data
+					blobData = blob.Data
+				}
+			}
+		}
+	} else {
+		// Blob not yet batched or confirmed - use cached data
+		s.log.Debug("Retrieving blob from cache (not yet confirmed)",
+			"blob_id", blob.ID,
+			"status", blob.Status)
+		blobData = blob.Data
 	}
 
 	// Record inclusion height if available
@@ -395,21 +475,21 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Log first 8 bytes or whole commitment if shorter
-	commitmentLog := commitment
-	if len(commitment) > 8 {
-		commitmentLog = commitment[:8]
+	commitmentLog := requestedCommitment
+	if len(requestedCommitment) > 8 {
+		commitmentLog = requestedCommitment[:8]
 	}
 
 	s.log.Info("Blob retrieved",
 		"blob_id", blob.ID,
-		"size", len(blob.Data),
+		"size", len(blobData),
 		"status", blob.Status,
 		"commitment", hex.EncodeToString(commitmentLog),
 		"latency_ms", time.Since(startTime).Milliseconds())
 
 	// Return blob data
 	w.WriteHeader(http.StatusOK)
-	w.Write(blob.Data)
+	w.Write(blobData)
 }
 
 func (s *CelestiaServer) HandleHealth(w http.ResponseWriter, r *http.Request) {
