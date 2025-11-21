@@ -104,7 +104,7 @@ type CelestiaStore struct {
 }
 
 // NewCelestiaStore returns a celestia store.
-func NewCelestiaStore(cfg RPCClientConfig) *CelestiaStore {
+func NewCelestiaStore(cfg RPCClientConfig) (*CelestiaStore, error) {
 	var blobClient blobAPI.Module
 	var err error
 	if cfg.TxClientConfig != nil {
@@ -113,11 +113,11 @@ func NewCelestiaStore(cfg RPCClientConfig) *CelestiaStore {
 		blobClient, err = initRPCClient(cfg)
 	}
 	if err != nil {
-		log.Crit("failed to initialize celestia client", "err", err)
+		return nil, fmt.Errorf("failed to initialize celestia client: %w", err)
 	}
 	namespace, err := libshare.NewNamespaceFromBytes(cfg.Namespace)
 	if err != nil {
-		log.Crit("failed to parse namespace", "err", err)
+		return nil, fmt.Errorf("failed to parse namespace: %w", err)
 	}
 	return &CelestiaStore{
 		Log:           log.New(),
@@ -125,7 +125,7 @@ func NewCelestiaStore(cfg RPCClientConfig) *CelestiaStore {
 		GetTimeout:    time.Minute,
 		Namespace:     namespace,
 		CompactBlobID: cfg.CompactBlobID,
-	}
+	}, nil
 }
 
 // initTxClient initializes a transaction client for Celestia.
@@ -178,7 +178,8 @@ func initRPCClient(cfg RPCClientConfig) (blobAPI.Module, error) {
 
 func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	d.Log.Info("celestia: blob request", "id", hex.EncodeToString(key))
-	ctx, cancel := context.WithTimeout(context.Background(), d.GetTimeout)
+	// Use passed context instead of Background() to respect caller's cancellation
+	ctx, cancel := context.WithTimeout(ctx, d.GetTimeout)
 	defer cancel()
 
 	var blobID CelestiaBlobID

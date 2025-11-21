@@ -19,11 +19,26 @@ func main() {
 	oplog.SetupDefaults()
 
 	app := cli.NewApp()
-	app.Flags = cliapp.ProtectFlags(Flags)
+	app.Flags = cliapp.ProtectFlags(append(Flags,
+		DBPathFlag,
+		BackupEnabledFlag,
+		BackupIntervalFlag,
+		BatchMinBlobsFlag,
+		BatchMaxBlobsFlag,
+		BatchTargetBlobsFlag,
+		BatchMaxSizeFlag,
+		BatchMinSizeFlag,
+		WorkerSubmitPeriodFlag,
+		WorkerSubmitTimeoutFlag,
+		WorkerMaxRetriesFlag,
+		WorkerReconcilePeriodFlag,
+		WorkerReconcileAgeFlag,
+		WorkerGetTimeoutFlag,
+	))
 	app.Version = opservice.FormatVersion(Version, "", "", "")
 	app.Name = "da-server"
 	app.Usage = "Alt-DA Storage Service"
-	app.Description = "Service for storing alt-da inputs to Celestia"
+	app.Description = "Service for storing alt-da inputs to Celestia with async batching"
 	app.Action = StartDAServer
 
 	ctx := ctxinterrupt.WithSignalWaiterMain(context.Background())

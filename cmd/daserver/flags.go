@@ -286,23 +286,65 @@ func (c CLIConfig) TxClientEnabled() bool {
 }
 
 func (c CLIConfig) Check() error {
-	if c.TxClientEnabled() {
-		// If tx client is enabled, ensure tx client flags are set
-		if c.TxClientConfig.DefaultKeyName == "" {
-			return errors.New("--celestia.tx-client.key-name must be set")
-		}
-		if c.TxClientConfig.KeyringPath == "" {
-			return errors.New("--celestia.tx-client.keyring-path must be set")
-		}
-		if c.TxClientConfig.CoreGRPCAddr == "" {
-			return errors.New("--celestia.tx-client.core-grpc.addr must be set")
-		}
-		if c.TxClientConfig.P2PNetwork == "" {
-			return errors.New("--celestia.tx-client.p2p-network must be set")
-		}
-	}
+	// Validate namespace
 	if _, err := hex.DecodeString(c.CelestiaNamespace); err != nil {
 		return fmt.Errorf("celestia namespace: %w", err)
+	}
+
+	// Detect which mode is being used
+	hasAuthToken := c.CelestiaAuthToken != ""
+	hasKeyringPath := c.TxClientConfig.KeyringPath != ""
+	hasGRPCAddr := c.TxClientConfig.CoreGRPCAddr != ""
+
+	// Determine mode and validate
+	if hasKeyringPath || hasGRPCAddr {
+		// OPTION B: Service Provider (client-tx mode)
+		// Requires: RPC endpoint (reads) + gRPC endpoint (writes) + keyring
+
+		if c.CelestiaEndpoint == "" {
+			return errors.New("OPTION B (client-tx): --celestia.server (RPC endpoint) is required for reads (Get, GetAll, Subscribe)")
+		}
+
+		if c.TxClientConfig.KeyringPath == "" {
+			return errors.New("OPTION B (client-tx): --celestia.tx-client.keyring-path must be set for transaction signing")
+		}
+
+		if c.TxClientConfig.CoreGRPCAddr == "" {
+			return errors.New("OPTION B (client-tx): --celestia.tx-client.core-grpc.addr (gRPC endpoint) is required for writes (Submit)")
+		}
+
+		if c.TxClientConfig.P2PNetwork == "" {
+			return errors.New("OPTION B (client-tx): --celestia.tx-client.p2p-network must be set (e.g., mocha-4, arabica-11, mainnet)")
+		}
+
+		if c.TxClientConfig.DefaultKeyName == "" {
+			return errors.New("OPTION B (client-tx): --celestia.tx-client.key-name must be set")
+		}
+
+		// Warn if auth token is also set (mixing configurations)
+		if hasAuthToken {
+			return errors.New("configuration conflict: detected both --celestia.auth-token (OPTION A) and client-tx settings (OPTION B). Please use ONLY one mode. See .env.example for guidance")
+		}
+
+	} else if hasAuthToken {
+		// OPTION A: Local Celestia Node
+		// Requires: RPC endpoint + auth token
+
+		if c.CelestiaEndpoint == "" {
+			return errors.New("OPTION A (local node): --celestia.server (RPC endpoint) is required")
+		}
+
+	} else {
+		// Neither mode configured properly
+		return errors.New(`celestia connection not configured. Choose ONE mode:
+
+OPTION A (Local Node): Set --celestia.auth-token
+  Example: --celestia.server http://localhost:26658 --celestia.auth-token <token>
+
+OPTION B (Service Provider): Set --celestia.tx-client.keyring-path and --celestia.tx-client.core-grpc.addr
+  Example: --celestia.server https://rpc.endpoint --celestia.tx-client.core-grpc.addr grpc.endpoint:9090 --celestia.tx-client.keyring-path ~/.celestia-light-mocha-4/keys --celestia.tx-client.p2p-network mocha-4
+
+See .env.example for detailed configuration examples.`)
 	}
 
 	// S3 config validation (existing logic)

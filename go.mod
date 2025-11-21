@@ -8,10 +8,11 @@ require (
 	github.com/cosmos/cosmos-sdk v0.50.13
 	github.com/ethereum-optimism/optimism v1.13.5
 	github.com/ethereum/go-ethereum v1.16.3
+	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/minio/minio-go/v7 v7.0.85
-	github.com/prometheus/client_golang v1.23.2
 	github.com/stretchr/testify v1.11.1
 	github.com/urfave/cli/v2 v2.27.6
+	golang.org/x/sync v0.18.0
 )
 
 require (
@@ -296,6 +297,7 @@ require (
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/polydawn/refmt v0.89.0 // indirect
+	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.67.1 // indirect
 	github.com/prometheus/procfs v0.17.0 // indirect
@@ -363,7 +365,6 @@ require (
 	golang.org/x/mod v0.28.0 // indirect
 	golang.org/x/net v0.46.0 // indirect
 	golang.org/x/oauth2 v0.32.0 // indirect
-	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/sys v0.37.0 // indirect
 	golang.org/x/telemetry v0.0.0-20250908211612-aef8a434d053 // indirect
 	golang.org/x/term v0.36.0 // indirect
