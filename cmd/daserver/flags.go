@@ -272,56 +272,53 @@ func (c CLIConfig) Check() error {
 	}
 
 	// Detect which mode is being used
+	// Priority: If auth token is set, use OPTION A (ignore tx-client settings)
 	hasAuthToken := c.CelestiaAuthToken != ""
 	hasKeyringPath := c.TxClientConfig.KeyringPath != ""
-	hasGRPCAddr := c.TxClientConfig.CoreGRPCAddr != ""
 
 	// Determine mode and validate
-	if hasKeyringPath || hasGRPCAddr {
-		// OPTION B: Service Provider (client-tx mode)
-		// Requires: RPC endpoint (reads) + gRPC endpoint (writes) + keyring
+	if hasAuthToken {
+		// OPTION A: Self-hosted Celestia Node
+		// Requires: RPC endpoint + auth token
+		// The auth token gives full access (read + write) to the local node
 
 		if c.CelestiaEndpoint == "" {
-			return errors.New("OPTION B (client-tx): --celestia.server (RPC endpoint) is required for reads (Get, GetAll, Subscribe)")
+			return errors.New("OPTION A (self-hosted node): --celestia.server (RPC endpoint) is required")
 		}
 
-		if c.TxClientConfig.KeyringPath == "" {
-			return errors.New("OPTION B (client-tx): --celestia.tx-client.keyring-path must be set for transaction signing")
+		// Option A validated successfully - continue to S3 validation below
+
+	} else if hasKeyringPath {
+		// OPTION B: Service Provider (client-tx mode)
+		// Requires: RPC endpoint (reads) + gRPC endpoint (writes) + keyring (signing)
+		// Uses RPC for Get/Subscribe, gRPC for Submit
+
+		if c.CelestiaEndpoint == "" {
+			return errors.New("OPTION B (service provider): --celestia.server (RPC endpoint) is required for reads (Get, GetAll, Subscribe)")
 		}
 
 		if c.TxClientConfig.CoreGRPCAddr == "" {
-			return errors.New("OPTION B (client-tx): --celestia.tx-client.core-grpc.addr (gRPC endpoint) is required for writes (Submit)")
+			return errors.New("OPTION B (service provider): --celestia.tx-client.core-grpc.addr (gRPC endpoint) is required for writes (Submit)")
 		}
 
 		if c.TxClientConfig.P2PNetwork == "" {
-			return errors.New("OPTION B (client-tx): --celestia.tx-client.p2p-network must be set (e.g., mocha-4, arabica-11, mainnet)")
+			return errors.New("OPTION B (service provider): --celestia.tx-client.p2p-network must be set (e.g., mocha-4, arabica-11, mainnet)")
 		}
 
 		if c.TxClientConfig.DefaultKeyName == "" {
-			return errors.New("OPTION B (client-tx): --celestia.tx-client.key-name must be set")
+			return errors.New("OPTION B (service provider): --celestia.tx-client.key-name must be set")
 		}
 
-		// Warn if auth token is also set (mixing configurations)
-		if hasAuthToken {
-			return errors.New("configuration conflict: detected both --celestia.auth-token (OPTION A) and client-tx settings (OPTION B). Please use ONLY one mode. See .env.example for guidance")
-		}
-
-	} else if hasAuthToken {
-		// OPTION A: Local Celestia Node
-		// Requires: RPC endpoint + auth token
-
-		if c.CelestiaEndpoint == "" {
-			return errors.New("OPTION A (local node): --celestia.server (RPC endpoint) is required")
-		}
+		// Option B validated successfully - continue to S3 validation below
 
 	} else {
 		// Neither mode configured properly
 		return errors.New(`celestia connection not configured. Choose ONE mode:
 
-OPTION A (Local Node): Set --celestia.auth-token
+OPTION A (Self-hosted Node): Set --celestia.auth-token
   Example: --celestia.server http://localhost:26658 --celestia.auth-token <token>
 
-OPTION B (Service Provider): Set --celestia.tx-client.keyring-path and --celestia.tx-client.core-grpc.addr
+OPTION B (Service Provider): Set --celestia.tx-client.keyring-path
   Example: --celestia.server https://rpc.endpoint --celestia.tx-client.core-grpc.addr grpc.endpoint:9090 --celestia.tx-client.keyring-path ~/.celestia-light-mocha-4/keys --celestia.tx-client.p2p-network mocha-4
 
 See .env.example for detailed configuration examples.`)
@@ -342,14 +339,14 @@ See .env.example for detailed configuration examples.`)
 
 // GetCelestiaMode returns a human-readable description of the detected Celestia connection mode
 func (c CLIConfig) GetCelestiaMode() string {
+	// Priority: If auth token is set, use OPTION A (ignore tx-client settings)
 	hasAuthToken := c.CelestiaAuthToken != ""
 	hasKeyringPath := c.TxClientConfig.KeyringPath != ""
-	hasGRPCAddr := c.TxClientConfig.CoreGRPCAddr != ""
 
-	if hasKeyringPath || hasGRPCAddr {
-		return "OPTION B: Service Provider (client-tx mode with keyring + gRPC)"
-	} else if hasAuthToken {
+	if hasAuthToken {
 		return "OPTION A: Self-hosted Node (RPC with auth token)"
+	} else if hasKeyringPath {
+		return "OPTION B: Service Provider (client-tx mode with keyring + gRPC)"
 	}
 	return "UNKNOWN (not configured)"
 }
@@ -358,11 +355,17 @@ func (c CLIConfig) GetCelestiaMode() string {
 func (c CLIConfig) GetCelestiaModeDetails() map[string]string {
 	details := make(map[string]string)
 
+	// Priority: If auth token is set, use OPTION A (ignore tx-client settings)
 	hasAuthToken := c.CelestiaAuthToken != ""
 	hasKeyringPath := c.TxClientConfig.KeyringPath != ""
-	hasGRPCAddr := c.TxClientConfig.CoreGRPCAddr != ""
 
-	if hasKeyringPath || hasGRPCAddr {
+	if hasAuthToken {
+		// OPTION A: Self-hosted Node
+		details["mode"] = "OPTION A"
+		details["description"] = "Self-hosted Node"
+		details["rpc_endpoint"] = c.CelestiaEndpoint
+		details["auth_token"] = "<redacted>"
+	} else if hasKeyringPath {
 		// OPTION B: Service Provider
 		details["mode"] = "OPTION B"
 		details["description"] = "Service Provider (client-tx)"
@@ -371,12 +374,6 @@ func (c CLIConfig) GetCelestiaModeDetails() map[string]string {
 		details["keyring_path"] = c.TxClientConfig.KeyringPath
 		details["key_name"] = c.TxClientConfig.DefaultKeyName
 		details["p2p_network"] = c.TxClientConfig.P2PNetwork
-	} else if hasAuthToken {
-		// OPTION A: Local Node
-		details["mode"] = "OPTION A"
-		details["description"] = "Self-hosted Node"
-		details["rpc_endpoint"] = c.CelestiaEndpoint
-		details["auth_token"] = "<redacted>"
 	}
 
 	return details
