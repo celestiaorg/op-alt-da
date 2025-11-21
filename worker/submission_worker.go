@@ -100,15 +100,28 @@ func (w *SubmissionWorker) processBatch(ctx context.Context) error {
 		totalSize += len(b.Data)
 	}
 
-	// Only batch if we meet minimum requirements
-	if !w.batchCfg.ShouldBatch(len(selectedBlobs), totalSize) {
-		// Not enough blobs yet, wait for more
-		w.log.Info("Waiting for more blobs before batching",
-			"current_blobs", len(selectedBlobs),
-			"min_required", w.batchCfg.MinBlobs,
-			"current_size_kb", totalSize/1024,
-			"min_size_kb", w.batchCfg.MinBatchSizeBytes/1024)
-		return nil
+	// Check if oldest blob has exceeded max wait time (time-based submission)
+	oldestBlobAge := time.Since(selectedBlobs[0].CreatedAt)
+	forceSubmit := oldestBlobAge >= w.workerCfg.MaxBlobWaitTime
+
+	if forceSubmit {
+		w.log.Info("Force submitting batch due to max wait time exceeded",
+			"oldest_blob_age", oldestBlobAge,
+			"max_wait_time", w.workerCfg.MaxBlobWaitTime,
+			"blob_count", len(selectedBlobs),
+			"total_size_kb", totalSize/1024)
+	} else {
+		// Only batch if we meet minimum requirements (normal batching)
+		if !w.batchCfg.ShouldBatch(len(selectedBlobs), totalSize) {
+			// Not enough blobs yet, wait for more
+			w.log.Debug("Waiting for more blobs before batching",
+				"current_blobs", len(selectedBlobs),
+				"min_required", w.batchCfg.MinBlobs,
+				"current_size_kb", totalSize/1024,
+				"min_size_kb", w.batchCfg.MinBatchSizeBytes/1024,
+				"oldest_blob_age", oldestBlobAge)
+			return nil
+		}
 	}
 
 	w.log.Info("Processing batch", "blob_count", len(selectedBlobs), "total_size_kb", totalSize/1024)

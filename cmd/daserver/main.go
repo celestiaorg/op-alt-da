@@ -31,6 +31,7 @@ func main() {
 		WorkerSubmitPeriodFlag,
 		WorkerSubmitTimeoutFlag,
 		WorkerMaxRetriesFlag,
+		WorkerMaxBlobWaitTimeFlag,
 		WorkerReconcilePeriodFlag,
 		WorkerReconcileAgeFlag,
 		WorkerGetTimeoutFlag,

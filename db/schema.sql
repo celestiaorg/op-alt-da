@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS blobs (
 
     -- Batch association
     batch_id            INTEGER,
+    batch_index         INTEGER,  -- Position within batch (0-based)
 
     -- Celestia metadata
     celestia_height     INTEGER,

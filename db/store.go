@@ -33,6 +33,7 @@ type Blob struct {
 	Size           int
 	Status         string
 	BatchID        *int64
+	BatchIndex     *int  // Position within batch (0-based)
 	CelestiaHeight *uint64
 	RetryCount     int
 	CreatedAt      time.Time
@@ -121,16 +122,17 @@ func (s *BlobStore) InsertBlob(ctx context.Context, blob *Blob) (int64, error) {
 func (s *BlobStore) GetBlobByCommitment(ctx context.Context, commitment []byte) (*Blob, error) {
 	var blob Blob
 	var batchID sql.NullInt64
+	var batchIndex sql.NullInt64
 	var celestiaHeight sql.NullInt64
 
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, commitment, namespace, blob_data, blob_size, status,
-		       batch_id, celestia_height, created_at
+		       batch_id, batch_index, celestia_height, created_at
 		FROM blobs
 		WHERE commitment = ?
 	`, commitment).Scan(
 		&blob.ID, &blob.Commitment, &blob.Namespace, &blob.Data, &blob.Size,
-		&blob.Status, &batchID, &celestiaHeight, &blob.CreatedAt,
+		&blob.Status, &batchID, &batchIndex, &celestiaHeight, &blob.CreatedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -143,6 +145,10 @@ func (s *BlobStore) GetBlobByCommitment(ctx context.Context, commitment []byte) 
 	if batchID.Valid {
 		blob.BatchID = &batchID.Int64
 	}
+	if batchIndex.Valid {
+		idx := int(batchIndex.Int64)
+		blob.BatchIndex = &idx
+	}
 	if celestiaHeight.Valid {
 		height := uint64(celestiaHeight.Int64)
 		blob.CelestiaHeight = &height
@@ -154,7 +160,7 @@ func (s *BlobStore) GetBlobByCommitment(ctx context.Context, commitment []byte) 
 // GetPendingBlobs retrieves N pending blobs for batching (FIFO order)
 func (s *BlobStore) GetPendingBlobs(ctx context.Context, limit int) ([]*Blob, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, commitment, namespace, blob_data, blob_size, retry_count
+		SELECT id, commitment, namespace, blob_data, blob_size, retry_count, created_at
 		FROM blobs
 		WHERE status = 'pending_submission'
 		  AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)
@@ -170,7 +176,7 @@ func (s *BlobStore) GetPendingBlobs(ctx context.Context, limit int) ([]*Blob, er
 	for rows.Next() {
 		var blob Blob
 		if err := rows.Scan(&blob.ID, &blob.Commitment, &blob.Namespace,
-			&blob.Data, &blob.Size, &blob.RetryCount); err != nil {
+			&blob.Data, &blob.Size, &blob.RetryCount, &blob.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan blob: %w", err)
 		}
 		blobs = append(blobs, &blob)
@@ -202,14 +208,15 @@ func (s *BlobStore) CreateBatch(ctx context.Context, blobIDs []int64, batchCommi
 		return 0, fmt.Errorf("get batch id: %w", err)
 	}
 
-	// Update blobs to reference batch
-	for _, blobID := range blobIDs {
+	// Update blobs to reference batch and set their index
+	for i, blobID := range blobIDs {
 		_, err := tx.ExecContext(ctx, `
 			UPDATE blobs
 			SET status = 'batched',
-			    batch_id = ?
+			    batch_id = ?,
+			    batch_index = ?
 			WHERE id = ?
-		`, batchID, blobID)
+		`, batchID, i, blobID)
 		if err != nil {
 			return 0, fmt.Errorf("update blob %d: %w", blobID, err)
 		}

@@ -1,7 +1,6 @@
 package celestia
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -424,32 +423,24 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 				s.log.Error("Failed to unpack batch from Celestia", "error", err)
 				// Fall back to cached data
 				blobData = blob.Data
+			} else if blob.BatchIndex == nil {
+				s.log.Error("Blob has no batch index", "blob_id", blob.ID)
+				// Fall back to cached data
+				blobData = blob.Data
+			} else if *blob.BatchIndex >= len(unpackedBlobs) || *blob.BatchIndex < 0 {
+				s.log.Error("Blob batch index out of range",
+					"blob_id", blob.ID,
+					"batch_index", *blob.BatchIndex,
+					"batch_size", len(unpackedBlobs))
+				// Fall back to cached data
+				blobData = blob.Data
 			} else {
-				// Find blob with matching commitment
-				found := false
-				for _, unpackedBlobData := range unpackedBlobs {
-					// Compute commitment for this blob
-					blobCommitment, err := commitment.ComputeCommitment(unpackedBlobData, s.namespace)
-					if err != nil {
-						continue
-					}
-
-					// Check if this is the blob we're looking for
-					if bytes.Equal(blobCommitment, requestedCommitment) {
-						blobData = unpackedBlobData
-						found = true
-						s.log.Debug("Found blob in unpacked batch",
-							"blob_id", blob.ID,
-							"size", len(blobData))
-						break
-					}
-				}
-
-				if !found {
-					s.log.Error("Blob not found in unpacked batch", "blob_id", blob.ID)
-					// Fall back to cached data
-					blobData = blob.Data
-				}
+				// Directly access blob by its index - much more efficient!
+				blobData = unpackedBlobs[*blob.BatchIndex]
+				s.log.Debug("Retrieved blob from batch using index",
+					"blob_id", blob.ID,
+					"batch_index", *blob.BatchIndex,
+					"size", len(blobData))
 			}
 		}
 	} else {

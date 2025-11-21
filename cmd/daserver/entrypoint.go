@@ -33,6 +33,7 @@ const (
 	WorkerSubmitPeriodFlagName    = "worker.submit-period"
 	WorkerSubmitTimeoutFlagName   = "worker.submit-timeout"
 	WorkerMaxRetriesFlagName      = "worker.max-retries"
+	WorkerMaxBlobWaitTimeFlagName = "worker.max-blob-wait-time"
 	WorkerReconcilePeriodFlagName = "worker.reconcile-period"
 	WorkerReconcileAgeFlagName    = "worker.reconcile-age"
 	WorkerGetTimeoutFlagName      = "worker.get-timeout"
@@ -104,6 +105,12 @@ var (
 		Usage:   "maximum retries for failed submissions",
 		Value:   10,
 		EnvVars: prefixEnvVars("WORKER_MAX_RETRIES"),
+	}
+	WorkerMaxBlobWaitTimeFlag = &cli.DurationFlag{
+		Name:    WorkerMaxBlobWaitTimeFlagName,
+		Usage:   "max time a blob waits before forced submission (time-based batching)",
+		Value:   30 * time.Second,
+		EnvVars: prefixEnvVars("WORKER_MAX_BLOB_WAIT_TIME"),
 	}
 	WorkerReconcilePeriodFlag = &cli.DurationFlag{
 		Name:    WorkerReconcilePeriodFlagName,
@@ -204,6 +211,7 @@ func StartDAServer(cliCtx *cli.Context) error {
 		SubmitPeriod:    cliCtx.Duration(WorkerSubmitPeriodFlagName),
 		SubmitTimeout:   cliCtx.Duration(WorkerSubmitTimeoutFlagName),
 		MaxRetries:      cliCtx.Int(WorkerMaxRetriesFlagName),
+		MaxBlobWaitTime: cliCtx.Duration(WorkerMaxBlobWaitTimeFlagName),
 		ReconcilePeriod: cliCtx.Duration(WorkerReconcilePeriodFlagName),
 		ReconcileAge:    cliCtx.Duration(WorkerReconcileAgeFlagName),
 		GetTimeout:      cliCtx.Duration(WorkerGetTimeoutFlagName),
@@ -213,6 +221,7 @@ func StartDAServer(cliCtx *cli.Context) error {
 		"submit_period", workerCfg.SubmitPeriod,
 		"submit_timeout", workerCfg.SubmitTimeout,
 		"max_retries", workerCfg.MaxRetries,
+		"max_blob_wait_time", workerCfg.MaxBlobWaitTime,
 		"reconcile_period", workerCfg.ReconcilePeriod,
 		"reconcile_age", workerCfg.ReconcileAge,
 		"get_timeout", workerCfg.GetTimeout)

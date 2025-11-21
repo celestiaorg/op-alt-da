@@ -198,6 +198,7 @@ func TestSubmissionWorker_InsufficientBlobs(t *testing.T) {
 	logger := log.NewLogger(log.DiscardHandler())
 	batchCfg := batch.DefaultConfig()
 	workerCfg := DefaultConfig()
+	workerCfg.MaxBlobWaitTime = 1 * time.Hour // Disable time-based submission for this test
 	worker := NewSubmissionWorker(store, mock, namespace, batchCfg, workerCfg, nil,  logger)
 
 	// Process batch
