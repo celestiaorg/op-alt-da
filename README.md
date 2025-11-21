@@ -91,7 +91,114 @@ This server implements an **async, database-backed architecture** designed for h
 - **Event-driven confirmations**: Real-time updates via Celestia subscriptions
 - **Disaster recovery**: Optional S3 backups of entire database
 
+## Building
+
+### Prerequisites
+
+- Go 1.21 or higher
+- Make (optional, for convenience)
+
+### Quick Start
+
+**Build the binary:**
+
+```bash
+make da-server
+```
+
+This creates `./bin/da-server` with version information embedded.
+
+**Build optimized binary** (smaller size, ~32% reduction):
+
+```bash
+make da-server-optimized
+```
+
+**Install to GOPATH/bin:**
+
+```bash
+make install
+```
+
+**Run tests:**
+
+```bash
+make test           # Run all unit tests
+make test-unit      # Run only unit tests
+make test-all       # Run unit + integration tests
+```
+
+**Other useful commands:**
+
+```bash
+make build          # Build all packages (CI check)
+make clean          # Remove binaries
+make lint           # Run linter
+make fmt            # Auto-fix linting issues
+```
+
+### Manual Build
+
+If you prefer not to use Make:
+
+```bash
+# Standard build
+go build -o bin/da-server ./cmd/daserver
+
+# Optimized build
+go build -ldflags="-s -w" -o bin/da-server ./cmd/daserver
+
+# With version info
+go build -ldflags="-X main.Version=v1.0.0" -o bin/da-server ./cmd/daserver
+```
+
 ## Configuration
+
+The server supports two connection modes for Celestia. At startup, the server **automatically detects which mode you're using** based on the flags provided and logs this information prominently.
+
+### 🔍 Runtime Mode Detection
+
+When the server starts, you'll see clear output showing which mode is active:
+
+**Example for OPTION A (Self-hosted Node):**
+```
+INFO Initializing Async Alt-DA server...
+INFO ========================================
+INFO Celestia Connection Mode Detected mode="OPTION A: Self-hosted Node (RPC with auth token)"
+INFO   mode value="OPTION A"
+INFO   description value="Self-hosted Node"
+INFO   rpc_endpoint value="http://localhost:26658"
+INFO   auth_token value="<redacted>"
+INFO ========================================
+```
+
+**Example for OPTION B (Service Provider):**
+```
+INFO Initializing Async Alt-DA server...
+INFO ========================================
+INFO Celestia Connection Mode Detected mode="OPTION B: Service Provider (client-tx mode with keyring + gRPC)"
+INFO   mode value="OPTION B"
+INFO   description value="Service Provider (client-tx)"
+INFO   rpc_endpoint value="https://rpc.quicknode.pro/..."
+INFO   grpc_endpoint value="grpc.quicknode.pro:9090"
+INFO   keyring_path value="/root/.celestia-light-mocha-4/keys"
+INFO   key_name value="my_celes_key"
+INFO   p2p_network value="mocha-4"
+INFO ========================================
+```
+
+**Configuration Error Detection:**
+
+If you accidentally mix configurations from both modes, or forget required flags, the server will fail with a clear error message:
+
+```
+Error: configuration conflict: detected both --celestia.auth-token (OPTION A) and client-tx settings (OPTION B).
+Please use ONLY one mode. See .env.example for guidance
+```
+
+This makes it immediately obvious which mode is running and helps catch configuration errors early.
+
+---
 
 ### Required Flags
 
@@ -216,10 +323,28 @@ You have **TWO options** for connecting to Celestia. Choose ONE:
 
 ### 1. Generate a Celestia Namespace
 
+The namespace must be a **29-byte hex string** (58 characters). For Celestia version 0, it requires 18 leading zeros (36 hex chars) + 10 random bytes (20 hex chars).
+
+**Generate and set as environment variable:**
+
 ```bash
-export NAMESPACE=00000000000000000000000000000000000000$(openssl rand -hex 10)
-echo $NAMESPACE
+# Generate the namespace (36 zeros + 20 random hex chars)
+export OP_ALTDA_CELESTIA_NAMESPACE=00000000000000000000000000000000000000$(openssl rand -hex 10)
+
+# Verify it looks correct (should be 58 characters)
+echo $OP_ALTDA_CELESTIA_NAMESPACE
 ```
+
+**Example output:**
+```
+00000000000000000000000000000000000000a1b2c3d4e5f6a7b8c9d0
+```
+
+**Important notes:**
+- ✅ Use `OP_ALTDA_CELESTIA_NAMESPACE` (not just `NAMESPACE`)
+- ✅ No `0x` prefix - just the raw hex string
+- ✅ Must be exactly 58 characters (29 bytes × 2)
+- ✅ Validated automatically on server startup
 
 ---
 
@@ -280,7 +405,7 @@ cat ~/.celestia-full/keys/keyring-test/auth-token
 ```bash
 ./celestia-da-server \
   --celestia.server https://your-endpoint.celestia-mocha.quiknode.pro/your-token \
-  --celestia.namespace $NAMESPACE \
+  --celestia.namespace $OP_ALTDA_CELESTIA_NAMESPACE \
   --celestia.tx-client.core-grpc.addr your-endpoint.celestia-mocha.quiknode.pro:9090 \
   --celestia.tx-client.p2p-network mocha-4 \
   --celestia.tx-client.keyring-path ~/.celestia-light-mocha-4/keys \
@@ -296,7 +421,7 @@ cat ~/.celestia-full/keys/keyring-test/auth-token
 ```bash
 ./celestia-da-server \
   --celestia.server https://your-endpoint.celestia-mocha.quiknode.pro/your-token \
-  --celestia.namespace $NAMESPACE \
+  --celestia.namespace $OP_ALTDA_CELESTIA_NAMESPACE \
   --celestia.tx-client.core-grpc.addr your-endpoint.celestia-mocha.quiknode.pro:9090 \
   --celestia.tx-client.p2p-network mocha-4 \
   --celestia.tx-client.keyring-path ~/.celestia-light-mocha-4/keys \
@@ -319,7 +444,7 @@ cat ~/.celestia-full/keys/keyring-test/auth-token
 ```bash
 ./celestia-da-server \
   --celestia.server http://localhost:26658 \
-  --celestia.namespace $NAMESPACE \
+  --celestia.namespace $OP_ALTDA_CELESTIA_NAMESPACE \
   --celestia.auth-token $(cat ~/.celestia-light/keys/keyring-test/auth-token) \
   --addr 127.0.0.1 \
   --port 3100 \
@@ -331,7 +456,7 @@ cat ~/.celestia-full/keys/keyring-test/auth-token
 ```bash
 ./celestia-da-server \
   --celestia.server http://localhost:26658 \
-  --celestia.namespace $NAMESPACE \
+  --celestia.namespace $OP_ALTDA_CELESTIA_NAMESPACE \
   --celestia.auth-token $(cat ~/.celestia-light/keys/keyring-test/auth-token) \
   --addr 0.0.0.0 \
   --port 3100 \

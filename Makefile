@@ -7,8 +7,23 @@ LDFLAGSSTRING +=-X main.GitDate=$(GITDATE)
 LDFLAGSSTRING +=-X main.Version=$(VERSION)
 LDFLAGS := -ldflags "$(LDFLAGSSTRING)"
 
+# Build targets
+.DEFAULT_GOAL := da-server
+
 da-server:
 	env GO111MODULE=on GOOS=$(TARGETOS) GOARCH=$(TARGETARCH) go build -v $(LDFLAGS) -o ./bin/da-server ./cmd/daserver
+
+# Build optimized binary (stripped debug symbols for smaller size)
+da-server-optimized:
+	env GO111MODULE=on GOOS=$(TARGETOS) GOARCH=$(TARGETARCH) go build -v -ldflags "$(LDFLAGSSTRING) -s -w" -o ./bin/da-server ./cmd/daserver
+
+# Build and install to GOPATH/bin
+install:
+	go install $(LDFLAGS) ./cmd/daserver
+
+# Build all packages without creating binaries (useful for CI)
+build:
+	go build -v ./...
 
 lint:
 	golangci-lint run
@@ -17,7 +32,7 @@ fmt:
 	golangci-lint run --fix
 
 clean:
-	rm bin/da-server
+	rm -rf bin/
 
 # Run all tests (unit tests only, excludes integration tests)
 test:
@@ -37,9 +52,14 @@ test-integration:
 test-all: test-unit test-integration
 
 .PHONY: \
+	da-server \
+	da-server-optimized \
+	install \
+	build \
 	clean \
+	lint \
+	fmt \
 	test \
 	test-unit \
 	test-integration \
-	test-e2e \
 	test-all

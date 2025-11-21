@@ -360,6 +360,48 @@ See .env.example for detailed configuration examples.`)
 	return nil
 }
 
+// GetCelestiaMode returns a human-readable description of the detected Celestia connection mode
+func (c CLIConfig) GetCelestiaMode() string {
+	hasAuthToken := c.CelestiaAuthToken != ""
+	hasKeyringPath := c.TxClientConfig.KeyringPath != ""
+	hasGRPCAddr := c.TxClientConfig.CoreGRPCAddr != ""
+
+	if hasKeyringPath || hasGRPCAddr {
+		return "OPTION B: Service Provider (client-tx mode with keyring + gRPC)"
+	} else if hasAuthToken {
+		return "OPTION A: Self-hosted Node (RPC with auth token)"
+	}
+	return "UNKNOWN (not configured)"
+}
+
+// GetCelestiaModeDetails returns detailed configuration for the detected mode
+func (c CLIConfig) GetCelestiaModeDetails() map[string]string {
+	details := make(map[string]string)
+
+	hasAuthToken := c.CelestiaAuthToken != ""
+	hasKeyringPath := c.TxClientConfig.KeyringPath != ""
+	hasGRPCAddr := c.TxClientConfig.CoreGRPCAddr != ""
+
+	if hasKeyringPath || hasGRPCAddr {
+		// OPTION B: Service Provider
+		details["mode"] = "OPTION B"
+		details["description"] = "Service Provider (client-tx)"
+		details["rpc_endpoint"] = c.CelestiaEndpoint
+		details["grpc_endpoint"] = c.TxClientConfig.CoreGRPCAddr
+		details["keyring_path"] = c.TxClientConfig.KeyringPath
+		details["key_name"] = c.TxClientConfig.DefaultKeyName
+		details["p2p_network"] = c.TxClientConfig.P2PNetwork
+	} else if hasAuthToken {
+		// OPTION A: Local Node
+		details["mode"] = "OPTION A"
+		details["description"] = "Self-hosted Node"
+		details["rpc_endpoint"] = c.CelestiaEndpoint
+		details["auth_token"] = "<redacted>"
+	}
+
+	return details
+}
+
 func (c CLIConfig) CelestiaConfig() celestia.RPCClientConfig {
 	ns, _ := hex.DecodeString(c.CelestiaNamespace)
 	var cfg *celestia.TxClientConfig

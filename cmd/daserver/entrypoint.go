@@ -141,6 +141,17 @@ func StartDAServer(cliCtx *cli.Context) error {
 
 	l.Info("Initializing Async Alt-DA server...")
 
+	// Display detected Celestia connection mode prominently
+	l.Info("========================================")
+	l.Info("Celestia Connection Mode Detected", "mode", cfg.GetCelestiaMode())
+
+	// Log detailed configuration
+	details := cfg.GetCelestiaModeDetails()
+	for key, value := range details {
+		l.Info("  "+key, "value", value)
+	}
+	l.Info("========================================")
+
 	// Initialize database
 	dbPath := cliCtx.String(DBPathFlagName)
 	l.Info("Opening database", "path", dbPath)
