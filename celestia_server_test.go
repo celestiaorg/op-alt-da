@@ -385,7 +385,7 @@ func TestPutGetRoundTrip(t *testing.T) {
 	t.Logf("Round trip successful: %d bytes", len(testData))
 }
 
-// TestMultiplePutsSameData tests multiple PUTs with same data
+// TestMultiplePutsSameData tests idempotent PUT behavior (same data = same commitment)
 func TestMultiplePutsSameData(t *testing.T) {
 	server, _, cleanup := setupServerTest(t)
 	defer cleanup()
@@ -399,9 +399,15 @@ func TestMultiplePutsSameData(t *testing.T) {
 
 	resp1 := w1.Result()
 	defer resp1.Body.Close()
-	body1, _ := io.ReadAll(resp1.Body)
 
-	// Second PUT (same data)
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("First PUT failed with status %d", resp1.StatusCode)
+	}
+
+	body1, _ := io.ReadAll(resp1.Body)
+	commitment1 := string(body1)
+
+	// Second PUT (same data) - should succeed (idempotent)
 	req2 := httptest.NewRequest("PUT", "/put/", bytes.NewReader(testData))
 	w2 := httptest.NewRecorder()
 	server.HandlePut(w2, req2)
@@ -409,14 +415,21 @@ func TestMultiplePutsSameData(t *testing.T) {
 	resp2 := w2.Result()
 	defer resp2.Body.Close()
 
-	// Second PUT should fail (duplicate commitment)
-	if resp2.StatusCode == http.StatusOK {
-		body2, _ := io.ReadAll(resp2.Body)
-		// Commitments should be identical
-		if string(body1) != string(body2) {
-			t.Errorf("Same data produced different commitments: %s vs %s", body1, body2)
-		}
+	if resp2.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp2.Body)
+		t.Fatalf("Second PUT (duplicate) should succeed with 200 OK (idempotent), got %d: %s",
+			resp2.StatusCode, body)
 	}
+
+	body2, _ := io.ReadAll(resp2.Body)
+	commitment2 := string(body2)
+
+	// Commitments should be identical
+	if commitment1 != commitment2 {
+		t.Errorf("Same data produced different commitments: %s vs %s", commitment1, commitment2)
+	}
+
+	t.Logf("Idempotent PUT verified: both returned %s", commitment1)
 }
 
 // TestLargeBlobPut tests PUT with large blob

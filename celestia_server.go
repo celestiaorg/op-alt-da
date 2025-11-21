@@ -270,6 +270,32 @@ func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if blob already exists (idempotent PUT behavior)
+	existingBlob, err := s.store.GetBlobByCommitment(r.Context(), blobCommitment)
+	if err == nil {
+		// Blob already exists - return existing commitment (idempotent)
+		s.log.Info("Blob already exists (duplicate submission)",
+			"blob_id", existingBlob.ID,
+			"size", len(blobData),
+			"commitment", hex.EncodeToString(blobCommitment[:8]),
+			"status", existingBlob.Status,
+			"latency_ms", time.Since(startTime).Milliseconds())
+
+		// Return commitment (backward compatible response)
+		response := fmt.Sprintf("0x%02x%x", 0x0c, blobCommitment)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(response))
+		return
+	}
+
+	// Blob doesn't exist - insert new blob
+	if err != db.ErrBlobNotFound {
+		// Unexpected error checking for existing blob
+		s.log.Error("Failed to check existing blob", "error", err)
+		http.Error(w, "failed to check blob: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	// Insert into database
 	namespaceBytes := s.namespace.Bytes()
 	blob := &db.Blob{
