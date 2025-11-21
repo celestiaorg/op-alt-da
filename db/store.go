@@ -6,6 +6,8 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -53,6 +55,14 @@ type Batch struct {
 
 // NewBlobStore creates a new blob store with SQLite backend
 func NewBlobStore(dbPath string) (*BlobStore, error) {
+	// Create parent directory if it doesn't exist
+	dir := filepath.Dir(dbPath)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return nil, fmt.Errorf("create database directory: %w", err)
+		}
+	}
+
 	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL&cache=shared")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)

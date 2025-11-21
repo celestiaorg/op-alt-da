@@ -47,18 +47,25 @@ func (l *EventListener) Run(ctx context.Context) error {
 		"reconcile_age", l.workerCfg.ReconcileAge,
 		"get_timeout", l.workerCfg.GetTimeout)
 
-	// Start event subscription with timeout to prevent hanging
+	// Try to start event subscription with timeout
+	var eventChan <-chan *blob.SubscriptionResponse
 	subCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
 
 	eventChan, err := l.celestia.Subscribe(subCtx, l.namespace)
+	cancel() // Clean up subscription context
+
 	if err != nil {
-		return fmt.Errorf("subscribe to namespace: %w", err)
+		// Subscription failed - warn but continue with reconciliation-only mode
+		l.log.Warn("Failed to subscribe to namespace events, falling back to reconciliation-only mode",
+			"error", err,
+			"namespace", l.namespace.String(),
+			"reconcile_period", l.workerCfg.ReconcilePeriod)
+		eventChan = nil // Set to nil so we don't read from it
+	} else {
+		l.log.Info("Subscribed to namespace events", "namespace", l.namespace.String())
 	}
 
-	l.log.Info("Subscribed to namespace events", "namespace", l.namespace.String())
-
-	// Start reconciliation ticker
+	// Start reconciliation ticker (works even without subscriptions)
 	reconcileTicker := time.NewTicker(l.workerCfg.ReconcilePeriod)
 	defer reconcileTicker.Stop()
 
@@ -68,7 +75,18 @@ func (l *EventListener) Run(ctx context.Context) error {
 			l.log.Info("Event listener stopping")
 			return ctx.Err()
 
-		case event := <-eventChan:
+		case event, ok := <-eventChan:
+			// Only process events if subscription is active
+			if eventChan == nil {
+				// Subscription disabled, skip this case
+				continue
+			}
+			if !ok {
+				// Channel closed, disable event processing
+				l.log.Warn("Event subscription channel closed, continuing with reconciliation-only")
+				eventChan = nil
+				continue
+			}
 			if event == nil {
 				l.log.Warn("Received nil event, subscription may have closed")
 				continue

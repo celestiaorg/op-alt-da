@@ -240,11 +240,14 @@ When you start the server, it automatically:
 **First-time startup:**
 ```bash
 # No database setup needed - just run the server!
+# The directory and database file are created automatically
 ./bin/da-server --celestia.namespace <ns> --celestia.auth-token <token>
 
 # Output shows automatic database initialization:
 # INFO Opening database path=./data/blobs.db
 # INFO Database initialized successfully
+
+# Note: The ./data/ directory will be created automatically if it doesn't exist
 ```
 
 **Changing the location:**
@@ -597,11 +600,17 @@ The server provides Prometheus metrics for monitoring Celestia DA operations. Me
 **To enable metrics:**
 
 ```bash
-# Option 1: Command-line flags
+# Option 1: Command-line flags (CORRECT syntax - no equals sign!)
 ./bin/da-server \
   --metrics.enabled \
   --metrics.port 6060 \
   ... other flags ...
+
+# ❌ WRONG - Don't use equals sign for boolean flags
+# --metrics.enabled=true  (This WON'T work!)
+
+# ✅ CORRECT - Just the flag name
+# --metrics.enabled
 
 # Option 2: Environment variables
 export OP_ALTDA_METRICS_ENABLED=true
@@ -644,11 +653,12 @@ curl http://localhost:6060/metrics
 **Troubleshooting:**
 
 If you don't see metrics logs or can't access the endpoint:
-1. ✅ Check you're using `--metrics.enabled` (not `--metrics.enable`)
-2. ✅ Check environment variable is `OP_ALTDA_METRICS_ENABLED=true` (not `"true"` in quotes for shell)
-3. ✅ Verify port 6060 isn't already in use: `lsof -i :6060`
-4. ✅ Check logs for "Prometheus Metrics: ENABLED" message
-5. ✅ Ensure you're connecting to the right host (metrics binds to same host as main server)
+1. ✅ **Check flag syntax**: Use `--metrics.enabled` NOT `--metrics.enabled=true` (no equals sign!)
+2. ✅ Check you're using `--metrics.enabled` (not `--metrics.enable`)
+3. ✅ Check environment variable is `OP_ALTDA_METRICS_ENABLED=true` (not `"true"` in quotes for shell)
+4. ✅ Verify port 6060 isn't already in use: `lsof -i :6060`
+5. ✅ Check logs for "Prometheus Metrics: ENABLED" message
+6. ✅ Ensure you're connecting to the right host (metrics binds to same host as main server)
 
 #### Celestia DA Layer Metrics
 

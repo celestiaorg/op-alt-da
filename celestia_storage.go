@@ -105,11 +105,18 @@ type CelestiaStore struct {
 
 // NewCelestiaStore returns a celestia store.
 func NewCelestiaStore(cfg RPCClientConfig) (*CelestiaStore, error) {
+	logger := log.New()
 	var blobClient blobAPI.Module
 	var err error
 	if cfg.TxClientConfig != nil {
+		logger.Info("Initializing Celestia client in TxClient mode (OPTION B: service provider)",
+			"rpc_url", cfg.URL,
+			"grpc_addr", cfg.TxClientConfig.CoreGRPCAddr)
 		blobClient, err = initTxClient(cfg)
 	} else {
+		logger.Info("Initializing Celestia client in RPC-only mode (OPTION A: self-hosted node)",
+			"rpc_url", cfg.URL,
+			"auth_token_set", cfg.AuthToken != "")
 		blobClient, err = initRPCClient(cfg)
 	}
 	if err != nil {
@@ -120,7 +127,7 @@ func NewCelestiaStore(cfg RPCClientConfig) (*CelestiaStore, error) {
 		return nil, fmt.Errorf("failed to parse namespace: %w", err)
 	}
 	return &CelestiaStore{
-		Log:           log.New(),
+		Log:           logger,
 		Client:        blobClient,
 		GetTimeout:    time.Minute,
 		Namespace:     namespace,
@@ -169,10 +176,34 @@ func initTxClient(cfg RPCClientConfig) (blobAPI.Module, error) {
 
 // initRPCClient initializes an RPC client for Celestia.
 func initRPCClient(cfg RPCClientConfig) (blobAPI.Module, error) {
+	logger := log.New()
+
+	// Log auth token status with first/last 4 chars for verification
+	tokenPreview := "not set"
+	if cfg.AuthToken != "" {
+		tokenLen := len(cfg.AuthToken)
+		if tokenLen > 8 {
+			tokenPreview = fmt.Sprintf("%s...%s (length: %d)",
+				cfg.AuthToken[:4],
+				cfg.AuthToken[tokenLen-4:],
+				tokenLen)
+		} else if tokenLen > 0 {
+			tokenPreview = fmt.Sprintf("****** (length: %d)", tokenLen)
+		}
+	}
+
+	logger.Info("Initializing RPC client for writes (Submit) and reads (Get, Subscribe)",
+		"url", cfg.URL,
+		"auth_token", tokenPreview,
+		"tls_enabled", cfg.TLSEnabled)
+
 	celestiaClient, err := client.NewClient(context.Background(), cfg.URL, cfg.AuthToken)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create rpc client: %w", err)
 	}
+
+	logger.Info("RPC client initialized successfully - auth token will be used for all operations")
+
 	return &celestiaClient.Blob, nil
 }
 

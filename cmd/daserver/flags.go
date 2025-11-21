@@ -74,9 +74,9 @@ var (
 	}
 	CelestiaTLSEnabledFlag = &cli.BoolFlag{
 		Name:    CelestiaTLSEnabledFlagName,
-		Usage:   "celestia rpc TLS",
+		Usage:   "celestia rpc TLS (set to true only if using https://)",
 		EnvVars: prefixEnvVars("CELESTIA_TLS_ENABLED"),
-		Value:   true,
+		Value:   false, // Default to false - most setups use plain HTTP
 	}
 	CelestiaAuthTokenFlag = &cli.StringFlag{
 		Name:    CelestiaAuthTokenFlagName,
@@ -262,7 +262,39 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 }
 
 func (c CLIConfig) TxClientEnabled() bool {
-	return c.TxClientConfig.KeyringPath != "" || c.TxClientConfig.CoreGRPCAuthToken != ""
+	// If auth token is set, we're in OPTION A (RPC-only mode)
+	// Don't use TxClient even if keyring/grpc settings are present
+	if c.CelestiaAuthToken != "" {
+		return false
+	}
+
+	// OPTION B: Use TxClient if keyring path is set
+	// (CoreGRPCAuthToken check removed - it's not a reliable indicator)
+	return c.TxClientConfig.KeyringPath != ""
+}
+
+// validateURLTLS checks that URL scheme matches TLS setting
+func validateURLTLS(url string, tlsEnabled bool) error {
+	isHTTPS := len(url) >= 8 && url[:8] == "https://"
+	isHTTP := len(url) >= 7 && url[:7] == "http://"
+
+	if !isHTTPS && !isHTTP {
+		return fmt.Errorf("celestia.server URL must start with http:// or https://, got: %s", url)
+	}
+
+	if tlsEnabled && isHTTP {
+		return errors.New("celestia.tls-enabled is true but URL uses http:// (not https://). Either:\n" +
+			"  1. Change URL to https:// if your node supports TLS\n" +
+			"  2. Set --celestia.tls-enabled=false for plain HTTP")
+	}
+
+	if !tlsEnabled && isHTTPS {
+		return errors.New("celestia.tls-enabled is false but URL uses https://. Either:\n" +
+			"  1. Set --celestia.tls-enabled to use HTTPS\n" +
+			"  2. Change URL to http:// for plain HTTP")
+	}
+
+	return nil
 }
 
 func (c CLIConfig) Check() error {
@@ -286,6 +318,11 @@ func (c CLIConfig) Check() error {
 			return errors.New("OPTION A (self-hosted node): --celestia.server (RPC endpoint) is required")
 		}
 
+		// Validate URL/TLS consistency
+		if err := validateURLTLS(c.CelestiaEndpoint, c.CelestiaTLSEnabled); err != nil {
+			return err
+		}
+
 		// Option A validated successfully - continue to S3 validation below
 
 	} else if hasKeyringPath {
@@ -295,6 +332,11 @@ func (c CLIConfig) Check() error {
 
 		if c.CelestiaEndpoint == "" {
 			return errors.New("OPTION B (service provider): --celestia.server (RPC endpoint) is required for reads (Get, GetAll, Subscribe)")
+		}
+
+		// Validate URL/TLS consistency
+		if err := validateURLTLS(c.CelestiaEndpoint, c.CelestiaTLSEnabled); err != nil {
+			return err
 		}
 
 		if c.TxClientConfig.CoreGRPCAddr == "" {
