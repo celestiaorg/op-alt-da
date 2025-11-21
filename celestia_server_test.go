@@ -64,6 +64,51 @@ func setupServerTest(t *testing.T) (*CelestiaServer, *db.BlobStore, func()) {
 	return server, store, cleanup
 }
 
+// confirmBlobOnDA simulates the batch confirmation process for testing
+// Returns the batch ID
+func confirmBlobOnDA(t *testing.T, server *CelestiaServer, store *db.BlobStore, blobID int64) int64 {
+	ctx := context.Background()
+
+	// Get the blob to pack it from pending blobs
+	blobs, _ := store.GetPendingBlobs(ctx, 100)
+	var targetBlob *db.Blob
+	for _, b := range blobs {
+		if b.ID == blobID {
+			targetBlob = b
+			break
+		}
+	}
+	if targetBlob == nil {
+		t.Fatalf("Could not find blob with ID %d", blobID)
+	}
+
+	// Pack the blob data
+	packedData, err := batch.PackBlobs([]*db.Blob{targetBlob}, server.batchCfg)
+	if err != nil {
+		t.Fatalf("Failed to pack blob: %v", err)
+	}
+
+	// Compute batch commitment
+	batchCommitment, err := commitment.ComputeCommitment(packedData, server.namespace)
+	if err != nil {
+		t.Fatalf("Failed to compute batch commitment: %v", err)
+	}
+
+	// Create batch
+	batchID, err := store.CreateBatch(ctx, []int64{blobID}, batchCommitment, packedData)
+	if err != nil {
+		t.Fatalf("Failed to create batch: %v", err)
+	}
+
+	// Mark as confirmed
+	err = store.MarkBatchConfirmed(ctx, batchCommitment, uint64(12345))
+	if err != nil {
+		t.Fatalf("Failed to mark batch as confirmed: %v", err)
+	}
+
+	return batchID
+}
+
 // TestHandlePut tests the PUT endpoint
 func TestHandlePut(t *testing.T) {
 	server, _, cleanup := setupServerTest(t)
@@ -119,13 +164,16 @@ func TestHandleGet(t *testing.T) {
 		Namespace:  server.namespace.Bytes(),
 		Data:       testData,
 		Size:       len(testData),
-		Status:     "confirmed",
+		Status:     "pending_submission",
 	}
 
-	_, err = store.InsertBlob(ctx, blob)
+	blobID, err := store.InsertBlob(ctx, blob)
 	if err != nil {
 		t.Fatalf("InsertBlob failed: %v", err)
 	}
+
+	// Confirm blob on DA layer
+	confirmBlobOnDA(t, server, store, blobID)
 
 	// GET request with version byte
 	commitmentHex := hex.EncodeToString(comm)
@@ -166,10 +214,13 @@ func TestHandleGet_WithoutVersionByte(t *testing.T) {
 		Namespace:  server.namespace.Bytes(),
 		Data:       testData,
 		Size:       len(testData),
-		Status:     "confirmed",
+		Status:     "pending_submission",
 	}
 
-	store.InsertBlob(ctx, blob)
+	blobID, _ := store.InsertBlob(ctx, blob)
+
+	// Confirm blob on DA layer
+	confirmBlobOnDA(t, server, store, blobID)
 
 	// GET without version byte prefix
 	commitmentHex := hex.EncodeToString(comm)
@@ -379,9 +430,40 @@ func TestPutGetRoundTrip(t *testing.T) {
 
 	// Check what's actually in the DB
 	blobs, _ := store.GetPendingBlobs(context.Background(), 10)
-	if len(blobs) > 0 {
-		t.Logf("DB has blob with commitment: %x (len=%d)", blobs[0].Commitment, len(blobs[0].Commitment))
+	if len(blobs) == 0 {
+		t.Fatal("No blobs found in DB after PUT")
 	}
+
+	blob := blobs[0]
+	t.Logf("DB has blob with commitment: %x (len=%d)", blob.Commitment, len(blob.Commitment))
+
+	// Simulate the batching and confirmation process
+	// Properly pack the blob data
+	batchCfg := batch.DefaultConfig()
+	packedData, err := batch.PackBlobs([]*db.Blob{blob}, batchCfg)
+	if err != nil {
+		t.Fatalf("Failed to pack blob: %v", err)
+	}
+
+	// Compute batch commitment from packed data
+	batchCommitment, err := commitment.ComputeCommitment(packedData, server.namespace)
+	if err != nil {
+		t.Fatalf("Failed to compute batch commitment: %v", err)
+	}
+
+	// Create a batch with properly packed data
+	batchID, err := store.CreateBatch(context.Background(), []int64{blob.ID}, batchCommitment, packedData)
+	if err != nil {
+		t.Fatalf("Failed to create batch: %v", err)
+	}
+
+	// Mark the batch as confirmed on DA layer
+	err = store.MarkBatchConfirmed(context.Background(), batchCommitment, uint64(12345))
+	if err != nil {
+		t.Fatalf("Failed to mark batch as confirmed: %v", err)
+	}
+
+	t.Logf("Created and confirmed batch %d at height 12345", batchID)
 
 	// Hex-encode commitment for URL path
 	commitmentHex := hex.EncodeToString(putBody)

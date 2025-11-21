@@ -425,12 +425,23 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Found as batch - return the packed batch data (what's actually on Celestia)
+		// Check if batch is confirmed on DA layer
+		if batch.Status != "confirmed" || batch.CelestiaHeight == nil {
+			s.log.Warn("Batch not yet confirmed on DA layer",
+				"batch_id", batch.BatchID,
+				"status", batch.Status,
+				"has_height", batch.CelestiaHeight != nil)
+			http.Error(w, "blob not yet available on DA layer", http.StatusNotFound)
+			return
+		}
+
+		// Batch is confirmed - return the packed batch data (what's actually on Celestia)
 		s.log.Info("Batch retrieved",
 			"batch_id", batch.BatchID,
 			"size", batch.BatchSize,
 			"blob_count", batch.BlobCount,
 			"status", batch.Status,
+			"celestia_height", *batch.CelestiaHeight,
 			"commitment", hex.EncodeToString(requestedCommitment),
 			"latency_ms", time.Since(startTime).Milliseconds())
 
@@ -444,76 +455,74 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var blobData []byte
-
-	// If blob is in a confirmed batch, retrieve from Celestia
-	if blob.BatchID != nil && blob.Status == "confirmed" && blob.CelestiaHeight != nil {
-		s.log.Debug("Retrieving blob from Celestia (in batch)",
+	// Only return blob if it's confirmed on DA layer
+	if blob.Status != "confirmed" || blob.CelestiaHeight == nil || blob.BatchID == nil {
+		s.log.Warn("Blob not yet confirmed on DA layer",
 			"blob_id", blob.ID,
+			"status", blob.Status,
+			"has_height", blob.CelestiaHeight != nil,
+			"has_batch", blob.BatchID != nil)
+		http.Error(w, "blob not yet available on DA layer", http.StatusNotFound)
+		return
+	}
+
+	// Blob is confirmed - get batch from DB
+	s.log.Debug("Retrieving blob from confirmed batch",
+		"blob_id", blob.ID,
+		"batch_id", *blob.BatchID,
+		"height", *blob.CelestiaHeight)
+
+	// Get batch metadata and data from DB
+	batchRecord, err := s.store.GetBatchByID(r.Context(), *blob.BatchID)
+	if err != nil {
+		s.log.Error("Failed to get batch metadata", "batch_id", *blob.BatchID, "error", err)
+		http.Error(w, "failed to get batch metadata: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Use cached batch data from database
+	// This is faster than fetching from Celestia every time, and we know it's confirmed
+	packedData := batchRecord.BatchData
+
+	// Optionally verify against Celestia if celestiaStore is available
+	// (In production, the confirmation worker already verified the data matches)
+	if s.celestiaStore != nil && s.celestiaStore.Client != nil {
+		// This is optional - we could fetch from Celestia to double-check
+		// but for now we trust our cached data since it was confirmed by the worker
+		s.log.Debug("Using cached batch data (already confirmed on Celestia)",
 			"batch_id", *blob.BatchID,
 			"height", *blob.CelestiaHeight)
-
-		// Get batch metadata
-		batchRecord, err := s.store.GetBatchByID(r.Context(), *blob.BatchID)
-		if err != nil {
-			s.log.Error("Failed to get batch metadata", "batch_id", *blob.BatchID, "error", err)
-			http.Error(w, "failed to get batch metadata: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// Retrieve batch from Celestia
-		retrieveStart := time.Now()
-		celestiaBlob, err := s.celestiaStore.Client.Get(r.Context(), *blob.CelestiaHeight, s.namespace, batchRecord.BatchCommitment)
-		retrieveDuration := time.Since(retrieveStart)
-
-		if err != nil {
-			s.log.Error("Failed to retrieve batch from Celestia",
-				"batch_id", *blob.BatchID,
-				"height", *blob.CelestiaHeight,
-				"error", err)
-			// Fall back to cached data
-			s.log.Warn("Falling back to cached blob data", "blob_id", blob.ID)
-			blobData = blob.Data
-		} else {
-			// Record retrieval metrics
-			if s.celestiaMetrics != nil {
-				s.celestiaMetrics.RecordRetrieval(retrieveDuration, len(celestiaBlob.Data()))
-			}
-
-			// Unpack batch to extract individual blob
-			packedData := celestiaBlob.Data()
-			unpackedBlobs, err := batch.UnpackBlobs(packedData, s.batchCfg)
-			if err != nil {
-				s.log.Error("Failed to unpack batch from Celestia", "error", err)
-				// Fall back to cached data
-				blobData = blob.Data
-			} else if blob.BatchIndex == nil {
-				s.log.Error("Blob has no batch index", "blob_id", blob.ID)
-				// Fall back to cached data
-				blobData = blob.Data
-			} else if *blob.BatchIndex >= len(unpackedBlobs) || *blob.BatchIndex < 0 {
-				s.log.Error("Blob batch index out of range",
-					"blob_id", blob.ID,
-					"batch_index", *blob.BatchIndex,
-					"batch_size", len(unpackedBlobs))
-				// Fall back to cached data
-				blobData = blob.Data
-			} else {
-				// Directly access blob by its index - much more efficient!
-				blobData = unpackedBlobs[*blob.BatchIndex]
-				s.log.Debug("Retrieved blob from batch using index",
-					"blob_id", blob.ID,
-					"batch_index", *blob.BatchIndex,
-					"size", len(blobData))
-			}
-		}
-	} else {
-		// Blob not yet batched or confirmed - use cached data
-		s.log.Debug("Retrieving blob from cache (not yet confirmed)",
-			"blob_id", blob.ID,
-			"status", blob.Status)
-		blobData = blob.Data
 	}
+
+	// Unpack batch to extract individual blob
+	unpackedBlobs, err := batch.UnpackBlobs(packedData, s.batchCfg)
+	if err != nil {
+		s.log.Error("Failed to unpack batch from Celestia", "error", err)
+		http.Error(w, "failed to unpack batch: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if blob.BatchIndex == nil {
+		s.log.Error("Blob has no batch index", "blob_id", blob.ID)
+		http.Error(w, "blob missing batch index", http.StatusInternalServerError)
+		return
+	}
+
+	if *blob.BatchIndex >= len(unpackedBlobs) || *blob.BatchIndex < 0 {
+		s.log.Error("Blob batch index out of range",
+			"blob_id", blob.ID,
+			"batch_index", *blob.BatchIndex,
+			"batch_size", len(unpackedBlobs))
+		http.Error(w, "blob batch index out of range", http.StatusInternalServerError)
+		return
+	}
+
+	// Directly access blob by its index - much more efficient!
+	blobData := unpackedBlobs[*blob.BatchIndex]
+	s.log.Debug("Retrieved blob from batch using index",
+		"blob_id", blob.ID,
+		"batch_index", *blob.BatchIndex,
+		"size", len(blobData))
 
 	// Record inclusion height if available
 	if s.celestiaMetrics != nil && blob.CelestiaHeight != nil {
