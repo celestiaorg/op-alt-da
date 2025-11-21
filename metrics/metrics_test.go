@@ -154,11 +154,16 @@ func TestCelestiaMetrics_MetricNamingConvention(t *testing.T) {
 
 		// Check that metrics follow expected naming patterns
 		if strings.HasPrefix(name, "op_altda_") {
-			// HTTP-level metrics (from main branch)
+			// HTTP-level metrics (from main branch + new transparency metrics)
 			validNames := []string{
 				"op_altda_request_duration_seconds",
 				"op_altda_blob_size_bytes",
 				"op_altda_inclusion_height",
+				"op_altda_time_to_availability_seconds",
+				"op_altda_get_request_duration_seconds",
+				"op_altda_get_requests_total",
+				"op_altda_time_to_batch_seconds",
+				"op_altda_time_to_confirmation_seconds",
 			}
 			found := false
 			for _, valid := range validNames {

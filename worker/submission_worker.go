@@ -158,6 +158,15 @@ func (w *SubmissionWorker) processBatch(ctx context.Context) error {
 
 	w.log.Info("Created batch", "batch_id", batchID, "blob_count", len(selectedBlobs))
 
+	// Record time-to-batch metrics for each blob
+	if w.metrics != nil {
+		now := time.Now()
+		for _, b := range selectedBlobs {
+			timeToBatch := now.Sub(b.CreatedAt)
+			w.metrics.RecordTimeToBatch(timeToBatch)
+		}
+	}
+
 	// Submit to Celestia
 	height, err := w.submitBatch(ctx, batchCommitment, packedData)
 	if err != nil {

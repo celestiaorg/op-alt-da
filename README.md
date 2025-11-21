@@ -35,31 +35,25 @@ This server implements an **async, database-backed architecture** designed for h
     │  ┌──────────────────┐  │    │  ┌────────────────┐  │
     │  │ Blobs Table      │  │    │  │ Submission     │  │
     │  │  - pending       │◄─┼────┼──│ Worker         │  │
-    │  │  - batched       │  │    │  │ (batches blobs)│  │
-    │  │  - confirmed     │  │    │  └────────┬───────┘  │
-    │  └──────────────────┘  │    │           │          │
-    │  ┌──────────────────┐  │    │  ┌────────▼───────┐  │
-    │  │ Batches Table    │  │    │  │ Event Listener │  │
-    │  │  - pending       │  │    │  │ (confirms      │  │
+    │  │  - batched       │  │    │  │ (batches blobs)│──┼─┐
+    │  │  - confirmed     │  │    │  └────────────────┘  │ │
+    │  └──────────────────┘  │    │                      │ │
+    │  ┌──────────────────┐  │    │  ┌────────────────┐  │ │
+    │  │ Batches Table    │  │    │  │ Event Listener │  │ │
+    │  │  - pending       │  │    │  │ (confirms      │◄─┼─┘
     │  │  - submitted     │  │    │  │  submissions)  │  │
     │  │  - confirmed     │  │    │  └────────────────┘  │
     │  └──────────────────┘  │    └──────────────────────┘
-    └────────────┬───────────┘
-                 │
-                 │ Periodic backup
-                 ▼
-        ┌────────────────┐
-        │  S3 Bucket     │
-        │  (backup only) │
-        └────────────────┘
-                 ▲
-                 │
-                 ▼
-    ┌────────────────────────┐
-    │   Celestia Network     │
-    │  • Batch submission    │
-    │  • Event subscription  │
-    └────────────────────────┘
+    └───┬────────────────────┘                │
+        │                                     │
+        │ Periodic backup                     │ Submit/Get
+        │ (optional)                          │
+        ▼                                     ▼
+   ┌──────────────┐             ┌────────────────────────┐
+   │  S3 Bucket   │             │   Celestia Network     │
+   │ (backup only)│             │  • Batch submission    │
+   └──────────────┘             │  • Blob confirmation   │
+                                └────────────────────────┘
 ```
 
 ### Request Flow

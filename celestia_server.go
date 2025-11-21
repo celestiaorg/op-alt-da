@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	libshare "github.com/celestiaorg/go-square/v3/share"
@@ -55,6 +56,10 @@ type CelestiaServer struct {
 	metricsPort     int
 	metricsRegistry *prometheus.Registry
 	celestiaMetrics *metrics.CelestiaMetrics
+
+	// Time-to-availability tracking (Option A)
+	// Maps commitment hex string -> first request time
+	firstRequestTimes sync.Map
 }
 
 func NewCelestiaServer(
@@ -347,12 +352,33 @@ func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// responseWriter wraps http.ResponseWriter to capture status code
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
 func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
+
+	// Wrap response writer to capture status code
+	rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+
 	defer func() {
-		// Record HTTP request duration
+		duration := time.Since(startTime)
+
+		// Record metrics if enabled
 		if s.celestiaMetrics != nil {
-			s.celestiaMetrics.RecordHTTPRequest("get", time.Since(startTime))
+			// Legacy metric (for compatibility)
+			s.celestiaMetrics.RecordHTTPRequest("get", duration)
+
+			// Option B: Record GET request with status code
+			s.celestiaMetrics.RecordGetRequest(rw.statusCode, duration)
 		}
 	}()
 
@@ -363,14 +389,14 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	encodedCommitment, err := hex.DecodeString(commitmentHex)
 	if err != nil {
 		s.log.Error("Invalid commitment format", "error", err, "hex", commitmentHex)
-		http.Error(w, "invalid commitment format", http.StatusBadRequest)
+		http.Error(rw, "invalid commitment format", http.StatusBadRequest)
 		return
 	}
 
 	// Validate commitment is not empty
 	if len(encodedCommitment) == 0 {
 		s.log.Error("Empty commitment")
-		http.Error(w, "invalid commitment format", http.StatusBadRequest)
+		http.Error(rw, "invalid commitment format", http.StatusBadRequest)
 		return
 	}
 
@@ -407,6 +433,28 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		"commitment_length", len(requestedCommitment),
 		"commitment_hex", hex.EncodeToString(requestedCommitment))
 
+	// Option A: Track first request time for this commitment (time-to-availability)
+	commitmentKey := hex.EncodeToString(requestedCommitment)
+	s.firstRequestTimes.LoadOrStore(commitmentKey, startTime)
+
+	// Defer cleanup to prevent memory leak (remove after 1 hour or on success)
+	defer func() {
+		if rw.statusCode == http.StatusOK {
+			// Success - record time to availability from FIRST request
+			if firstTime, ok := s.firstRequestTimes.Load(commitmentKey); ok && s.celestiaMetrics != nil {
+				firstRequestTime := firstTime.(time.Time)
+				timeToAvailability := time.Since(firstRequestTime)
+				s.celestiaMetrics.RecordTimeToAvailability(timeToAvailability)
+				s.log.Info("Blob became available",
+					"commitment", commitmentKey[:16]+"...",
+					"time_to_availability_seconds", timeToAvailability.Seconds(),
+					"first_request_time", firstRequestTime.Format(time.RFC3339))
+			}
+			// Clean up - blob is now available
+			s.firstRequestTimes.Delete(commitmentKey)
+		}
+	}()
+
 	// Query database for blob metadata
 	blob, err := s.store.GetBlobByCommitment(r.Context(), requestedCommitment)
 	if err == db.ErrBlobNotFound {
@@ -416,12 +464,12 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 			// Not found in our DB
 			s.log.Warn("Blob not found in DB",
 				"commitment", hex.EncodeToString(requestedCommitment))
-			http.Error(w, "blob not found", http.StatusNotFound)
+			http.Error(rw, "blob not found", http.StatusNotFound)
 			return
 		}
 		if batchErr != nil {
 			s.log.Error("Failed to query batch", "error", batchErr)
-			http.Error(w, "failed to query batch: "+batchErr.Error(), http.StatusInternalServerError)
+			http.Error(rw, "failed to query batch: "+batchErr.Error(), http.StatusInternalServerError)
 			return
 		}
 
@@ -431,7 +479,7 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 				"batch_id", batch.BatchID,
 				"status", batch.Status,
 				"has_height", batch.CelestiaHeight != nil)
-			http.Error(w, "blob not yet available on DA layer", http.StatusNotFound)
+			http.Error(rw, "blob not yet available on DA layer", http.StatusNotFound)
 			return
 		}
 
@@ -445,13 +493,13 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 			"commitment", hex.EncodeToString(requestedCommitment),
 			"latency_ms", time.Since(startTime).Milliseconds())
 
-		w.WriteHeader(http.StatusOK)
-		w.Write(batch.BatchData)
+		rw.WriteHeader(http.StatusOK)
+		rw.Write(batch.BatchData)
 		return
 	}
 	if err != nil {
 		s.log.Error("Failed to query blob", "error", err)
-		http.Error(w, "failed to query blob: "+err.Error(), http.StatusInternalServerError)
+		http.Error(rw, "failed to query blob: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -462,7 +510,7 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 			"status", blob.Status,
 			"has_height", blob.CelestiaHeight != nil,
 			"has_batch", blob.BatchID != nil)
-		http.Error(w, "blob not yet available on DA layer", http.StatusNotFound)
+		http.Error(rw, "blob not yet available on DA layer", http.StatusNotFound)
 		return
 	}
 
@@ -476,7 +524,7 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	batchRecord, err := s.store.GetBatchByID(r.Context(), *blob.BatchID)
 	if err != nil {
 		s.log.Error("Failed to get batch metadata", "batch_id", *blob.BatchID, "error", err)
-		http.Error(w, "failed to get batch metadata: "+err.Error(), http.StatusInternalServerError)
+		http.Error(rw, "failed to get batch metadata: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -498,13 +546,13 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	unpackedBlobs, err := batch.UnpackBlobs(packedData, s.batchCfg)
 	if err != nil {
 		s.log.Error("Failed to unpack batch from Celestia", "error", err)
-		http.Error(w, "failed to unpack batch: "+err.Error(), http.StatusInternalServerError)
+		http.Error(rw, "failed to unpack batch: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if blob.BatchIndex == nil {
 		s.log.Error("Blob has no batch index", "blob_id", blob.ID)
-		http.Error(w, "blob missing batch index", http.StatusInternalServerError)
+		http.Error(rw, "blob missing batch index", http.StatusInternalServerError)
 		return
 	}
 
@@ -513,7 +561,7 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 			"blob_id", blob.ID,
 			"batch_index", *blob.BatchIndex,
 			"batch_size", len(unpackedBlobs))
-		http.Error(w, "blob batch index out of range", http.StatusInternalServerError)
+		http.Error(rw, "blob batch index out of range", http.StatusInternalServerError)
 		return
 	}
 
@@ -546,8 +594,8 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		"latency_ms", time.Since(startTime).Milliseconds())
 
 	// Return blob data
-	w.WriteHeader(http.StatusOK)
-	w.Write(blobData)
+	rw.WriteHeader(http.StatusOK)
+	rw.Write(blobData)
 }
 
 func (s *CelestiaServer) HandleHealth(w http.ResponseWriter, r *http.Request) {

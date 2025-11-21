@@ -140,5 +140,19 @@ func (l *EventListener) reconcileBatch(ctx context.Context, batch *db.Batch) err
 		"size", blobSize,
 		"duration_ms", duration.Milliseconds())
 
+	// Record time-to-confirmation metrics for each blob in the batch
+	if l.metrics != nil {
+		blobs, err := l.store.GetBlobsByBatchID(ctx, batch.BatchID)
+		if err != nil {
+			l.log.Warn("Failed to get blobs for metrics", "batch_id", batch.BatchID, "error", err)
+		} else {
+			now := time.Now()
+			for _, b := range blobs {
+				timeToConfirmation := now.Sub(b.CreatedAt)
+				l.metrics.RecordTimeToConfirmation(timeToConfirmation)
+			}
+		}
+	}
+
 	return nil
 }

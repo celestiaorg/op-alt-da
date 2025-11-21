@@ -384,6 +384,55 @@ func (s *BlobStore) GetBatchByID(ctx context.Context, batchID int64) (*Batch, er
 	return &batch, nil
 }
 
+// GetBlobsByBatchID retrieves all blobs in a batch (for metrics/reporting)
+func (s *BlobStore) GetBlobsByBatchID(ctx context.Context, batchID int64) ([]*Blob, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, commitment, namespace, blob_data, blob_size, status,
+		       batch_id, batch_index, celestia_height, created_at, confirmed_at
+		FROM blobs
+		WHERE batch_id = ?
+		ORDER BY batch_index ASC
+	`, batchID)
+	if err != nil {
+		return nil, fmt.Errorf("query blobs by batch: %w", err)
+	}
+	defer rows.Close()
+
+	var blobs []*Blob
+	for rows.Next() {
+		var blob Blob
+		var batchID sql.NullInt64
+		var batchIndex sql.NullInt64
+		var celestiaHeight sql.NullInt64
+		var confirmedAt sql.NullTime
+
+		if err := rows.Scan(&blob.ID, &blob.Commitment, &blob.Namespace,
+			&blob.Data, &blob.Size, &blob.Status, &batchID, &batchIndex,
+			&celestiaHeight, &blob.CreatedAt, &confirmedAt); err != nil {
+			return nil, fmt.Errorf("scan blob: %w", err)
+		}
+
+		if batchID.Valid {
+			blob.BatchID = &batchID.Int64
+		}
+		if batchIndex.Valid {
+			idx := int(batchIndex.Int64)
+			blob.BatchIndex = &idx
+		}
+		if celestiaHeight.Valid {
+			height := uint64(celestiaHeight.Int64)
+			blob.CelestiaHeight = &height
+		}
+		if confirmedAt.Valid {
+			blob.ConfirmedAt = &confirmedAt.Time
+		}
+
+		blobs = append(blobs, &blob)
+	}
+
+	return blobs, rows.Err()
+}
+
 // GetBatchByCommitment retrieves a batch by its commitment
 func (s *BlobStore) GetBatchByCommitment(ctx context.Context, commitment []byte) (*Batch, error) {
 	var batch Batch

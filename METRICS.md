@@ -7,6 +7,7 @@ This document explains the available metrics and how to use them for monitoring 
 The DA server exposes two levels of metrics:
 1. **HTTP-level metrics** - Track client-facing API performance (compatible with main branch dashboards)
 2. **Worker-level metrics** - Track internal Celestia operations (submission and retrieval)
+3. **Transparency metrics** - Track lifecycle timing from client perspective (GET availability, PUT batching/confirmation)
 
 All metrics are collected by a **single shared instance** passed to all workers, meaning the worker-level metrics aggregate data from:
 - Submission Worker (batching and submitting to Celestia)
@@ -20,7 +21,7 @@ Start the server with metrics enabled:
 ./bin/da-server \
   --celestia.server http://localhost:26658 \
   --celestia.auth-token $AUTH_TOKEN \
-  --celestia.namespace 00000000000000000000000000000000000000000008e5f679bf7116cb \
+  --celestia.namespace 00000000000000000000000000000000000000008e5f679bf7116cb \
   --db.data-dir ./da_data \
   --metrics.enabled \
   --metrics.port 26661
@@ -43,6 +44,52 @@ These metrics track the performance of the HTTP API endpoints from the client's 
 **Buckets for request_duration:** 0.005s, 0.01s, 0.025s, 0.05s, 0.1s, 0.25s, 0.5s, 1s, 2.5s, 5s, 10s
 
 **Buckets for blob_size:** 1KB, 4KB, 16KB, 64KB, 256KB, 1MB, 4MB, 8MB
+
+### Transparency Metrics (Client Experience)
+
+These metrics help demonstrate transparency to customers by showing both wait times and performance benefits.
+
+#### GET Metrics: Time to Availability (Option A)
+
+**Purpose**: Shows how long clients wait from first request until data is available (comparable to blocking behavior of main branch).
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `op_altda_time_to_availability_seconds` | Histogram | Time from first GET request to 200 OK response |
+
+**Use case**: Dashboard showing "Time to DA Confirmation" - demonstrates total wait time comparable to main branch's blocking behavior (like SQL SELECT).
+
+**Buckets**: 1s, 5s, 10s, 15s, 20s, 30s, 45s, 60s, 90s, 120s, 180s, 300s, 600s
+
+#### GET Metrics: Cached Retrieval Speed (Option B)
+
+**Purpose**: Shows fast cached retrieval performance after data is confirmed on DA layer.
+
+| Metric | Type | Description | Labels |
+|--------|------|-------------|--------|
+| `op_altda_get_request_duration_seconds` | Histogram | Duration of GET requests by status code | `status` (2xx, 4xx, 5xx) |
+| `op_altda_get_requests_total` | Counter | Total GET requests by status code | `status` (2xx, 4xx, 5xx) |
+
+**Use case**: Dashboard showing "Cached Retrieval Performance" - demonstrates fast lookups once data is confirmed (like SQL VIEW).
+
+**Buckets**: 0.001s, 0.005s, 0.01s, 0.025s, 0.05s, 0.1s, 0.25s, 0.5s, 1s, 2.5s, 5s, 10s
+
+#### PUT Metrics: Batching and Confirmation Transparency
+
+**Purpose**: Shows customers the full lifecycle from PUT to batching to DA confirmation.
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `op_altda_time_to_batch_seconds` | Histogram | Time from PUT request to blob being batched |
+| `op_altda_time_to_confirmation_seconds` | Histogram | Time from PUT request to DA layer confirmation |
+
+**Use cases**:
+- **Time to Batch**: Shows how long blobs wait in pending state before batching (typically 2-30 seconds)
+- **Time to Confirmation**: Shows end-to-end latency until data is confirmed on Celestia DA layer (typically 15-90 seconds)
+
+**Buckets for time_to_batch**: 1s, 5s, 10s, 15s, 20s, 30s, 45s, 60s, 90s, 120s
+
+**Buckets for time_to_confirmation**: 10s, 20s, 30s, 45s, 60s, 90s, 120s, 180s, 300s, 600s, 900s, 1800s
 
 ### Worker-Level Metrics (Internal Operations)
 
@@ -113,6 +160,61 @@ histogram_quantile(0.95,
 histogram_quantile(0.99,
   rate(op_altda_request_duration_seconds_bucket{method="put"}[5m])
 )
+```
+
+### Transparency Metrics Panel
+
+**Time to Availability (comparable to main branch blocking):**
+
+```promql
+# P95 time from first GET to 200 OK
+histogram_quantile(0.95,
+  rate(op_altda_time_to_availability_seconds_bucket[5m])
+)
+
+# P50 (median) time to availability
+histogram_quantile(0.50,
+  rate(op_altda_time_to_availability_seconds_bucket[5m])
+)
+```
+
+**Cached Retrieval Performance (shows speed advantage):**
+
+```promql
+# Average GET latency for 200 OK responses (cached hits)
+rate(op_altda_get_request_duration_seconds_sum{status="2xx"}[1m])
+/
+rate(op_altda_get_request_duration_seconds_count{status="2xx"}[1m])
+
+# P95 cached retrieval latency (should be <100ms)
+histogram_quantile(0.95,
+  rate(op_altda_get_request_duration_seconds_bucket{status="2xx"}[5m])
+)
+
+# GET success rate
+sum(rate(op_altda_get_requests_total{status="2xx"}[5m]))
+/
+sum(rate(op_altda_get_requests_total[5m]))
+* 100
+```
+
+**PUT Lifecycle Transparency:**
+
+```promql
+# P95 time from PUT to batch
+histogram_quantile(0.95,
+  rate(op_altda_time_to_batch_seconds_bucket[5m])
+)
+
+# P95 time from PUT to DA confirmation
+histogram_quantile(0.95,
+  rate(op_altda_time_to_confirmation_seconds_bucket[5m])
+)
+
+# Average time to confirmation
+rate(op_altda_time_to_confirmation_seconds_sum[5m])
+/
+rate(op_altda_time_to_confirmation_seconds_count[5m])
 ```
 
 ### Blob Size Distribution Panel
@@ -206,6 +308,30 @@ rate(celestia_retrieval_errors_total[1m]) * 60
 sum(rate(celestia_submission_errors_total[1m]) + rate(celestia_retrieval_errors_total[1m])) * 60
 ```
 
+## Customer-Facing Dashboard Recommendations
+
+To demonstrate transparency and good faith to customers, create dashboards with:
+
+### Panel 1: "Data Availability Performance"
+- **Time to Availability (P95)**: Shows wait time comparable to main branch blocking behavior
+- **Target**: <60 seconds
+- **Purpose**: Proves you're not hiding latency
+
+### Panel 2: "Cached Retrieval Speed"
+- **GET Latency for 200s (P95)**: Shows fast cached lookups
+- **Target**: <100ms
+- **Purpose**: Demonstrates performance advantage of caching
+
+### Panel 3: "PUT Lifecycle Transparency"
+- **Time to Batch (P95)**: Shows batching delay (~10-30 seconds)
+- **Time to Confirmation (P95)**: Shows DA confirmation time (~30-90 seconds)
+- **Purpose**: Full transparency about the async process
+
+### Panel 4: "Success Rates"
+- **GET Success Rate**: Percentage of successful retrievals
+- **Submission Success Rate**: Percentage of successful DA submissions
+- **Purpose**: Operational health visibility
+
 ## Sample Grafana Dashboard JSON
 
 Here's a basic dashboard structure you can import:
@@ -213,24 +339,51 @@ Here's a basic dashboard structure you can import:
 ```json
 {
   "dashboard": {
-    "title": "Celestia DA Server",
+    "title": "Celestia DA Server - Customer Transparency",
     "panels": [
       {
-        "title": "Request Latency (P95)",
+        "title": "Time to Availability (P95) - Comparable to Blocking",
         "targets": [
           {
-            "expr": "histogram_quantile(0.95, rate(op_altda_request_duration_seconds_bucket[5m]))",
-            "legendFormat": "{{method}}"
+            "expr": "histogram_quantile(0.95, rate(op_altda_time_to_availability_seconds_bucket[5m]))",
+            "legendFormat": "P95 Time to Availability"
           }
         ],
-        "type": "graph"
+        "type": "graph",
+        "description": "Time from first GET request to 200 OK - comparable to main branch blocking behavior"
       },
       {
-        "title": "Request Rate",
+        "title": "Cached Retrieval Speed (P95) - Performance Advantage",
         "targets": [
           {
-            "expr": "sum(rate(op_altda_request_duration_seconds_count[1m])) by (method)",
-            "legendFormat": "{{method}}"
+            "expr": "histogram_quantile(0.95, rate(op_altda_get_request_duration_seconds_bucket{status=\"2xx\"}[5m]))",
+            "legendFormat": "P95 Cached GET"
+          }
+        ],
+        "type": "graph",
+        "description": "Fast cached retrieval once data is confirmed on DA layer"
+      },
+      {
+        "title": "PUT Lifecycle Transparency",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(op_altda_time_to_batch_seconds_bucket[5m]))",
+            "legendFormat": "P95 Time to Batch"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(op_altda_time_to_confirmation_seconds_bucket[5m]))",
+            "legendFormat": "P95 Time to Confirmation"
+          }
+        ],
+        "type": "graph",
+        "description": "Full lifecycle from PUT to batching to DA confirmation"
+      },
+      {
+        "title": "GET Request Distribution by Status",
+        "targets": [
+          {
+            "expr": "sum(rate(op_altda_get_requests_total[5m])) by (status)",
+            "legendFormat": "{{status}}"
           }
         ],
         "type": "graph"
@@ -244,20 +397,6 @@ Here's a basic dashboard structure you can import:
           }
         ],
         "type": "gauge"
-      },
-      {
-        "title": "Celestia Operations Latency",
-        "targets": [
-          {
-            "expr": "rate(celestia_submission_duration_seconds_sum[1m]) / rate(celestia_submission_duration_seconds_count[1m])",
-            "legendFormat": "Submission"
-          },
-          {
-            "expr": "rate(celestia_retrieval_duration_seconds_sum[1m]) / rate(celestia_retrieval_duration_seconds_count[1m])",
-            "legendFormat": "Retrieval"
-          }
-        ],
-        "type": "graph"
       },
       {
         "title": "Error Rates",
@@ -301,6 +440,19 @@ groups:
           summary: "High submission error rate detected"
           description: "Submission error rate is {{ $value | humanizePercentage }} over the last 5 minutes"
 
+      # Slow DA availability
+      - alert: SlowTimeToAvailability
+        expr: |
+          histogram_quantile(0.95,
+            rate(op_altda_time_to_availability_seconds_bucket[10m])
+          ) > 120
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow time to DA availability"
+          description: "P95 time to availability is {{ $value }}s (>2 minutes)"
+
       # Slow submissions
       - alert: SlowSubmissions
         expr: |
@@ -336,6 +488,19 @@ groups:
         annotations:
           summary: "No submissions to Celestia"
           description: "No successful submissions in the last 15 minutes"
+
+      # Long time to confirmation
+      - alert: LongTimeToConfirmation
+        expr: |
+          histogram_quantile(0.95,
+            rate(op_altda_time_to_confirmation_seconds_bucket[10m])
+          ) > 300
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Long time to DA confirmation"
+          description: "P95 time to confirmation is {{ $value }}s (>5 minutes)"
 ```
 
 ## Monitoring Best Practices
@@ -346,6 +511,16 @@ groups:
 4. **Watch inclusion height** to ensure Celestia node is syncing
 5. **Set baseline alerts** after observing normal operations for a week
 6. **Correlate metrics** - if submission latency spikes, check Celestia node health
+7. **Use transparency metrics** to build customer trust with clear dashboards
+
+## Transparency Benefits
+
+The new metrics provide:
+
+1. **Option A (Time to Availability)**: Comparable to main branch blocking behavior - shows you're not hiding wait times
+2. **Option B (Cached Retrieval)**: Shows performance advantage once cached - demonstrates value proposition
+3. **PUT Lifecycle**: Full transparency from PUT → Batch → Confirmation - builds customer trust
+4. **Status Code Tracking**: Clear visibility into 200s (success), 404s (not found), 5xx (errors)
 
 ## Troubleshooting with Metrics
 
@@ -368,3 +543,7 @@ groups:
 ### Large variance in blob sizes
 - Issue: Batching not working efficiently
 - Check: `op_altda_blob_size_bytes` distribution, batch configuration
+
+### Time to availability is high
+- Issue: Batching delays or Celestia confirmation slow
+- Check: `op_altda_time_to_batch_seconds` and `op_altda_time_to_confirmation_seconds` separately to identify bottleneck
