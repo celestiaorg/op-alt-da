@@ -273,8 +273,8 @@ func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 	// Check if blob already exists (idempotent PUT behavior)
 	existingBlob, err := s.store.GetBlobByCommitment(r.Context(), blobCommitment)
 	if err == nil {
-		// Blob already exists - return existing commitment (idempotent)
-		s.log.Info("Blob already exists (duplicate submission)",
+		// Blob already exists - return existing commitment (idempotent, normal behavior)
+		s.log.Debug("Blob retrieved from cache (already submitted)",
 			"blob_id", existingBlob.ID,
 			"size", len(blobData),
 			"commitment", hex.EncodeToString(blobCommitment[:8]),
@@ -288,13 +288,14 @@ func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Blob doesn't exist - insert new blob
+	// Check for unexpected errors (anything other than "not found")
 	if err != db.ErrBlobNotFound {
-		// Unexpected error checking for existing blob
-		s.log.Error("Failed to check existing blob", "error", err)
-		http.Error(w, "failed to check blob: "+err.Error(), http.StatusInternalServerError)
+		s.log.Error("Database query failed while checking for existing blob", "error", err)
+		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// Blob doesn't exist - proceed with insertion
 
 	// Insert into database
 	namespaceBytes := s.namespace.Bytes()
