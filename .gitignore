@@ -1,3 +1,4 @@
 bin/
 .env
+tests/sanity/sanity.test
 
