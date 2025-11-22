@@ -41,8 +41,6 @@ const (
 	S3AccessKeyIDFlagName     = "s3.access-key-id"     // #nosec G101
 	S3AccessKeySecretFlagName = "s3.access-key-secret" // #nosec G101
 	S3TimeoutFlagName         = "s3.timeout"
-	FallbackFlagName          = "routing.fallback"
-	CacheFlagName             = "routing.cache"
 
 	// metrics
 	MetricsEnabledFlagName = "metrics.enabled"
@@ -76,9 +74,9 @@ var (
 	}
 	CelestiaTLSEnabledFlag = &cli.BoolFlag{
 		Name:    CelestiaTLSEnabledFlagName,
-		Usage:   "celestia rpc TLS",
+		Usage:   "celestia rpc TLS (set to true only if using https://)",
 		EnvVars: prefixEnvVars("CELESTIA_TLS_ENABLED"),
-		Value:   true,
+		Value:   false, // Default to false - most setups use plain HTTP
 	}
 	CelestiaAuthTokenFlag = &cli.StringFlag{
 		Name:    CelestiaAuthTokenFlagName,
@@ -173,18 +171,6 @@ var (
 		Value:   5 * time.Second,
 		EnvVars: prefixEnvVars("S3_TIMEOUT"),
 	}
-	FallbackFlag = &cli.BoolFlag{
-		Name:    FallbackFlagName,
-		Usage:   "Enable fallback",
-		Value:   false,
-		EnvVars: prefixEnvVars("FALLBACK"),
-	}
-	CacheFlag = &cli.BoolFlag{
-		Name:    CacheFlagName,
-		Usage:   "Enable cache.",
-		Value:   false,
-		EnvVars: prefixEnvVars("CACHE"),
-	}
 	MetricsEnabledFlag = &cli.BoolFlag{
 		Name:    MetricsEnabledFlagName,
 		Usage:   "Enable Prometheus metrics",
@@ -222,8 +208,6 @@ var optionalFlags = []cli.Flag{
 	S3AccessKeyIDFlag,
 	S3AccessKeySecretFlag,
 	S3TimeoutFlag,
-	FallbackFlag,
-	CacheFlag,
 	MetricsEnabledFlag,
 	MetricsPortFlag,
 }
@@ -244,8 +228,6 @@ type CLIConfig struct {
 	CelestiaCompactBlobID bool
 	TxClientConfig        celestia.TxClientConfig
 	S3Config              s3.S3Config
-	Fallback              bool
-	Cache                 bool
 	MetricsEnabled        bool
 	MetricsPort           int
 }
@@ -274,35 +256,114 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 			AccessKeySecret:  ctx.String(S3AccessKeySecretFlagName),
 			Timeout:          ctx.Duration(S3TimeoutFlagName),
 		},
-		Fallback:       ctx.Bool(FallbackFlagName),
-		Cache:          ctx.Bool(CacheFlagName),
 		MetricsEnabled: ctx.Bool(MetricsEnabledFlagName),
 		MetricsPort:    ctx.Int(MetricsPortFlagName),
 	}
 }
 
 func (c CLIConfig) TxClientEnabled() bool {
-	return c.TxClientConfig.KeyringPath != "" || c.TxClientConfig.CoreGRPCAuthToken != ""
+	// If auth token is set, we're in OPTION A (RPC-only mode)
+	// Don't use TxClient even if keyring/grpc settings are present
+	if c.CelestiaAuthToken != "" {
+		return false
+	}
+
+	// OPTION B: Use TxClient if keyring path is set
+	// (CoreGRPCAuthToken check removed - it's not a reliable indicator)
+	return c.TxClientConfig.KeyringPath != ""
+}
+
+// validateURLTLS checks that URL scheme matches TLS setting
+func validateURLTLS(url string, tlsEnabled bool) error {
+	isHTTPS := len(url) >= 8 && url[:8] == "https://"
+	isHTTP := len(url) >= 7 && url[:7] == "http://"
+
+	if !isHTTPS && !isHTTP {
+		return fmt.Errorf("celestia.server URL must start with http:// or https://, got: %s", url)
+	}
+
+	if tlsEnabled && isHTTP {
+		return errors.New("celestia.tls-enabled is true but URL uses http:// (not https://). Either:\n" +
+			"  1. Change URL to https:// if your node supports TLS\n" +
+			"  2. Set --celestia.tls-enabled=false for plain HTTP")
+	}
+
+	if !tlsEnabled && isHTTPS {
+		return errors.New("celestia.tls-enabled is false but URL uses https://. Either:\n" +
+			"  1. Set --celestia.tls-enabled to use HTTPS\n" +
+			"  2. Change URL to http:// for plain HTTP")
+	}
+
+	return nil
 }
 
 func (c CLIConfig) Check() error {
-	if c.TxClientEnabled() {
-		// If tx client is enabled, ensure tx client flags are set
-		if c.TxClientConfig.DefaultKeyName == "" {
-			return errors.New("--celestia.tx-client.key-name must be set")
-		}
-		if c.TxClientConfig.KeyringPath == "" {
-			return errors.New("--celestia.tx-client.keyring-path must be set")
-		}
-		if c.TxClientConfig.CoreGRPCAddr == "" {
-			return errors.New("--celestia.tx-client.core-grpc.addr must be set")
-		}
-		if c.TxClientConfig.P2PNetwork == "" {
-			return errors.New("--celestia.tx-client.p2p-network must be set")
-		}
-	}
+	// Validate namespace
 	if _, err := hex.DecodeString(c.CelestiaNamespace); err != nil {
 		return fmt.Errorf("celestia namespace: %w", err)
+	}
+
+	// Detect which mode is being used
+	// Priority: If auth token is set, use OPTION A (ignore tx-client settings)
+	hasAuthToken := c.CelestiaAuthToken != ""
+	hasKeyringPath := c.TxClientConfig.KeyringPath != ""
+
+	// Determine mode and validate
+	if hasAuthToken {
+		// OPTION A: Self-hosted Celestia Node
+		// Requires: RPC endpoint + auth token
+		// The auth token gives full access (read + write) to the local node
+
+		if c.CelestiaEndpoint == "" {
+			return errors.New("OPTION A (self-hosted node): --celestia.server (RPC endpoint) is required")
+		}
+
+		// Validate URL/TLS consistency
+		if err := validateURLTLS(c.CelestiaEndpoint, c.CelestiaTLSEnabled); err != nil {
+			return err
+		}
+
+		// Option A validated successfully - continue to S3 validation below
+
+	} else if hasKeyringPath {
+		// OPTION B: Service Provider (client-tx mode)
+		// Requires: RPC endpoint (reads) + gRPC endpoint (writes) + keyring (signing)
+		// Uses RPC for Get/Subscribe, gRPC for Submit
+
+		if c.CelestiaEndpoint == "" {
+			return errors.New("OPTION B (service provider): --celestia.server (RPC endpoint) is required for reads (Get, GetAll, Subscribe)")
+		}
+
+		// Validate URL/TLS consistency
+		if err := validateURLTLS(c.CelestiaEndpoint, c.CelestiaTLSEnabled); err != nil {
+			return err
+		}
+
+		if c.TxClientConfig.CoreGRPCAddr == "" {
+			return errors.New("OPTION B (service provider): --celestia.tx-client.core-grpc.addr (gRPC endpoint) is required for writes (Submit)")
+		}
+
+		if c.TxClientConfig.P2PNetwork == "" {
+			return errors.New("OPTION B (service provider): --celestia.tx-client.p2p-network must be set (e.g., mocha-4, arabica-11, mainnet)")
+		}
+
+		if c.TxClientConfig.DefaultKeyName == "" {
+			return errors.New("OPTION B (service provider): --celestia.tx-client.key-name must be set")
+		}
+
+		// Option B validated successfully - continue to S3 validation below
+
+	} else {
+		// Neither mode configured properly
+		return errors.New(`celestia connection not configured. Choose ONE mode:
+
+OPTION A (Self-hosted Node): Set --celestia.auth-token
+  Example: --celestia.server http://localhost:26658 --celestia.auth-token <token>
+
+OPTION B (Service Provider): Set --celestia.tx-client.keyring-path
+  Example: --celestia.server https://rpc.endpoint --celestia.tx-client.core-grpc.addr grpc.endpoint:9090 --celestia.tx-client.keyring-path ~/.celestia-light-mocha-4/keys --celestia.tx-client.p2p-network mocha-4
+
+See .env.example for detailed configuration examples.`)
 	}
 
 	// S3 config validation (existing logic)
@@ -316,6 +377,48 @@ func (c CLIConfig) Check() error {
 	}
 
 	return nil
+}
+
+// GetCelestiaMode returns a human-readable description of the detected Celestia connection mode
+func (c CLIConfig) GetCelestiaMode() string {
+	// Priority: If auth token is set, use OPTION A (ignore tx-client settings)
+	hasAuthToken := c.CelestiaAuthToken != ""
+	hasKeyringPath := c.TxClientConfig.KeyringPath != ""
+
+	if hasAuthToken {
+		return "OPTION A: Self-hosted Node (RPC with auth token)"
+	} else if hasKeyringPath {
+		return "OPTION B: Service Provider (client-tx mode with keyring + gRPC)"
+	}
+	return "UNKNOWN (not configured)"
+}
+
+// GetCelestiaModeDetails returns detailed configuration for the detected mode
+func (c CLIConfig) GetCelestiaModeDetails() map[string]string {
+	details := make(map[string]string)
+
+	// Priority: If auth token is set, use OPTION A (ignore tx-client settings)
+	hasAuthToken := c.CelestiaAuthToken != ""
+	hasKeyringPath := c.TxClientConfig.KeyringPath != ""
+
+	if hasAuthToken {
+		// OPTION A: Self-hosted Node
+		details["mode"] = "OPTION A"
+		details["description"] = "Self-hosted Node"
+		details["rpc_endpoint"] = c.CelestiaEndpoint
+		details["auth_token"] = "<redacted>"
+	} else if hasKeyringPath {
+		// OPTION B: Service Provider
+		details["mode"] = "OPTION B"
+		details["description"] = "Service Provider (client-tx)"
+		details["rpc_endpoint"] = c.CelestiaEndpoint
+		details["grpc_endpoint"] = c.TxClientConfig.CoreGRPCAddr
+		details["keyring_path"] = c.TxClientConfig.KeyringPath
+		details["key_name"] = c.TxClientConfig.DefaultKeyName
+		details["p2p_network"] = c.TxClientConfig.P2PNetwork
+	}
+
+	return details
 }
 
 func (c CLIConfig) CelestiaConfig() celestia.RPCClientConfig {
@@ -336,14 +439,6 @@ func (c CLIConfig) CelestiaConfig() celestia.RPCClientConfig {
 
 func (c CLIConfig) CelestiaRPCClientEnabled() bool {
 	return !(c.CelestiaEndpoint == "" && c.CelestiaAuthToken == "" && c.CelestiaNamespace == "")
-}
-
-func (c CLIConfig) CacheEnabled() bool {
-	return c.Cache
-}
-
-func (c CLIConfig) FallbackEnabled() bool {
-	return c.Fallback
 }
 
 func toS3CredentialType(s string) s3.S3CredentialType {
