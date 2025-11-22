@@ -9,7 +9,7 @@ This server implements an **async, database-backed architecture** designed for h
 ### Components
 
 1. **HTTP API** - Returns immediately after storing blobs to database (sub-50ms latency)
-2. **SQLite Database** - Persistent FIFO queue for blobs and batches (WAL mode for crash safety)
+2. **Database** - Persistent FIFO queue for blobs and batches (SQLite by default; PostgreSQL/MySQL supported)
 3. **Submission Worker** - Background worker that packs and submits blobs to Celestia in batches
 4. **Event Listener** - Monitors Celestia for blob confirmations and updates database
 5. **S3 Backup** (optional) - Periodic database backups to S3 for disaster recovery
@@ -31,19 +31,20 @@ This server implements an **async, database-backed architecture** designed for h
                  │                             │
                  ▼                             ▼
     ┌────────────────────────┐    ┌──────────────────────┐
-    │   SQLite Database      │    │   Background Jobs    │
-    │  ┌──────────────────┐  │    │  ┌────────────────┐  │
-    │  │ Blobs Table      │  │    │  │ Submission     │  │
-    │  │  - pending       │◄─┼────┼──│ Worker         │  │
-    │  │  - batched       │  │    │  │ (batches blobs)│──┼─┐
-    │  │  - confirmed     │  │    │  └────────────────┘  │ │
-    │  └──────────────────┘  │    │                      │ │
-    │  ┌──────────────────┐  │    │  ┌────────────────┐  │ │
-    │  │ Batches Table    │  │    │  │ Event Listener │  │ │
-    │  │  - pending       │  │    │  │ (confirms      │◄─┼─┘
-    │  │  - submitted     │  │    │  │  submissions)  │  │
-    │  │  - confirmed     │  │    │  └────────────────┘  │
-    │  └──────────────────┘  │    └──────────────────────┘
+    │   Database Cache       │    │   Background Jobs    │
+    │   (SQLite default)     │    │  ┌────────────────┐  │
+    │  ┌──────────────────┐  │    │  │ Submission     │  │
+    │  │ Blobs Table      │  │    │  │ Worker         │  │
+    │  │  - pending       │◄─┼────┼──│ (batches blobs)│──┼─┐
+    │  │  - batched       │  │    │  └────────────────┘  │ │
+    │  │  - confirmed     │  │    │                      │ │
+    │  └──────────────────┘  │    │  ┌────────────────┐  │ │
+    │  ┌──────────────────┐  │    │  │ Event Listener │  │ │
+    │  │ Batches Table    │  │    │  │ (confirms      │◄─┼─┘
+    │  │  - pending       │  │    │  │  submissions)  │  │
+    │  │  - submitted     │  │    │  └────────────────┘  │
+    │  │  - confirmed     │  │    └──────────────────────┘
+    │  └──────────────────┘  │                │
     └───┬────────────────────┘                │
         │                                     │
         │ Periodic backup                     │ Submit/Get
@@ -74,19 +75,19 @@ This server implements an **async, database-backed architecture** designed for h
 **GET Request (Read Path):**
 1. Client sends commitment to `/get/{commitment}`
 2. Server queries database by commitment
-3. **Critical check**: Is the blob confirmed on Celestia DA?
-   - If blob not found → 404 "blob not found"
-   - If found but status != "confirmed" → 404 "blob not yet available on DA layer"
-   - If confirmed but missing CelestiaHeight → 404 "blob not yet available on DA layer"
-   - If confirmed AND has CelestiaHeight → **200 OK** with blob data (fast cached read)
-4. Once confirmed, data is served from database cache (typically <10ms)
+3. Server checks blob confirmation status:
+   - If blob not found → Returns 404 "blob not found"
+   - If blob exists but status is not "confirmed" → Returns 404 "blob not yet available on DA layer"
+   - If blob is confirmed but missing Celestia height → Returns 404 "blob not yet available on DA layer"
+   - If blob is confirmed with Celestia height → Returns 200 OK with blob data
+4. For confirmed blobs, data is served directly from database cache (typically <10ms)
 
 ### Key Features
 
 - **Fast writes**: PUT returns in <50ms (only database write)
 - **Confirmed reads only**: GET returns 200 OK only when data is confirmed on Celestia DA (not just cached)
 - **Fast confirmed reads**: Once confirmed, GET serves from database cache (<10ms)
-- **Crash resilient**: SQLite with WAL mode survives server restarts
+- **Crash resilient**: Database with WAL mode (SQLite default) survives server restarts
 - **FIFO ordering**: Auto-increment IDs ensure strict ordering
 - **Efficient batching**: Packs 10-50 blobs per Celestia transaction
 - **Event-driven confirmations**: Real-time updates via Celestia subscriptions
@@ -213,9 +214,13 @@ This makes it immediately obvious which mode is running and helps catch configur
 
 ### Database Configuration
 
+**Default: SQLite for Speed and Simplicity**
+
+This server uses **SQLite by default** for its simplicity, zero-configuration setup, and excellent performance. However, the codebase is designed to work with any SQL database - **PostgreSQL, MySQL, or other hosted database solutions are perfectly fine alternatives** for production deployments that require high availability or distributed setups.
+
 **SQLite is embedded - no separate database server needed!**
 
-SQLite is a **file-based embedded database** compiled directly into the da-server binary. Unlike PostgreSQL or MySQL, there's **no separate database process** to install, configure, or manage.
+SQLite is a **file-based embedded database** compiled directly into the da-server binary. Unlike PostgreSQL or MySQL, there's **no separate database process** to install, configure, or manage. This makes it ideal for getting started quickly and for single-instance deployments.
 
 #### What Happens Automatically:
 
@@ -695,7 +700,7 @@ histogram_quantile(0.95, rate(celestia_retrieval_duration_seconds_bucket[5m]))
 
 ### Database Inspection
 
-You can inspect the database directly with sqlite3:
+For SQLite (default), you can inspect the database directly with sqlite3:
 
 ```bash
 sqlite3 blobs.db
