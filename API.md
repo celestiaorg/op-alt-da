@@ -51,7 +51,7 @@ Retrieve a blob by its commitment.
 - URL Parameter: `{commitment}` - Can include or exclude `0x` prefix and version byte
 
 **Response:**
-- Status: `200 OK`
+- Status: `200 OK` - Blob is confirmed on Celestia DA
 - Body: Raw blob data (binary)
 
 **Example:**
@@ -68,8 +68,10 @@ curl http://localhost:3100/get/1234567890abcdef...
 
 **Error Responses:**
 - `400 Bad Request` - Invalid commitment format
-- `404 Not Found` - Blob not found
+- `404 Not Found` - Blob not found OR not yet confirmed on Celestia DA
 - `500 Internal Server Error` - Database error
+
+**Important:** GET returns 404 until the blob is confirmed on Celestia DA (typically 15-90 seconds after PUT).
 
 ---
 
@@ -166,6 +168,6 @@ Batches transition through the following statuses:
 
 - All endpoints support concurrent access
 - PUT operations return immediately after database write (~50ms)
-- GET operations read from local database (~10ms)
+- GET operations return 404 until confirmed, then serve from local database (~10ms)
 - Commitments are deterministic - same data always produces same commitment
 - The server handles commitment version byte parsing automatically
