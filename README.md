@@ -74,11 +74,18 @@ This server implements an **async, database-backed architecture** designed for h
 **GET Request (Read Path):**
 1. Client sends commitment to `/get/{commitment}`
 2. Server queries database by commitment
-3. Returns blob data immediately (database read)
+3. **Critical check**: Is the blob confirmed on Celestia DA?
+   - If blob not found → 404 "blob not found"
+   - If found but status != "confirmed" → 404 "blob not yet available on DA layer"
+   - If confirmed but missing CelestiaHeight → 404 "blob not yet available on DA layer"
+   - If confirmed AND has CelestiaHeight → **200 OK** with blob data (fast cached read)
+4. Once confirmed, data is served from database cache (typically <10ms)
 
 ### Key Features
 
 - **Fast writes**: PUT returns in <50ms (only database write)
+- **Confirmed reads only**: GET returns 200 OK only when data is confirmed on Celestia DA (not just cached)
+- **Fast confirmed reads**: Once confirmed, GET serves from database cache (<10ms)
 - **Crash resilient**: SQLite with WAL mode survives server restarts
 - **FIFO ordering**: Auto-increment IDs ensure strict ordering
 - **Efficient batching**: Packs 10-50 blobs per Celestia transaction
@@ -751,7 +758,9 @@ sqlite3 blobs.db "SELECT COUNT(*) FROM blobs WHERE status='confirmed';"
 ## Performance Characteristics
 
 - **PUT latency**: <50ms (database write only)
-- **GET latency**: <10ms (database read only)
+- **GET latency (confirmed blobs)**: <10ms (database read from cache)
+- **GET latency (unconfirmed blobs)**: Returns 404 until confirmed on DA layer
+- **Time to availability**: 15-90 seconds (time from PUT until GET returns 200 OK)
 - **Batch size**: 10-50 blobs per Celestia transaction
 - **Confirmation time**: 15-60 seconds (depends on Celestia block time)
 - **Throughput**: 1000+ blobs/sec (limited by database, not Celestia)
