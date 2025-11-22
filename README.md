@@ -214,60 +214,13 @@ This makes it immediately obvious which mode is running and helps catch configur
 
 ### Database Configuration
 
-**Default: SQLite for Speed and Simplicity**
-
-This server uses **SQLite by default** for its simplicity, zero-configuration setup, and excellent performance. However, the codebase is designed to work with any SQL database - **PostgreSQL, MySQL, or other hosted database solutions are perfectly fine alternatives** for production deployments that require high availability or distributed setups.
-
-**SQLite is embedded - no separate database server needed!**
-
-SQLite is a **file-based embedded database** compiled directly into the da-server binary. Unlike PostgreSQL or MySQL, there's **no separate database process** to install, configure, or manage. This makes it ideal for getting started quickly and for single-instance deployments.
-
-#### What Happens Automatically:
-
-When you start the server, it automatically:
-1. ✅ Creates the database file if it doesn't exist
-2. ✅ Creates all tables and indexes using the embedded schema
-3. ✅ Opens in WAL mode for crash safety
-4. ✅ Starts accepting requests immediately
-
-#### Database Location:
+**Default: SQLite** (PostgreSQL/MySQL also supported for HA deployments)
 
 ```bash
---db.path               # SQLite database file path (default: ./data/blobs.db)
+--db.path               # Database file path (default: ./data/blobs.db)
 ```
 
-**What gets created:**
-```
-./data/blobs.db       # Main database file (auto-created)
-./data/blobs.db-wal   # Write-ahead log (auto-created)
-./data/blobs.db-shm   # Shared memory (auto-created)
-```
-
-**First-time startup:**
-```bash
-# No database setup needed - just run the server!
-# The directory and database file are created automatically
-./bin/da-server --celestia.namespace <ns> --celestia.auth-token <token>
-
-# Output shows automatic database initialization:
-# INFO Opening database path=./data/blobs.db
-# INFO Database initialized successfully
-
-# Note: The ./data/ directory will be created automatically if it doesn't exist
-```
-
-**Changing the location:**
-```bash
-# Store database in a different location
-./bin/da-server --db.path /var/lib/da-server/blobs.db ...
-```
-
-**Important notes:**
-- 💾 **Persistent** - All data survives server restarts
-- 🔒 **ACID compliant** - Crash-safe with WAL mode
-- 📦 **Zero dependencies** - No database server to install
-- 🚀 **Fast** - Local file access, no network overhead
-- 🔧 **Easy backups** - Just copy the .db file (or use S3 backup feature)
+Database and tables are created automatically on first startup. No setup required.
 
 ### Batch Configuration Flags
 
