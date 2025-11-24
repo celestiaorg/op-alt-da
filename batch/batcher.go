@@ -22,19 +22,15 @@ func PackBlobs(blobs []*db.Blob, cfg *Config) ([]byte, error) {
 
 	buf := new(bytes.Buffer)
 
-	// Write blob count
 	if err := binary.Write(buf, binary.BigEndian, uint32(len(blobs))); err != nil {
 		return nil, fmt.Errorf("write blob count: %w", err)
 	}
 
-	// Write each blob
 	for i, blob := range blobs {
-		// Write blob size
 		if err := binary.Write(buf, binary.BigEndian, uint32(len(blob.Data))); err != nil {
 			return nil, fmt.Errorf("write blob %d size: %w", i, err)
 		}
 
-		// Write blob data
 		if _, err := buf.Write(blob.Data); err != nil {
 			return nil, fmt.Errorf("write blob %d data: %w", i, err)
 		}
@@ -52,7 +48,6 @@ func PackBlobs(blobs []*db.Blob, cfg *Config) ([]byte, error) {
 func UnpackBlobs(packedData []byte, cfg *Config) ([][]byte, error) {
 	buf := bytes.NewReader(packedData)
 
-	// Read blob count
 	var count uint32
 	if err := binary.Read(buf, binary.BigEndian, &count); err != nil {
 		return nil, fmt.Errorf("read blob count: %w", err)
@@ -64,9 +59,7 @@ func UnpackBlobs(packedData []byte, cfg *Config) ([][]byte, error) {
 
 	blobs := make([][]byte, count)
 
-	// Read each blob
 	for i := uint32(0); i < count; i++ {
-		// Read blob size
 		var size uint32
 		if err := binary.Read(buf, binary.BigEndian, &size); err != nil {
 			return nil, fmt.Errorf("read blob %d size: %w", i, err)
@@ -76,7 +69,6 @@ func UnpackBlobs(packedData []byte, cfg *Config) ([][]byte, error) {
 			return nil, fmt.Errorf("invalid blob %d size: %d", i, size)
 		}
 
-		// Read blob data
 		blobData := make([]byte, size)
 		if _, err := io.ReadFull(buf, blobData); err != nil {
 			return nil, fmt.Errorf("read blob %d data: %w", i, err)

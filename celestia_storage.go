@@ -38,7 +38,6 @@ func (c *CelestiaBlobID) MarshalBinary() ([]byte, error) {
 	}
 
 	// Calculate the total length of the marshaled ID
-	// 8 bytes for Height + 32 bytes for Commitment + 4 bytes for ShareOffset + 4 bytes for ShareSize
 	id := make([]byte, 8+32+4+4)
 
 	binary.LittleEndian.PutUint64(id[0:8], c.Height)
@@ -109,12 +108,12 @@ func NewCelestiaStore(cfg RPCClientConfig) (*CelestiaStore, error) {
 	var blobClient blobAPI.Module
 	var err error
 	if cfg.TxClientConfig != nil {
-		logger.Info("Initializing Celestia client in TxClient mode (OPTION B: service provider)",
+		logger.Info("Initializing Celestia client in TxClient mode",
 			"rpc_url", cfg.URL,
 			"grpc_addr", cfg.TxClientConfig.CoreGRPCAddr)
 		blobClient, err = initTxClient(cfg)
 	} else {
-		logger.Info("Initializing Celestia client in RPC-only mode (OPTION A: self-hosted node)",
+		logger.Info("Initializing Celestia client in RPC-only mode",
 			"rpc_url", cfg.URL,
 			"auth_token_set", cfg.AuthToken != "")
 		blobClient, err = initRPCClient(cfg)

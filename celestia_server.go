@@ -58,7 +58,7 @@ type CelestiaServer struct {
 	metricsRegistry *prometheus.Registry
 	celestiaMetrics *metrics.CelestiaMetrics
 
-	// Time-to-availability tracking (Option A)
+	// Time-to-availability tracking
 	// Maps commitment hex string -> first request time
 	firstRequestTimes sync.Map
 }
@@ -107,7 +107,6 @@ func NewCelestiaServer(
 	}
 
 	// Create workers with metrics
-	// Only create submission worker if not in read-only mode
 	if !workerCfg.ReadOnly {
 		server.submissionWorker = worker.NewSubmissionWorker(
 			store,
@@ -168,7 +167,6 @@ func (s *CelestiaServer) Start(ctx context.Context) error {
 	// Use errgroup for proper goroutine management
 	g, ctx := errgroup.WithContext(ctx)
 
-	// Start HTTP server
 	g.Go(func() error {
 		s.log.Info("HTTP server listening", "endpoint", s.endpoint)
 		if err := s.httpServer.Serve(s.listener); err != nil && err != http.ErrServerClosed {
@@ -177,7 +175,6 @@ func (s *CelestiaServer) Start(ctx context.Context) error {
 		return nil
 	})
 
-	// Start submission worker (only if not in read-only mode)
 	if s.submissionWorker != nil {
 		g.Go(func() error {
 			s.log.Info("Starting submission worker")
@@ -190,7 +187,6 @@ func (s *CelestiaServer) Start(ctx context.Context) error {
 		s.log.Info("Submission worker disabled (read-only mode)")
 	}
 
-	// Start reconciliation worker
 	g.Go(func() error {
 		s.log.Info("Starting reconciliation worker")
 		if err := s.eventListener.Run(ctx); err != nil && err != context.Canceled {
@@ -199,7 +195,6 @@ func (s *CelestiaServer) Start(ctx context.Context) error {
 		return nil
 	})
 
-	// Start backfill worker if enabled
 	if s.backfillWorker != nil {
 		g.Go(func() error {
 			s.log.Info("Starting backfill worker")
@@ -210,7 +205,6 @@ func (s *CelestiaServer) Start(ctx context.Context) error {
 		})
 	}
 
-	// Start metrics server if enabled
 	if s.metricsEnabled {
 		// Create metrics HTTP handler with our custom registry
 		metricsMux := http.NewServeMux()
@@ -243,7 +237,6 @@ func (s *CelestiaServer) Start(ctx context.Context) error {
 		})
 	}
 
-	// Shutdown HTTP server on context cancel
 	g.Go(func() error {
 		<-ctx.Done()
 		s.log.Info("Shutting down HTTP server")
@@ -405,7 +398,6 @@ func (rw *responseWriter) WriteHeader(code int) {
 func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 
-	// Wrap response writer to capture status code
 	rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 
 	defer func() {
@@ -416,7 +408,7 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 			// Legacy metric (for compatibility)
 			s.celestiaMetrics.RecordHTTPRequest("get", duration)
 
-			// Option B: Record GET request with status code
+			// Record GET request with status code
 			s.celestiaMetrics.RecordGetRequest(rw.statusCode, duration)
 		}
 	}()
@@ -472,7 +464,7 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		"commitment_length", len(requestedCommitment),
 		"commitment_hex", hex.EncodeToString(requestedCommitment))
 
-	// Option A: Track first request time for this commitment (time-to-availability)
+	// Track first request time for this commitment (time-to-availability)
 	commitmentKey := hex.EncodeToString(requestedCommitment)
 	s.firstRequestTimes.LoadOrStore(commitmentKey, startTime)
 

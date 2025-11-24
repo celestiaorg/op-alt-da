@@ -59,12 +59,25 @@ func (w *BackfillWorker) Run(ctx context.Context) error {
 		"backfill_period", w.workerCfg.BackfillPeriod,
 		"namespace", w.namespace.String())
 
-	// Initialize starting height
-	if w.workerCfg.StartHeight == 0 {
-		w.log.Info("Start height is 0, will sync from latest Celestia tip")
-		// TODO: Get current tip height from Celestia if StartHeight is 0
-		// For now, we'll start from 1 to avoid missing blocks
+	// Load persisted sync state from database
+	lastSyncedHeight, err := w.store.GetSyncState(ctx, "backfill_worker")
+	if err != nil {
+		return fmt.Errorf("failed to load sync state: %w", err)
+	}
+
+	// Determine starting height
+	if lastSyncedHeight > 0 {
+		// Resume from where we left off
+		w.currentHeight = lastSyncedHeight + 1
+		w.log.Info("Resuming backfill from persisted state", "last_synced_height", lastSyncedHeight, "resuming_from", w.currentHeight)
+	} else if w.workerCfg.StartHeight > 0 {
+		// Use configured start height
+		w.currentHeight = w.workerCfg.StartHeight
+		w.log.Info("Starting backfill from configured height", "start_height", w.currentHeight)
+	} else {
+		// Start from height 1
 		w.currentHeight = 1
+		w.log.Info("Starting backfill from genesis", "start_height", 1)
 	}
 
 	ticker := time.NewTicker(w.workerCfg.BackfillPeriod)
@@ -148,6 +161,18 @@ func (w *BackfillWorker) scanAndIndexBlocks(ctx context.Context) error {
 		w.currentHeight = height + 1
 	}
 
+	// Persist sync progress after successful scan
+	if blocksScanned > 0 {
+		// Save the last successfully scanned height (currentHeight - 1)
+		lastScannedHeight := w.currentHeight - 1
+		if err := w.store.UpdateSyncState(ctx, "backfill_worker", lastScannedHeight); err != nil {
+			w.log.Error("Failed to persist sync state", "error", err, "height", lastScannedHeight)
+			// Don't fail the whole scan, just log the error
+		} else {
+			w.log.Debug("Persisted sync state", "last_synced_height", lastScannedHeight)
+		}
+	}
+
 	if blocksScanned > 0 || batchesFound > 0 {
 		w.log.Info("Backfill scan complete",
 			"blocks_scanned", blocksScanned,
@@ -179,18 +204,15 @@ func (w *BackfillWorker) indexBatch(ctx context.Context, celestiaBlob *blob.Blob
 		}
 
 		// Check if blob signer matches any of the trusted signers
+		// Note: Celestia blob.Signer() returns 20-byte raw address (not bech32)
 		blobSignerHex := fmt.Sprintf("%x", blobSigner)
 
 		signerTrusted := false
 		for _, trustedSigner := range w.workerCfg.TrustedSigners {
-			// Normalize trusted signer (remove 0x prefix if present)
-			normalizedTrusted := trustedSigner
-			if len(normalizedTrusted) > 2 && normalizedTrusted[:2] == "0x" {
-				normalizedTrusted = normalizedTrusted[2:]
-			}
-
+			// Trusted signer should be hex (40 chars) - Celestia addresses are bech32 but
+			// blob.Signer() returns raw 20-byte address, so we expect hex in config
 			// Compare hex representations (case-insensitive)
-			if strings.EqualFold(blobSignerHex, normalizedTrusted) {
+			if strings.EqualFold(blobSignerHex, trustedSigner) {
 				signerTrusted = true
 				w.log.Debug("Blob signer verified",
 					"height", height,

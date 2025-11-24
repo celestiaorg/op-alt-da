@@ -608,3 +608,38 @@ func (s *BlobStore) InsertBlobTx(ctx context.Context, tx *sql.Tx, blob *Blob) er
 
 	return err
 }
+
+// GetSyncState retrieves the last synced height for a worker
+func (s *BlobStore) GetSyncState(ctx context.Context, workerName string) (uint64, error) {
+	var lastHeight uint64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT last_height FROM sync_state WHERE worker_name = ?
+	`, workerName).Scan(&lastHeight)
+
+	if err == sql.ErrNoRows {
+		// No sync state yet, return 0
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to get sync state: %w", err)
+	}
+
+	return lastHeight, nil
+}
+
+// UpdateSyncState updates the last synced height for a worker
+func (s *BlobStore) UpdateSyncState(ctx context.Context, workerName string, lastHeight uint64) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO sync_state (worker_name, last_height, updated_at)
+		VALUES (?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(worker_name) DO UPDATE SET
+			last_height = excluded.last_height,
+			updated_at = CURRENT_TIMESTAMP
+	`, workerName, lastHeight)
+
+	if err != nil {
+		return fmt.Errorf("failed to update sync state: %w", err)
+	}
+
+	return nil
+}

@@ -19,9 +19,9 @@ import (
 )
 
 const (
-	DBPathFlagName          = "db.path"
-	BackupEnabledFlagName   = "backup.enabled"
-	BackupIntervalFlagName  = "backup.interval"
+	DBPathFlagName         = "db.path"
+	BackupEnabledFlagName  = "backup.enabled"
+	BackupIntervalFlagName = "backup.interval"
 
 	// Batch configuration
 	BatchMinBlobsFlagName    = "batch.min-blobs"
@@ -44,9 +44,9 @@ const (
 	TrustedSignerFlagName = "trusted-signer"
 
 	// Backfill configuration
-	BackfillEnabledFlagName = "backfill.enabled"
+	BackfillEnabledFlagName     = "backfill.enabled"
 	BackfillStartHeightFlagName = "backfill.start-height"
-	BackfillPeriodFlagName = "backfill.period"
+	BackfillPeriodFlagName      = "backfill.period"
 )
 
 var (
@@ -208,7 +208,6 @@ func StartDAServer(cliCtx *cli.Context) error {
 	}
 	l.Info("========================================")
 
-	// Initialize database
 	dbPath := cliCtx.String(DBPathFlagName)
 	l.Info("Opening database", "path", dbPath)
 
@@ -218,14 +217,12 @@ func StartDAServer(cliCtx *cli.Context) error {
 	}
 	defer store.Close()
 
-	// Initialize Celestia store (for client access)
 	l.Info("Connecting to Celestia", "url", cfg.CelestiaConfig().URL)
 	celestiaStore, err := celestia.NewCelestiaStore(cfg.CelestiaConfig())
 	if err != nil {
 		return fmt.Errorf("failed to connect to Celestia: %w", err)
 	}
 
-	// Create batch configuration
 	batchCfg := &batch.Config{
 		MinBlobs:          cliCtx.Int(BatchMinBlobsFlagName),
 		MaxBlobs:          cliCtx.Int(BatchMaxBlobsFlagName),
@@ -234,7 +231,6 @@ func StartDAServer(cliCtx *cli.Context) error {
 		MinBatchSizeBytes: cliCtx.Int(BatchMinSizeFlagName) * 1024,        // Convert KB to bytes
 	}
 
-	// Validate batch configuration
 	if err := batchCfg.Validate(); err != nil {
 		return fmt.Errorf("invalid batch configuration: %w", err)
 	}
@@ -259,7 +255,6 @@ func StartDAServer(cliCtx *cli.Context) error {
 		}
 	}
 
-	// Create worker configuration
 	workerCfg := &worker.Config{
 		SubmitPeriod:    cliCtx.Duration(WorkerSubmitPeriodFlagName),
 		SubmitTimeout:   cliCtx.Duration(WorkerSubmitTimeoutFlagName),
@@ -275,7 +270,6 @@ func StartDAServer(cliCtx *cli.Context) error {
 		BackfillPeriod:  cliCtx.Duration(BackfillPeriodFlagName),
 	}
 
-	// Validate worker configuration
 	if err := validateWorkerConfig(workerCfg); err != nil {
 		return fmt.Errorf("invalid worker configuration: %w", err)
 	}
@@ -294,7 +288,6 @@ func StartDAServer(cliCtx *cli.Context) error {
 		"start_height", workerCfg.StartHeight,
 		"backfill_period", workerCfg.BackfillPeriod)
 
-	// Create server
 	server := celestia.NewCelestiaServer(
 		cliCtx.String(ListenAddrFlagName),
 		cliCtx.Int(PortFlagName),
@@ -314,7 +307,6 @@ func StartDAServer(cliCtx *cli.Context) error {
 	// Use errgroup for proper goroutine management
 	g, ctx := errgroup.WithContext(ctx)
 
-	// Start server
 	g.Go(func() error {
 		l.Info("Starting server")
 		if err := server.Start(ctx); err != nil && err != context.Canceled {
