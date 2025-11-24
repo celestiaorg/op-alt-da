@@ -172,6 +172,7 @@ func (s *CelestiaServer) Start(ctx context.Context) error {
 		if err := s.httpServer.Serve(s.listener); err != nil && err != http.ErrServerClosed {
 			return fmt.Errorf("http server error: %w", err)
 		}
+		s.log.Info("HTTP server stopped")
 		return nil
 	})
 
@@ -181,6 +182,7 @@ func (s *CelestiaServer) Start(ctx context.Context) error {
 			if err := s.submissionWorker.Run(ctx); err != nil && err != context.Canceled {
 				return fmt.Errorf("submission worker error: %w", err)
 			}
+			s.log.Info("Submission worker stopped")
 			return nil
 		})
 	} else {
@@ -192,6 +194,7 @@ func (s *CelestiaServer) Start(ctx context.Context) error {
 		if err := s.eventListener.Run(ctx); err != nil && err != context.Canceled {
 			return fmt.Errorf("reconciliation worker error: %w", err)
 		}
+		s.log.Info("Reconciliation worker stopped")
 		return nil
 	})
 
@@ -201,6 +204,7 @@ func (s *CelestiaServer) Start(ctx context.Context) error {
 			if err := s.backfillWorker.Run(ctx); err != nil && err != context.Canceled {
 				return fmt.Errorf("backfill worker error: %w", err)
 			}
+			s.log.Info("Backfill worker stopped")
 			return nil
 		})
 	}
@@ -225,12 +229,14 @@ func (s *CelestiaServer) Start(ctx context.Context) error {
 			if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				return fmt.Errorf("metrics server error: %w", err)
 			}
+			s.log.Info("Metrics server stopped")
 			return nil
 		})
 
 		// Shutdown metrics server on context cancel
 		g.Go(func() error {
 			<-ctx.Done()
+			s.log.Info("Shutting down metrics server")
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			return metricsServer.Shutdown(shutdownCtx)
@@ -246,7 +252,10 @@ func (s *CelestiaServer) Start(ctx context.Context) error {
 	})
 
 	// Wait for all goroutines
-	return g.Wait()
+	s.log.Info("Waiting for all services to stop...")
+	err = g.Wait()
+	s.log.Info("All services stopped")
+	return err
 }
 
 func (s *CelestiaServer) Stop() error {

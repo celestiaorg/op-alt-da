@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/urfave/cli/v2"
@@ -215,10 +218,9 @@ func StartDAServer(cliCtx *cli.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
-	defer store.Close()
-
+	// Initialize Celestia store (for client access)
 	l.Info("Connecting to Celestia", "url", cfg.CelestiaConfig().URL)
-	celestiaStore, err := celestia.NewCelestiaStore(cfg.CelestiaConfig())
+	celestiaStore, err := celestia.NewCelestiaStore(cliCtx.Context, cfg.CelestiaConfig())
 	if err != nil {
 		return fmt.Errorf("failed to connect to Celestia: %w", err)
 	}
@@ -350,8 +352,16 @@ func StartDAServer(cliCtx *cli.Context) error {
 
 	// Wait for interrupt signal
 	g.Go(func() error {
-		<-cliCtx.Done()
-		l.Info("Received shutdown signal")
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+		select {
+		case sig := <-sigChan:
+			l.Info("Received shutdown signal", "signal", sig)
+		case <-cliCtx.Done():
+			l.Info("Context cancelled")
+		}
+
 		cancel()
 		return nil
 	})

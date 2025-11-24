@@ -110,7 +110,7 @@ type CelestiaStore struct {
 }
 
 // NewCelestiaStore returns a celestia store.
-func NewCelestiaStore(cfg RPCClientConfig) (*CelestiaStore, error) {
+func NewCelestiaStore(ctx context.Context, cfg RPCClientConfig) (*CelestiaStore, error) {
 	logger := log.New()
 	var blobClient blobAPI.Module
 	var err error
@@ -118,12 +118,12 @@ func NewCelestiaStore(cfg RPCClientConfig) (*CelestiaStore, error) {
 		logger.Info("Initializing Celestia client in TxClient mode (OPTION B: service provider)",
 			"rpc_url", cfg.URL,
 			"grpc_addr", cfg.TxClientConfig.CoreGRPCAddr)
-		blobClient, err = initTxClient(cfg)
+		blobClient, err = initTxClient(ctx, cfg)
 	} else {
 		logger.Info("Initializing Celestia client in RPC-only mode (OPTION A: self-hosted node)",
 			"rpc_url", cfg.URL,
 			"auth_token_set", cfg.AuthToken != "")
-		blobClient, err = initRPCClient(cfg)
+		blobClient, err = initRPCClient(ctx, cfg)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize celestia client: %w", err)
@@ -142,7 +142,7 @@ func NewCelestiaStore(cfg RPCClientConfig) (*CelestiaStore, error) {
 }
 
 // initTxClient initializes a transaction client for Celestia.
-func initTxClient(cfg RPCClientConfig) (blobAPI.Module, error) {
+func initTxClient(ctx context.Context, cfg RPCClientConfig) (blobAPI.Module, error) {
 	keyname := cfg.TxClientConfig.DefaultKeyName
 	if keyname == "" {
 		keyname = "my_celes_key"
@@ -172,7 +172,6 @@ func initTxClient(cfg RPCClientConfig) (blobAPI.Module, error) {
 			},
 		},
 	}
-	ctx := context.Background()
 	celestiaClient, err := txClient.New(ctx, config, kr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create tx client: %w", err)
@@ -181,7 +180,7 @@ func initTxClient(cfg RPCClientConfig) (blobAPI.Module, error) {
 }
 
 // initRPCClient initializes an RPC client for Celestia.
-func initRPCClient(cfg RPCClientConfig) (blobAPI.Module, error) {
+func initRPCClient(ctx context.Context, cfg RPCClientConfig) (blobAPI.Module, error) {
 	logger := log.New()
 
 	// Log auth token status with first/last 4 chars for verification
@@ -203,7 +202,7 @@ func initRPCClient(cfg RPCClientConfig) (blobAPI.Module, error) {
 		"auth_token", tokenPreview,
 		"tls_enabled", cfg.TLSEnabled)
 
-	celestiaClient, err := client.NewClient(context.Background(), cfg.URL, cfg.AuthToken)
+	celestiaClient, err := client.NewClient(ctx, cfg.URL, cfg.AuthToken)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create rpc client: %w", err)
 	}
