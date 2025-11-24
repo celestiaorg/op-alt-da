@@ -302,6 +302,78 @@ For production deployments, you can configure the experimental transaction clien
 --celestia.compact-blobid                        # Use compact blob IDs (default: true)
 ```
 
+## Deployment Guide
+
+This section provides production-ready deployment instructions for DevOps teams.
+
+### Architecture Overview
+
+There are **two deployment modes**:
+
+1. **Write Server** - Accepts PUT requests and submits blobs to Celestia (deployed with op-batcher)
+   - Can also serve GET requests from its own database
+   - Used when you need to write AND read (e.g., single op-batcher + op-node setup)
+
+2. **Read-Only Server** - Only serves GET requests by indexing blobs from Celestia (deployed with op-node)
+   - Rejects PUT requests
+   - Used for dedicated read replicas or when you only need to read (e.g., separate op-node instances)
+
+### Deployment Topology
+
+**Option 1: Single server (simplest)**
+
+```
+┌───────────────────────────────────────────┐
+│  op-batcher ──PUT──┐                      │
+│                    ▼                      │
+│              ┌──────────┐                 │
+│              │  Write   │                 │
+│              │  Server  │                 │
+│              └──────────┘                 │
+│                    ▲                      │
+│  op-node ────GET───┘                      │
+└───────────────────────────────────────────┘
+                     │
+                     │ Submit blobs (CIP-21 signed)
+                     ▼
+            ┌─────────────────┐
+            │ Celestia Network│
+            └─────────────────┘
+```
+
+Write server handles both PUT (from op-batcher) and GET (from op-node).
+
+---
+
+**Option 2: Separate read replicas (high availability)**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  op-batcher ──PUT──► Write Server                        │
+│                           │                              │
+│                           │ Submit blobs (CIP-21 signed) │
+│                           ▼                              │
+│                   ┌─────────────────┐                    │
+│                   │ Celestia Network│                    │
+│                   └─────────────────┘                    │
+│                           │                              │
+│                           │ Backfill (verify CIP-21)     │
+│                           ▼                              │
+│  op-node 1 ──GET──► Read-Only Server 1                  │
+│  op-node 2 ──GET──► Read-Only Server 2                  │
+└──────────────────────────────────────────────────────────┘
+```
+
+Write server submits blobs, read-only servers index them via backfill.
+
+**Key points:**
+- Write servers can serve both PUT and GET requests
+- Read-only servers reject PUT, only serve GET via backfill worker
+- Read-only servers **MUST** configure `--trusted-signer` with write server's signer address for security
+- Without trusted signers, malicious actors can inject junk data into your namespace
+
+---
+
 ## Running the Server
 
 ### Important: Choose Your Deployment Mode
@@ -322,7 +394,7 @@ You have **TWO options** for connecting to Celestia. Choose ONE:
 - Requires running local infrastructure
 
 **⚠️ Important**: According to [celestia-node client-tx documentation](https://github.com/celestiaorg/celestia-node/blob/52cd8b52ec031bb9e3b4e476e0b159db2053384c/api/client/readme.md), when using client-tx (Option B) you need **BOTH** API endpoints:
-- RPC endpoint for reads (blob.Get, blob.GetAll, blob.Subscribe)
+- RPC endpoint for reads (blob.Get, blob.GetAll, Subscribe)
 - gRPC endpoint for writes (submitting transactions)
 
 ---
@@ -476,6 +548,160 @@ cat ~/.celestia-full/keys/keyring-test/auth-token
   --metrics.port 6060 \
   --log.level INFO \
   --log.format json
+```
+
+---
+
+## Production Deployment Guide
+
+### Write Server (op-batcher sidecar)
+
+Write servers accept PUT requests, submit blobs to Celestia with CIP-21 signatures, and serve GET requests from their database.
+
+**Use case**: Single server for both op-batcher (writes) and op-node (reads), or dedicated write server in HA setup.
+
+**Setup:**
+
+```bash
+# 1. Create keyring and fund account
+celestia light init --p2p.network mocha-4
+celestia-appd keys add my_write_key --keyring-backend test --home ~/.celestia-light-mocha-4
+# Fund the address with TIA
+
+# 2. Start write server (OPTION B: Service Provider)
+./bin/da-server \
+  --celestia.server https://your-endpoint.celestia-mocha.quiknode.pro/your-token \
+  --celestia.namespace $OP_ALTDA_CELESTIA_NAMESPACE \
+  --celestia.tx-client.core-grpc.addr your-endpoint.celestia-mocha.quiknode.pro:9090 \
+  --celestia.tx-client.p2p-network mocha-4 \
+  --celestia.tx-client.keyring-path ~/.celestia-light-mocha-4/keys \
+  --celestia.tx-client.key-name my_write_key \
+  --addr 0.0.0.0 \
+  --port 3100 \
+  --db.path /var/lib/celestia-da/blobs.db \
+  --metrics.enabled \
+  --log.level INFO
+
+# 3. Test
+curl -X POST http://localhost:3100/put \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary "test data"
+```
+
+**Get signer address for read-only servers:**
+
+```bash
+# Method 1: From keyring (bech32 address, needs conversion to hex)
+celestia-appd keys show my_write_key --keyring-backend test --home ~/.celestia-light-mocha-4
+
+# Method 2: From logs after first submission (already in hex format)
+# Start read-only server temporarily without --trusted-signer, then check logs:
+grep "blob_signer" /var/log/celestia-da-readonly.log
+# Output: blob_signer="0123456789abcdef0123456789abcdef01234567"
+```
+
+---
+
+### Read-Only Server (op-node sidecar)
+
+Read-only servers serve GET requests by scanning Celestia and indexing blobs. They reject PUT requests.
+
+**Use case**: Dedicated read replicas for op-node instances, or when you only need to read (no writes).
+
+**⚠️ SECURITY**: MUST configure `--trusted-signer` with write server's signer address(es) or malicious actors can inject junk data.
+
+**Setup:**
+
+```bash
+# 1. Get signer address from write server (see above)
+export TRUSTED_SIGNER=0123456789abcdef0123456789abcdef01234567  # hex format, 40 chars
+
+# 2. Start read-only server
+./bin/da-server \
+  --celestia.server https://your-endpoint.celestia-mocha.quiknode.pro/your-token \
+  --celestia.namespace $OP_ALTDA_CELESTIA_NAMESPACE \
+  --read-only \
+  --backfill.enabled=true \
+  --backfill.start-height=0 \
+  --backfill.period=15s \
+  --trusted-signer=$TRUSTED_SIGNER \
+  --addr 0.0.0.0 \
+  --port 3100 \
+  --db.path /var/lib/celestia-da-readonly/blobs.db \
+  --metrics.enabled \
+  --log.level INFO
+
+# 3. Monitor backfill progress
+grep "Backfill" /var/log/celestia-da-readonly.log
+# Expected: "Successfully indexed batch batch_id=X blob_count=Y height=Z"
+
+# 4. Test GET (after blobs are indexed)
+curl http://localhost:3100/get/0x0c<commitment_from_write_server>
+```
+
+**Key flags:**
+- `--read-only` - Disables PUT endpoint and submission worker
+- `--backfill.enabled=true` - Enables scanning Celestia blocks
+- `--backfill.start-height=0` - Start from genesis (or set to current height to skip history)
+- `--trusted-signer` - **REQUIRED** - Comma-separated hex addresses (40 chars each)
+
+**Multiple write servers (HA):**
+
+```bash
+--trusted-signer=0123456789abcdef0123456789abcdef01234567,789abcdef0123456789abcdef0123456789abcde
+```
+
+---
+
+### Monitoring
+
+**Check backfill sync progress:**
+
+```bash
+sqlite3 /var/lib/celestia-da-readonly/blobs.db \
+  "SELECT last_height FROM sync_state WHERE worker_name='backfill_worker'"
+```
+
+**Check indexed blob count:**
+
+```bash
+sqlite3 /var/lib/celestia-da-readonly/blobs.db \
+  "SELECT COUNT(*) FROM blobs WHERE status='confirmed'"
+```
+
+**Prometheus metrics** (if `--metrics.enabled`):
+- Write: `celestia_submissions_total`, `celestia_submission_errors_total`
+- Read: `celestia_retrievals_total`, indexed blob count
+
+---
+
+### Troubleshooting
+
+**Read-only rejecting blobs:**
+
+```bash
+grep "untrusted signer" /var/log/celestia-da-readonly.log
+grep "blob_signer" /var/log/celestia-da-readonly.log
+# Fix: Update --trusted-signer with correct hex address
+```
+
+**Write server not submitting:**
+
+```bash
+grep "submission_worker" /var/log/celestia-da-write.log
+# Check keyring: ls -la ~/.celestia-light-mocha-4/keys
+# Check balance: celestia-appd query bank balances <address>
+```
+
+---
+
+### Graceful Shutdown
+
+Server handles SIGTERM gracefully:
+
+```bash
+kill -TERM <pid>  # or: systemctl stop celestia-da-server
+# Workers finish current operations, backfill progress is persisted
 ```
 
 ## API
