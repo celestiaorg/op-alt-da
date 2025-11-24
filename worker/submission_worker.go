@@ -49,6 +49,14 @@ func NewSubmissionWorker(
 }
 
 func (w *SubmissionWorker) Run(ctx context.Context) error {
+	// Validate configuration to prevent runtime panics
+	if w.workerCfg.SubmitPeriod <= 0 {
+		return fmt.Errorf("invalid submit period: %v (must be positive)", w.workerCfg.SubmitPeriod)
+	}
+	if w.workerCfg.SubmitTimeout <= 0 {
+		return fmt.Errorf("invalid submit timeout: %v (must be positive)", w.workerCfg.SubmitTimeout)
+	}
+
 	ticker := time.NewTicker(w.workerCfg.SubmitPeriod)
 	defer ticker.Stop()
 

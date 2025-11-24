@@ -1,35 +1,10 @@
-package unit
+package db
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
-
-	"github.com/celestiaorg/op-alt-da/db"
 )
-
-func setupTestDB(t *testing.T) (*db.BlobStore, func()) {
-	// Create temporary database
-	tmpFile, err := os.CreateTemp("", "test-blobs-*.db")
-	if err != nil {
-		t.Fatalf("Failed to create temp file: %v", err)
-	}
-	tmpFile.Close()
-
-	store, err := db.NewBlobStore(tmpFile.Name())
-	if err != nil {
-		os.Remove(tmpFile.Name())
-		t.Fatalf("Failed to create store: %v", err)
-	}
-
-	cleanup := func() {
-		store.Close()
-		os.Remove(tmpFile.Name())
-	}
-
-	return store, cleanup
-}
 
 func TestBlobStore_InsertAndGet(t *testing.T) {
 	store, cleanup := setupTestDB(t)
@@ -38,7 +13,7 @@ func TestBlobStore_InsertAndGet(t *testing.T) {
 	ctx := context.Background()
 
 	// Insert blob
-	blob := &db.Blob{
+	blob := &Blob{
 		Commitment: []byte("test-commitment-123"),
 		Namespace:  []byte("test-namespace"),
 		Data:       []byte("test data content"),
@@ -82,7 +57,7 @@ func TestBlobStore_GetPendingBlobs(t *testing.T) {
 
 	// Insert multiple blobs
 	for i := 0; i < 5; i++ {
-		blob := &db.Blob{
+		blob := &Blob{
 			Commitment: []byte{byte(i)},
 			Namespace:  []byte("test"),
 			Data:       []byte{byte(i)},
@@ -122,7 +97,7 @@ func TestBlobStore_CreateBatch(t *testing.T) {
 	// Insert blobs
 	var blobIDs []int64
 	for i := 0; i < 3; i++ {
-		blob := &db.Blob{
+		blob := &Blob{
 			Commitment: []byte{byte(i)},
 			Namespace:  []byte("test"),
 			Data:       []byte{byte(i)},
@@ -175,7 +150,7 @@ func TestBlobStore_MarkBatchConfirmed(t *testing.T) {
 	// Insert blobs
 	var blobIDs []int64
 	for i := 0; i < 2; i++ {
-		blob := &db.Blob{
+		blob := &Blob{
 			Commitment: []byte{byte(i)},
 			Namespace:  []byte("test"),
 			Data:       []byte{byte(i)},
@@ -236,7 +211,7 @@ func TestBlobStore_GetUnconfirmedBatches(t *testing.T) {
 
 	// Create old batch (submitted 5 minutes ago)
 	blobIDs := []int64{}
-	blob := &db.Blob{
+	blob := &Blob{
 		Commitment: []byte("test1"),
 		Namespace:  []byte("ns"),
 		Data:       []byte("data1"),
@@ -278,7 +253,7 @@ func TestBlobStore_MarkRead(t *testing.T) {
 	ctx := context.Background()
 
 	// Insert blob
-	blob := &db.Blob{
+	blob := &Blob{
 		Commitment: []byte("commit"),
 		Namespace:  []byte("ns"),
 		Data:       []byte("data"),
@@ -318,7 +293,7 @@ func TestBlobStore_GetStats(t *testing.T) {
 
 	// Create 3 blobs
 	for i := 0; i < 3; i++ {
-		blob := &db.Blob{
+		blob := &Blob{
 			Commitment: []byte{byte(i)},
 			Namespace:  []byte("ns"),
 			Data:       []byte{byte(i)},
@@ -395,7 +370,7 @@ func TestBlobStore_ConcurrentInserts(t *testing.T) {
 	errChan := make(chan error, 100)
 	for i := 0; i < 100; i++ {
 		go func(idx int) {
-			blob := &db.Blob{
+			blob := &Blob{
 				Commitment: []byte{byte(idx >> 8), byte(idx)},
 				Namespace:  []byte("ns"),
 				Data:       []byte{byte(idx)},
@@ -424,3 +399,4 @@ func TestBlobStore_ConcurrentInserts(t *testing.T) {
 		t.Errorf("Expected 100 blobs, got %d", len(pending))
 	}
 }
+

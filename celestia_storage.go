@@ -218,6 +218,11 @@ func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, d.GetTimeout)
 	defer cancel()
 
+	// Validate key length (must have at least 2 bytes for frame version and altda version)
+	if len(key) < 2 {
+		return nil, fmt.Errorf("invalid key length: expected at least 2 bytes, got %d", len(key))
+	}
+
 	var blobID CelestiaBlobID
 	// Skip first 2 bytes which are frame version and altda version
 	if err := blobID.UnmarshalBinary(key[2:]); err != nil {

@@ -1,10 +1,9 @@
-package unit
+package commitment
 
 import (
 	"bytes"
 	"testing"
 
-	"github.com/celestiaorg/op-alt-da/commitment"
 	libshare "github.com/celestiaorg/go-square/v3/share"
 )
 
@@ -49,12 +48,12 @@ func TestComputeCommitment_Deterministic(t *testing.T) {
 	namespace := testNamespace()
 
 	// Compute commitment twice
-	commitment1, err := commitment.ComputeCommitment(data, namespace)
+	commitment1, err := ComputeCommitment(data, namespace)
 	if err != nil {
 		t.Fatalf("First commitment computation failed: %v", err)
 	}
 
-	commitment2, err := commitment.ComputeCommitment(data, namespace)
+	commitment2, err := ComputeCommitment(data, namespace)
 	if err != nil {
 		t.Fatalf("Second commitment computation failed: %v", err)
 	}
@@ -77,12 +76,12 @@ func TestComputeCommitment_DifferentData(t *testing.T) {
 	data1 := []byte("first blob data")
 	data2 := []byte("second blob data")
 
-	commitment1, err := commitment.ComputeCommitment(data1, namespace)
+	commitment1, err := ComputeCommitment(data1, namespace)
 	if err != nil {
 		t.Fatalf("First commitment failed: %v", err)
 	}
 
-	commitment2, err := commitment.ComputeCommitment(data2, namespace)
+	commitment2, err := ComputeCommitment(data2, namespace)
 	if err != nil {
 		t.Fatalf("Second commitment failed: %v", err)
 	}
@@ -100,12 +99,12 @@ func TestComputeCommitment_DifferentNamespaces(t *testing.T) {
 	namespace1 := testNamespace()
 	namespace2 := testNamespace2()
 
-	commitment1, err := commitment.ComputeCommitment(data, namespace1)
+	commitment1, err := ComputeCommitment(data, namespace1)
 	if err != nil {
 		t.Fatalf("First commitment failed: %v", err)
 	}
 
-	commitment2, err := commitment.ComputeCommitment(data, namespace2)
+	commitment2, err := ComputeCommitment(data, namespace2)
 	if err != nil {
 		t.Fatalf("Second commitment failed: %v", err)
 	}
@@ -137,7 +136,7 @@ func TestComputeCommitment_VariousSizes(t *testing.T) {
 				data[i] = byte(i % 256)
 			}
 
-			commitment, err := commitment.ComputeCommitment(data, namespace)
+			commitment, err := ComputeCommitment(data, namespace)
 			if err != nil {
 				t.Fatalf("Commitment failed for size %d: %v", tc.size, err)
 			}
@@ -158,7 +157,7 @@ func TestComputeCommitment_EmptyData(t *testing.T) {
 	data := []byte{}
 
 	// Empty data should either work or return a clear error
-	commitment, err := commitment.ComputeCommitment(data, namespace)
+	commitment, err := ComputeCommitment(data, namespace)
 
 	// If it succeeds, commitment should not be empty
 	if err == nil && len(commitment) == 0 {
@@ -179,7 +178,7 @@ func TestComputeCommitment_SingleByte(t *testing.T) {
 
 	data := []byte{0x42}
 
-	commitment, err := commitment.ComputeCommitment(data, namespace)
+	commitment, err := ComputeCommitment(data, namespace)
 	if err != nil {
 		t.Fatalf("Single byte commitment failed: %v", err)
 	}
@@ -199,7 +198,7 @@ func TestComputeCommitment_MaxSize(t *testing.T) {
 		data[i] = byte(i % 256)
 	}
 
-	commitment, err := commitment.ComputeCommitment(data, namespace)
+	commitment, err := ComputeCommitment(data, namespace)
 	if err != nil {
 		t.Fatalf("Max size commitment failed: %v", err)
 	}
@@ -220,7 +219,7 @@ func TestComputeCommitment_ConsistencyAcrossInvocations(t *testing.T) {
 	// Compute 10 times
 	commitments := make([][]byte, 10)
 	for i := 0; i < 10; i++ {
-		c, err := commitment.ComputeCommitment(data, namespace)
+		c, err := ComputeCommitment(data, namespace)
 		if err != nil {
 			t.Fatalf("Commitment %d failed: %v", i, err)
 		}
@@ -247,7 +246,7 @@ func TestComputeCommitment_UniqueCommitments(t *testing.T) {
 		data = append(data, byte(i>>24), byte(i>>16), byte(i>>8), byte(i))
 		data = append(data, []byte(" - test data")...)
 
-		commitment, err := commitment.ComputeCommitment(data, namespace)
+		commitment, err := ComputeCommitment(data, namespace)
 		if err != nil {
 			t.Fatalf("Commitment %d failed: %v", i, err)
 		}
@@ -263,3 +262,5 @@ func TestComputeCommitment_UniqueCommitments(t *testing.T) {
 		t.Errorf("Expected 100 unique commitments, got %d", len(commitments))
 	}
 }
+
+

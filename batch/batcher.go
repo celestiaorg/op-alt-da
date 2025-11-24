@@ -27,6 +27,11 @@ func PackBlobs(blobs []*db.Blob, cfg *Config) ([]byte, error) {
 	}
 
 	for i, blob := range blobs {
+		// Validate blob data is not empty (Celestia doesn't allow empty blobs)
+		if len(blob.Data) == 0 {
+			return nil, fmt.Errorf("blob %d has empty data", i)
+		}
+
 		if err := binary.Write(buf, binary.BigEndian, uint32(len(blob.Data))); err != nil {
 			return nil, fmt.Errorf("write blob %d size: %w", i, err)
 		}

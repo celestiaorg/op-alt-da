@@ -1,12 +1,10 @@
-package unit
+package db
 
 import (
 	"context"
 	"fmt"
 	"testing"
 	"time"
-
-	"github.com/celestiaorg/op-alt-da/db"
 )
 
 // TestFIFOOrdering verifies that GetPendingBlobs returns blobs in strict FIFO order (ORDER BY id ASC)
@@ -19,7 +17,7 @@ func TestFIFOOrdering(t *testing.T) {
 	// Insert 50 blobs with predictable IDs
 	expectedIDs := make([]int64, 50)
 	for i := 0; i < 50; i++ {
-		testBlob := &db.Blob{
+		testBlob := &Blob{
 			Commitment: []byte(fmt.Sprintf("commitment-%03d", i)),
 			Namespace:  []byte("test-namespace"),
 			Data:       []byte(fmt.Sprintf("blob-data-%03d", i)),
@@ -75,7 +73,7 @@ func TestFIFOOrderingWithLimit(t *testing.T) {
 	// Insert 30 blobs
 	var firstBlobID int64
 	for i := 0; i < 30; i++ {
-		testBlob := &db.Blob{
+		testBlob := &Blob{
 			Commitment: []byte(fmt.Sprintf("commit-%d", i)),
 			Namespace:  []byte("ns"),
 			Data:       []byte(fmt.Sprintf("data-%d", i)),
@@ -148,7 +146,7 @@ func TestFIFOAfterBatching(t *testing.T) {
 	// Insert 20 blobs
 	allIDs := make([]int64, 20)
 	for i := 0; i < 20; i++ {
-		testBlob := &db.Blob{
+		testBlob := &Blob{
 			Commitment: []byte(fmt.Sprintf("c-%d", i)),
 			Namespace:  []byte("ns"),
 			Data:       []byte(fmt.Sprintf("d-%d", i)),
@@ -190,3 +188,4 @@ func TestFIFOAfterBatching(t *testing.T) {
 
 	t.Logf("✓ FIFO ordering maintained after batching")
 }
+

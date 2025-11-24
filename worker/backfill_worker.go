@@ -54,6 +54,11 @@ func NewBackfillWorker(
 }
 
 func (w *BackfillWorker) Run(ctx context.Context) error {
+	// Validate configuration to prevent runtime panics
+	if w.workerCfg.BackfillPeriod <= 0 {
+		return fmt.Errorf("invalid backfill period: %v (must be positive)", w.workerCfg.BackfillPeriod)
+	}
+
 	w.log.Info("Backfill worker starting",
 		"start_height", w.workerCfg.StartHeight,
 		"backfill_period", w.workerCfg.BackfillPeriod,

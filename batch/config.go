@@ -33,6 +33,11 @@ func DefaultConfig() *Config {
 
 // ShouldBatch determines if we should create a batch based on config
 func (c *Config) ShouldBatch(blobCount int, totalSize int) bool {
+	// Never batch with zero blobs (defensive check for invalid input)
+	if blobCount <= 0 {
+		return false
+	}
+
 	// Batch if we've reached maximum blobs
 	if blobCount >= c.MaxBlobs {
 		return true

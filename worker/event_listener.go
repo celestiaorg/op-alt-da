@@ -41,6 +41,17 @@ func NewEventListener(
 }
 
 func (l *EventListener) Run(ctx context.Context) error {
+	// Validate configuration to prevent runtime panics
+	if l.workerCfg.ReconcilePeriod <= 0 {
+		return fmt.Errorf("invalid reconcile period: %v (must be positive)", l.workerCfg.ReconcilePeriod)
+	}
+	if l.workerCfg.ReconcileAge <= 0 {
+		return fmt.Errorf("invalid reconcile age: %v (must be positive)", l.workerCfg.ReconcileAge)
+	}
+	if l.workerCfg.GetTimeout <= 0 {
+		return fmt.Errorf("invalid get timeout: %v (must be positive)", l.workerCfg.GetTimeout)
+	}
+
 	l.log.Info("Reconciliation worker starting (using Get operations only)",
 		"reconcile_period", l.workerCfg.ReconcilePeriod,
 		"reconcile_age", l.workerCfg.ReconcileAge,

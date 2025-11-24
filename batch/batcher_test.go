@@ -1,15 +1,14 @@
-package unit
+package batch
 
 import (
 	"bytes"
 	"testing"
 
-	"github.com/celestiaorg/op-alt-da/batch"
 	"github.com/celestiaorg/op-alt-da/db"
 )
 
-func testConfig() *batch.Config {
-	return batch.DefaultConfig()
+func testConfig() *Config {
+	return DefaultConfig()
 }
 
 func TestPackBlobs_SingleBlob(t *testing.T) {
@@ -21,9 +20,9 @@ func TestPackBlobs_SingleBlob(t *testing.T) {
 		},
 	}
 
-	packed, err := batch.PackBlobs(blobs, cfg)
+	packed, err := PackBlobs(blobs, cfg)
 	if err != nil {
-		t.Fatalf("batch.PackBlobs failed: %v", err)
+		t.Fatalf("PackBlobs failed: %v", err)
 	}
 
 	// Verify format: [count(4)] [size(4)] [data]
@@ -46,9 +45,9 @@ func TestPackBlobs_MultipleBlobs(t *testing.T) {
 		{ID: 3, Data: []byte("blob3")},
 	}
 
-	packed, err := batch.PackBlobs(blobs, cfg)
+	packed, err := PackBlobs(blobs, cfg)
 	if err != nil {
-		t.Fatalf("batch.PackBlobs failed: %v", err)
+		t.Fatalf("PackBlobs failed: %v", err)
 	}
 
 	if len(packed) == 0 {
@@ -65,15 +64,15 @@ func TestPackUnpack_RoundTrip(t *testing.T) {
 	}
 
 	// Pack
-	packed, err := batch.PackBlobs(originalBlobs, cfg)
+	packed, err := PackBlobs(originalBlobs, cfg)
 	if err != nil {
-		t.Fatalf("batch.PackBlobs failed: %v", err)
+		t.Fatalf("PackBlobs failed: %v", err)
 	}
 
 	// Unpack
-	unpacked, err := batch.UnpackBlobs(packed, cfg)
+	unpacked, err := UnpackBlobs(packed, cfg)
 	if err != nil {
-		t.Fatalf("batch.UnpackBlobs failed: %v", err)
+		t.Fatalf("UnpackBlobs failed: %v", err)
 	}
 
 	// Verify count
@@ -93,7 +92,7 @@ func TestPackBlobs_EmptyList(t *testing.T) {
 	cfg := testConfig()
 	blobs := []*db.Blob{}
 
-	_, err := batch.PackBlobs(blobs, cfg)
+	_, err := PackBlobs(blobs, cfg)
 	if err == nil {
 		t.Error("Expected error for empty blob list")
 	}
@@ -110,7 +109,7 @@ func TestPackBlobs_TooManyBlobs(t *testing.T) {
 		}
 	}
 
-	_, err := batch.PackBlobs(blobs, cfg)
+	_, err := PackBlobs(blobs, cfg)
 	if err == nil {
 		t.Error("Expected error for too many blobs")
 	}
@@ -124,7 +123,7 @@ func TestPackBlobs_TooLarge(t *testing.T) {
 		{ID: 1, Data: largeData},
 	}
 
-	_, err := batch.PackBlobs(blobs, cfg)
+	_, err := PackBlobs(blobs, cfg)
 	if err == nil {
 		t.Error("Expected error for oversized batch")
 	}
@@ -133,21 +132,21 @@ func TestPackBlobs_TooLarge(t *testing.T) {
 func TestUnpackBlobs_InvalidData(t *testing.T) {
 	cfg := testConfig()
 	// Too short
-	_, err := batch.UnpackBlobs([]byte{0, 0, 0}, cfg)
+	_, err := UnpackBlobs([]byte{0, 0, 0}, cfg)
 	if err == nil {
 		t.Error("Expected error for invalid data")
 	}
 
 	// Zero count
 	invalidCount := []byte{0, 0, 0, 0}
-	_, err = batch.UnpackBlobs(invalidCount, cfg)
+	_, err = UnpackBlobs(invalidCount, cfg)
 	if err == nil {
 		t.Error("Expected error for zero count")
 	}
 
 	// Count too large
 	tooManyBlobs := []byte{0, 0, 0, 100} // 100 blobs but no data
-	_, err = batch.UnpackBlobs(tooManyBlobs, cfg)
+	_, err = UnpackBlobs(tooManyBlobs, cfg)
 	if err == nil {
 		t.Error("Expected error for incomplete data")
 	}
@@ -207,15 +206,15 @@ func TestPackUnpack_VariousSizes(t *testing.T) {
 			}
 
 			// Pack
-			packed, err := batch.PackBlobs(blobs, cfg)
+			packed, err := PackBlobs(blobs, cfg)
 			if err != nil {
-				t.Fatalf("batch.PackBlobs failed: %v", err)
+				t.Fatalf("PackBlobs failed: %v", err)
 			}
 
 			// Unpack
-			unpacked, err := batch.UnpackBlobs(packed, cfg)
+			unpacked, err := UnpackBlobs(packed, cfg)
 			if err != nil {
-				t.Fatalf("batch.UnpackBlobs failed: %v", err)
+				t.Fatalf("UnpackBlobs failed: %v", err)
 			}
 
 			// Verify
@@ -243,17 +242,19 @@ func TestPackUnpack_MaxBlobs(t *testing.T) {
 		}
 	}
 
-	packed, err := batch.PackBlobs(blobs, cfg)
+	packed, err := PackBlobs(blobs, cfg)
 	if err != nil {
-		t.Fatalf("batch.PackBlobs failed: %v", err)
+		t.Fatalf("PackBlobs failed: %v", err)
 	}
 
-	unpacked, err := batch.UnpackBlobs(packed, cfg)
+	unpacked, err := UnpackBlobs(packed, cfg)
 	if err != nil {
-		t.Fatalf("batch.UnpackBlobs failed: %v", err)
+		t.Fatalf("UnpackBlobs failed: %v", err)
 	}
 
 	if len(unpacked) != cfg.MaxBlobs {
 		t.Errorf("Expected %d blobs, got %d", cfg.MaxBlobs, len(unpacked))
 	}
 }
+
+
