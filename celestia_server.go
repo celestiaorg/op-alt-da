@@ -58,7 +58,7 @@ type CelestiaServer struct {
 	metricsRegistry *prometheus.Registry
 	celestiaMetrics *metrics.CelestiaMetrics
 
-	// Time-to-availability tracking
+	// Time-to-availability tracking (Option A)
 	// Maps commitment hex string -> first request time
 	firstRequestTimes sync.Map
 }
@@ -408,7 +408,7 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 			// Legacy metric (for compatibility)
 			s.celestiaMetrics.RecordHTTPRequest("get", duration)
 
-			// Record GET request with status code
+			// Option B: Record GET request with status code
 			s.celestiaMetrics.RecordGetRequest(rw.statusCode, duration)
 		}
 	}()
@@ -464,7 +464,7 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		"commitment_length", len(requestedCommitment),
 		"commitment_hex", hex.EncodeToString(requestedCommitment))
 
-	// Track first request time for this commitment (time-to-availability)
+	// Option A: Track first request time for this commitment (time-to-availability)
 	commitmentKey := hex.EncodeToString(requestedCommitment)
 	s.firstRequestTimes.LoadOrStore(commitmentKey, startTime)
 

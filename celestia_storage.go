@@ -28,52 +28,59 @@ type CelestiaBlobID struct {
 	ShareSize   uint32
 }
 
+const (
+	// VersionByte is the version byte for the GenericCommitment
+	VersionByte = 0x0c
+
+	// Blob ID layout constants
+	HeightSize      = 8
+	CommitmentSize  = 32
+	ShareOffsetSize = 4
+	ShareSizeSize   = 4
+	CompactIDSize   = HeightSize + CommitmentSize
+	FullIDSize      = HeightSize + CommitmentSize + ShareOffsetSize + ShareSizeSize
+)
+
 // MarshalBinary serializes the CelestiaBlobID struct into a byte slice.
 func (c *CelestiaBlobID) MarshalBinary() ([]byte, error) {
 	if c.isCompact {
-		id := make([]byte, 8+32)
-		binary.LittleEndian.PutUint64(id[0:8], c.Height)
-		copy(id[8:40], c.Commitment)
+		id := make([]byte, CompactIDSize)
+		binary.LittleEndian.PutUint64(id[0:HeightSize], c.Height)
+		copy(id[HeightSize:CompactIDSize], c.Commitment)
 		return id, nil
 	}
 
 	// Calculate the total length of the marshaled ID
-	id := make([]byte, 8+32+4+4)
+	id := make([]byte, FullIDSize)
 
-	binary.LittleEndian.PutUint64(id[0:8], c.Height)
-	copy(id[8:40], c.Commitment) // Commitment is 32 bytes
-	binary.LittleEndian.PutUint32(id[40:44], c.ShareOffset)
-	binary.LittleEndian.PutUint32(id[44:48], c.ShareSize)
+	binary.LittleEndian.PutUint64(id[0:HeightSize], c.Height)
+	copy(id[HeightSize:HeightSize+CommitmentSize], c.Commitment) // Commitment is 32 bytes
+	binary.LittleEndian.PutUint32(id[HeightSize+CommitmentSize:HeightSize+CommitmentSize+ShareOffsetSize], c.ShareOffset)
+	binary.LittleEndian.PutUint32(id[HeightSize+CommitmentSize+ShareOffsetSize:FullIDSize], c.ShareSize)
 
 	return id, nil
 }
 
 // UnmarshalBinary deserializes a byte slice into a CelestiaBlobID struct.
 func (c *CelestiaBlobID) UnmarshalBinary(data []byte) error {
-	// Expected length: 8 bytes for Height + 32 bytes for Commitment + 4 bytes for ShareOffset + 4 bytes for ShareSize
-	expectedLen := 8 + 32 + 4 + 4
-	if len(data) < expectedLen {
-		// Expected length: 8 bytes for Height + 32 bytes for Commitment
-		expectedLen = 8 + 32
-		if len(data) < expectedLen {
-			return fmt.Errorf("invalid ID length: expected at least %d bytes, got %d", expectedLen, len(data))
+	if len(data) < FullIDSize {
+		if len(data) < CompactIDSize {
+			return fmt.Errorf("invalid ID length: expected at least %d bytes, got %d", CompactIDSize, len(data))
 		}
-		c.Height = binary.LittleEndian.Uint64(data[0:8])
-		c.Commitment = make([]byte, 32)
-		copy(c.Commitment, data[8:40]) // Commitment is 32 bytes
+		c.Height = binary.LittleEndian.Uint64(data[0:HeightSize])
+		c.Commitment = make([]byte, CommitmentSize)
+		copy(c.Commitment, data[HeightSize:CompactIDSize])
 		return nil
 	}
 
-	c.Height = binary.LittleEndian.Uint64(data[0:8])
-	c.Commitment = make([]byte, 32)
-	copy(c.Commitment, data[8:40]) // Commitment is 32 bytes
-	c.ShareOffset = binary.LittleEndian.Uint32(data[40:44])
-	c.ShareSize = binary.LittleEndian.Uint32(data[44:48])
+	c.Height = binary.LittleEndian.Uint64(data[0:HeightSize])
+	c.Commitment = make([]byte, CommitmentSize)
+	copy(c.Commitment, data[HeightSize:HeightSize+CommitmentSize])
+	c.ShareOffset = binary.LittleEndian.Uint32(data[HeightSize+CommitmentSize : HeightSize+CommitmentSize+ShareOffsetSize])
+	c.ShareSize = binary.LittleEndian.Uint32(data[HeightSize+CommitmentSize+ShareOffsetSize : FullIDSize])
 
 	return nil
 }
-
-const VersionByte = 0x0c
 
 type TxClientConfig struct {
 	DefaultKeyName     string
@@ -108,12 +115,12 @@ func NewCelestiaStore(cfg RPCClientConfig) (*CelestiaStore, error) {
 	var blobClient blobAPI.Module
 	var err error
 	if cfg.TxClientConfig != nil {
-		logger.Info("Initializing Celestia client in TxClient mode",
+		logger.Info("Initializing Celestia client in TxClient mode (OPTION B: service provider)",
 			"rpc_url", cfg.URL,
 			"grpc_addr", cfg.TxClientConfig.CoreGRPCAddr)
 		blobClient, err = initTxClient(cfg)
 	} else {
-		logger.Info("Initializing Celestia client in RPC-only mode",
+		logger.Info("Initializing Celestia client in RPC-only mode (OPTION A: self-hosted node)",
 			"rpc_url", cfg.URL,
 			"auth_token_set", cfg.AuthToken != "")
 		blobClient, err = initRPCClient(cfg)
