@@ -363,7 +363,7 @@ OPTION A (Self-hosted Node): Set --celestia.auth-token
 OPTION B (Service Provider): Set --celestia.tx-client.keyring-path
   Example: --celestia.server https://rpc.endpoint --celestia.tx-client.core-grpc.addr grpc.endpoint:9090 --celestia.tx-client.keyring-path ~/.celestia-light-mocha-4/keys --celestia.tx-client.p2p-network mocha-4
 
-See .env.example for detailed configuration examples.`)
+See .env.example for detailed configuration examples`)
 	}
 
 	// S3 config validation (existing logic)
