@@ -214,18 +214,32 @@ func TestCelestiaStore_Get_InvalidKey(t *testing.T) {
 	}
 
 	tests := []struct {
-		name string
-		key  []byte
+		name             string
+		key              []byte
+		expectedErrorMsg string
 	}{
-		{"empty key", []byte{}},
-		{"too short", []byte{0x00}},
-		{"invalid format", []byte{0x00, 0x01, 0x02}},
+		{
+			name:             "empty key",
+			key:              []byte{},
+			expectedErrorMsg: "invalid commitment format: expected at least 2 bytes [alt-da_type][celestia_version]",
+		},
+		{
+			name:             "too short",
+			key:              []byte{0x00},
+			expectedErrorMsg: "invalid commitment format: expected at least 2 bytes [alt-da_type][celestia_version]",
+		},
+		{
+			name:             "invalid format",
+			key:              []byte{0x00, 0x01, 0x02},
+			expectedErrorMsg: "failed to unmarshal blob ID",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := store.Get(context.Background(), tt.key)
 			assert.Error(t, err, "should reject invalid key")
+			assert.Contains(t, err.Error(), tt.expectedErrorMsg, "error message should be informative")
 		})
 	}
 }

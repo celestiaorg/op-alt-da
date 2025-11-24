@@ -29,7 +29,23 @@ type CelestiaBlobID struct {
 }
 
 const (
-	// VersionByte is the version byte for the GenericCommitment
+	// VersionByte is the Celestia-specific version byte used in commitment encoding.
+	//
+	// Commitment Format (follows Optimism Alt-DA specification):
+	//   [alt-da_type_byte][celestia_version_byte][celestia_blob_id]
+	//   └─────────────────┴──────────────────────┴────────────────────
+	//    Added by altda     VersionByte (0x0c)     Height+Commitment+...
+	//    GenericCommitment
+	//
+	// The two-layer versioning scheme enables:
+	// 1. Alt-DA type byte: Multi-provider interoperability (Celestia, EigenDA, Avail, etc.)
+	// 2. Celestia version byte: Format evolution within Celestia (currently 0x0c)
+	//
+	// When constructing commitments manually, use:
+	//   altda.NewGenericCommitment(append([]byte{VersionByte}, blobID...)).Encode()
+	//
+	// In practice, commitments should be obtained from Put() responses rather than
+	// constructed manually, as the format may evolve.
 	VersionByte = 0x0c
 
 	// Blob ID layout constants
@@ -218,13 +234,26 @@ func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, d.GetTimeout)
 	defer cancel()
 
-	// Validate key length (must have at least 2 bytes for frame version and altda version)
+	// Validate key format: [alt-da_type_byte][celestia_version_byte][blob_id]
+	//
+	// The key follows Optimism's Alt-DA specification format:
+	// - Byte 0: Commitment type byte (added by altda.GenericCommitment.Encode())
+	//           Identifies the DA provider (Celestia, EigenDA, Avail, etc.)
+	// - Byte 1: Celestia-specific version byte (VersionByte = 0x0c)
+	//           Versions the Celestia blob ID format for forward compatibility
+	// - Bytes 2+: Celestia blob ID (height + commitment + optional share info)
+	//
+	// This two-layer versioning enables:
+	// 1. Multi-provider interoperability (Alt-DA type byte)
+	// 2. Format evolution within Celestia (version byte)
 	if len(key) < 2 {
-		return nil, fmt.Errorf("invalid key length: expected at least 2 bytes, got %d", len(key))
+		return nil, fmt.Errorf("invalid commitment format: expected at least 2 bytes [alt-da_type][celestia_version], got %d bytes. "+
+			"Commitment must be obtained from Put() response or constructed via altda.NewGenericCommitment(append([]byte{VersionByte}, blobID...)).Encode()",
+			len(key))
 	}
 
 	var blobID CelestiaBlobID
-	// Skip first 2 bytes which are frame version and altda version
+	// Skip first 2 bytes (alt-da type + celestia version) to get the blob ID
 	if err := blobID.UnmarshalBinary(key[2:]); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal blob ID: %w", err)
 	}
