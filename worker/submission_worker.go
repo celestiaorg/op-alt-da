@@ -241,8 +241,11 @@ func (w *SubmissionWorker) selectBlobsForBatch(blobs []*db.Blob) []*db.Blob {
 }
 
 func (w *SubmissionWorker) submitBatch(ctx context.Context, batchCommitment, packedData []byte) (uint64, error) {
-	// Create Celestia blob
-	celestiaBlob, err := blob.NewBlobV0(w.namespace, packedData)
+	// Create Celestia blob with V1 (signed) for CIP-21 signer verification
+	// BlobV1 requires a 20-byte signer placeholder (actual signer added by Submit)
+	// Use dummy 20-byte signer - the keyring will override this during Submit()
+	dummySigner := make([]byte, 20)
+	celestiaBlob, err := blob.NewBlobV1(w.namespace, packedData, dummySigner)
 	if err != nil {
 		return 0, fmt.Errorf("create celestia blob: %w", err)
 	}

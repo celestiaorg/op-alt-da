@@ -46,6 +46,7 @@ type CelestiaServer struct {
 	// Workers
 	submissionWorker *worker.SubmissionWorker
 	eventListener    *worker.EventListener
+	backfillWorker   *worker.BackfillWorker
 
 	// HTTP server
 	httpServer *http.Server
@@ -106,15 +107,18 @@ func NewCelestiaServer(
 	}
 
 	// Create workers with metrics
-	server.submissionWorker = worker.NewSubmissionWorker(
-		store,
-		celestiaStore.Client,
-		celestiaStore.Namespace,
-		batchCfg,
-		workerCfg,
-		celestiaMetrics,
-		log.New("component", "submission_worker"),
-	)
+	// Only create submission worker if not in read-only mode
+	if !workerCfg.ReadOnly {
+		server.submissionWorker = worker.NewSubmissionWorker(
+			store,
+			celestiaStore.Client,
+			celestiaStore.Namespace,
+			batchCfg,
+			workerCfg,
+			celestiaMetrics,
+			log.New("component", "submission_worker"),
+		)
+	}
 
 	server.eventListener = worker.NewEventListener(
 		store,
@@ -124,6 +128,19 @@ func NewCelestiaServer(
 		celestiaMetrics,
 		log.New("component", "event_listener"),
 	)
+
+	// Create backfill worker if enabled
+	if workerCfg.BackfillEnabled {
+		server.backfillWorker = worker.NewBackfillWorker(
+			store,
+			celestiaStore.Client,
+			celestiaStore.Namespace,
+			batchCfg,
+			workerCfg,
+			celestiaMetrics,
+			log.New("component", "backfill_worker"),
+		)
+	}
 
 	return server
 }
@@ -160,14 +177,18 @@ func (s *CelestiaServer) Start(ctx context.Context) error {
 		return nil
 	})
 
-	// Start submission worker
-	g.Go(func() error {
-		s.log.Info("Starting submission worker")
-		if err := s.submissionWorker.Run(ctx); err != nil && err != context.Canceled {
-			return fmt.Errorf("submission worker error: %w", err)
-		}
-		return nil
-	})
+	// Start submission worker (only if not in read-only mode)
+	if s.submissionWorker != nil {
+		g.Go(func() error {
+			s.log.Info("Starting submission worker")
+			if err := s.submissionWorker.Run(ctx); err != nil && err != context.Canceled {
+				return fmt.Errorf("submission worker error: %w", err)
+			}
+			return nil
+		})
+	} else {
+		s.log.Info("Submission worker disabled (read-only mode)")
+	}
 
 	// Start reconciliation worker
 	g.Go(func() error {
@@ -177,6 +198,17 @@ func (s *CelestiaServer) Start(ctx context.Context) error {
 		}
 		return nil
 	})
+
+	// Start backfill worker if enabled
+	if s.backfillWorker != nil {
+		g.Go(func() error {
+			s.log.Info("Starting backfill worker")
+			if err := s.backfillWorker.Run(ctx); err != nil && err != context.Canceled {
+				return fmt.Errorf("backfill worker error: %w", err)
+			}
+			return nil
+		})
+	}
 
 	// Start metrics server if enabled
 	if s.metricsEnabled {
@@ -239,6 +271,13 @@ func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 			s.celestiaMetrics.RecordHTTPRequest("put", time.Since(startTime))
 		}
 	}()
+
+	// Reject PUT requests in read-only mode
+	if s.workerCfg.ReadOnly {
+		s.log.Warn("PUT request rejected - server is in read-only mode")
+		http.Error(w, "Server is in read-only mode. PUT operations are not allowed.", http.StatusForbidden)
+		return
+	}
 
 	// Limit request body size to prevent DoS attacks
 	// Use max batch size + 10% buffer for overhead

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/urfave/cli/v2"
@@ -37,6 +38,15 @@ const (
 	WorkerReconcilePeriodFlagName = "worker.reconcile-period"
 	WorkerReconcileAgeFlagName    = "worker.reconcile-age"
 	WorkerGetTimeoutFlagName      = "worker.get-timeout"
+
+	// Read-only configuration
+	ReadOnlyFlagName      = "read-only"
+	TrustedSignerFlagName = "trusted-signer"
+
+	// Backfill configuration
+	BackfillEnabledFlagName = "backfill.enabled"
+	BackfillStartHeightFlagName = "backfill.start-height"
+	BackfillPeriodFlagName = "backfill.period"
 )
 
 var (
@@ -130,6 +140,36 @@ var (
 		Value:   30 * time.Second,
 		EnvVars: prefixEnvVars("WORKER_GET_TIMEOUT"),
 	}
+	ReadOnlyFlag = &cli.BoolFlag{
+		Name:    ReadOnlyFlagName,
+		Usage:   "run server in read-only mode (blocks PUT requests, disables submission worker)",
+		Value:   false,
+		EnvVars: prefixEnvVars("READ_ONLY"),
+	}
+	TrustedSignerFlag = &cli.StringFlag{
+		Name:    TrustedSignerFlagName,
+		Usage:   "Comma-separated Celestia addresses of trusted write servers (CIP-21 signer verification for HA failover)",
+		Value:   "",
+		EnvVars: prefixEnvVars("TRUSTED_SIGNER"),
+	}
+	BackfillEnabledFlag = &cli.BoolFlag{
+		Name:    BackfillEnabledFlagName,
+		Usage:   "enable backfill worker for read-only servers (syncs from Celestia)",
+		Value:   false,
+		EnvVars: prefixEnvVars("BACKFILL_ENABLED"),
+	}
+	BackfillStartHeightFlag = &cli.Uint64Flag{
+		Name:    BackfillStartHeightFlagName,
+		Usage:   "Celestia block height to start backfilling from (0 = latest)",
+		Value:   0,
+		EnvVars: prefixEnvVars("BACKFILL_START_HEIGHT"),
+	}
+	BackfillPeriodFlag = &cli.DurationFlag{
+		Name:    BackfillPeriodFlagName,
+		Usage:   "how often backfill worker scans for new Celestia blocks",
+		Value:   15 * time.Second,
+		EnvVars: prefixEnvVars("BACKFILL_PERIOD"),
+	}
 )
 
 func StartDAServer(cliCtx *cli.Context) error {
@@ -206,6 +246,19 @@ func StartDAServer(cliCtx *cli.Context) error {
 		"max_size_mb", cliCtx.Int(BatchMaxSizeFlagName),
 		"min_size_kb", cliCtx.Int(BatchMinSizeFlagName))
 
+	// Parse trusted signers from comma-separated string
+	var trustedSigners []string
+	trustedSignerStr := cliCtx.String(TrustedSignerFlagName)
+	if trustedSignerStr != "" {
+		// Split by comma and trim whitespace
+		for _, signer := range strings.Split(trustedSignerStr, ",") {
+			trimmed := strings.TrimSpace(signer)
+			if trimmed != "" {
+				trustedSigners = append(trustedSigners, trimmed)
+			}
+		}
+	}
+
 	// Create worker configuration
 	workerCfg := &worker.Config{
 		SubmitPeriod:    cliCtx.Duration(WorkerSubmitPeriodFlagName),
@@ -215,16 +268,31 @@ func StartDAServer(cliCtx *cli.Context) error {
 		ReconcilePeriod: cliCtx.Duration(WorkerReconcilePeriodFlagName),
 		ReconcileAge:    cliCtx.Duration(WorkerReconcileAgeFlagName),
 		GetTimeout:      cliCtx.Duration(WorkerGetTimeoutFlagName),
+		ReadOnly:        cliCtx.Bool(ReadOnlyFlagName),
+		TrustedSigners:  trustedSigners,
+		BackfillEnabled: cliCtx.Bool(BackfillEnabledFlagName),
+		StartHeight:     cliCtx.Uint64(BackfillStartHeightFlagName),
+		BackfillPeriod:  cliCtx.Duration(BackfillPeriodFlagName),
+	}
+
+	// Validate worker configuration
+	if err := validateWorkerConfig(workerCfg); err != nil {
+		return fmt.Errorf("invalid worker configuration: %w", err)
 	}
 
 	l.Info("Worker configuration",
+		"read_only", workerCfg.ReadOnly,
+		"trusted_signers", strings.Join(workerCfg.TrustedSigners, ","),
 		"submit_period", workerCfg.SubmitPeriod,
 		"submit_timeout", workerCfg.SubmitTimeout,
 		"max_retries", workerCfg.MaxRetries,
 		"max_blob_wait_time", workerCfg.MaxBlobWaitTime,
 		"reconcile_period", workerCfg.ReconcilePeriod,
 		"reconcile_age", workerCfg.ReconcileAge,
-		"get_timeout", workerCfg.GetTimeout)
+		"get_timeout", workerCfg.GetTimeout,
+		"backfill_enabled", workerCfg.BackfillEnabled,
+		"start_height", workerCfg.StartHeight,
+		"backfill_period", workerCfg.BackfillPeriod)
 
 	// Create server
 	server := celestia.NewCelestiaServer(
@@ -303,5 +371,26 @@ func StartDAServer(cliCtx *cli.Context) error {
 	}
 
 	l.Info("Server stopped gracefully")
+	return nil
+}
+
+// validateWorkerConfig validates worker configuration for common mistakes
+func validateWorkerConfig(cfg *worker.Config) error {
+	// Warn if read-only mode is enabled but backfill is not
+	if cfg.ReadOnly && !cfg.BackfillEnabled {
+		return fmt.Errorf("read-only mode requires backfill to be enabled (set --backfill.enabled=true)")
+	}
+
+	// Strongly recommend trusted signers in read-only mode for security (CIP-21)
+	if cfg.ReadOnly && len(cfg.TrustedSigners) == 0 {
+		return fmt.Errorf("read-only mode requires trusted signers for security (set --trusted-signer=<address1>,<address2>,...). Without it, malicious actors can inject junk data into your namespace")
+	}
+
+	// Warn if backfill is enabled without specifying a start height
+	if cfg.BackfillEnabled && cfg.StartHeight == 0 {
+		// This is just a warning - starting from 0 means "latest"
+		// We don't return an error here
+	}
+
 	return nil
 }

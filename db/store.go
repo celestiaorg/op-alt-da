@@ -536,3 +536,75 @@ func (s *BlobStore) GetStats(ctx context.Context) (map[string]interface{}, error
 
 	return stats, nil
 }
+
+// BeginTx starts a new database transaction
+func (s *BlobStore) BeginTx(ctx context.Context) (*sql.Tx, error) {
+	return s.db.BeginTx(ctx, nil)
+}
+
+// InsertBatchTx inserts a batch record within an existing transaction and returns the batch ID
+func (s *BlobStore) InsertBatchTx(ctx context.Context, tx *sql.Tx, batch *Batch) (int64, error) {
+	var height sql.NullInt64
+	if batch.CelestiaHeight != nil {
+		height = sql.NullInt64{Int64: int64(*batch.CelestiaHeight), Valid: true}
+	}
+
+	var confirmedAt sql.NullTime
+	if batch.ConfirmedAt != nil {
+		confirmedAt = sql.NullTime{Time: *batch.ConfirmedAt, Valid: true}
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO batches (
+			batch_commitment, batch_data, batch_size, blob_count,
+			celestia_height, status, created_at, submitted_at, confirmed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, batch.BatchCommitment, batch.BatchData, batch.BatchSize, batch.BlobCount,
+		height, batch.Status, batch.CreatedAt, batch.SubmittedAt, confirmedAt)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return result.LastInsertId()
+}
+
+// InsertBlobTx inserts a blob record within an existing transaction
+func (s *BlobStore) InsertBlobTx(ctx context.Context, tx *sql.Tx, blob *Blob) error {
+	var batchID sql.NullInt64
+	if blob.BatchID != nil {
+		batchID = sql.NullInt64{Int64: *blob.BatchID, Valid: true}
+	}
+
+	var batchIndex sql.NullInt64
+	if blob.BatchIndex != nil {
+		batchIndex = sql.NullInt64{Int64: int64(*blob.BatchIndex), Valid: true}
+	}
+
+	var height sql.NullInt64
+	if blob.CelestiaHeight != nil {
+		height = sql.NullInt64{Int64: int64(*blob.CelestiaHeight), Valid: true}
+	}
+
+	var submittedAt sql.NullTime
+	if blob.SubmittedAt != nil {
+		submittedAt = sql.NullTime{Time: *blob.SubmittedAt, Valid: true}
+	}
+
+	var confirmedAt sql.NullTime
+	if blob.ConfirmedAt != nil {
+		confirmedAt = sql.NullTime{Time: *blob.ConfirmedAt, Valid: true}
+	}
+
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO blobs (
+			commitment, namespace, blob_data, blob_size, status,
+			batch_id, batch_index, celestia_height,
+			created_at, submitted_at, confirmed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, blob.Commitment, blob.Namespace, blob.Data, blob.Size, blob.Status,
+		batchID, batchIndex, height,
+		blob.CreatedAt, submittedAt, confirmedAt)
+
+	return err
+}

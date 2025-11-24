@@ -14,6 +14,15 @@ type Config struct {
 	ReconcilePeriod time.Duration // How often to reconcile unconfirmed batches
 	ReconcileAge    time.Duration // Age threshold for reconciliation
 	GetTimeout      time.Duration // Timeout for Celestia get operations
+
+	// Read-only mode settings
+	ReadOnly        bool     // If true, reject PUT requests and disable submission worker
+	TrustedSigners  []string // Celestia addresses of trusted write servers (for HA failover via CIP-21)
+
+	// Backfill worker settings
+	BackfillEnabled bool          // Enable backfill worker for read-only servers
+	StartHeight     uint64        // Celestia block height to start syncing from
+	BackfillPeriod  time.Duration // How often to scan for new Celestia blocks
 }
 
 // DefaultConfig returns default worker configuration
@@ -26,5 +35,10 @@ func DefaultConfig() *Config {
 		ReconcilePeriod: 30 * time.Second,
 		ReconcileAge:    2 * time.Minute,
 		GetTimeout:      30 * time.Second,
+		ReadOnly:        false,
+		TrustedSigners:  []string{}, // Empty = accept all blobs (insecure for read-only mode)
+		BackfillEnabled: false,
+		StartHeight:     0,
+		BackfillPeriod:  15 * time.Second, // Check for new blocks every 15s
 	}
 }

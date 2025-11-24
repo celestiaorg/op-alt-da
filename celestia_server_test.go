@@ -19,6 +19,7 @@ import (
 	"github.com/celestiaorg/op-alt-da/batch"
 	"github.com/celestiaorg/op-alt-da/commitment"
 	"github.com/celestiaorg/op-alt-da/db"
+	"github.com/celestiaorg/op-alt-da/worker"
 )
 
 func setupServerTest(t *testing.T) (*CelestiaServer, *db.BlobStore, func()) {
@@ -54,6 +55,7 @@ func setupServerTest(t *testing.T) (*CelestiaServer, *db.BlobStore, func()) {
 		store:     store,
 		namespace: namespace,
 		batchCfg:  batch.DefaultConfig(),
+		workerCfg: worker.DefaultConfig(),
 	}
 
 	cleanup := func() {

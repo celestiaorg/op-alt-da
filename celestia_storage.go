@@ -244,7 +244,10 @@ func (d *CelestiaStore) Put(ctx context.Context, data []byte) ([]byte, []byte, e
 }
 
 func (d *CelestiaStore) CreateCommitment(data []byte) ([]byte, error) {
-	b, err := blob.NewBlob(libshare.ShareVersionZero, d.Namespace, data, nil)
+	// Use BlobV1 for signed blobs (CIP-21)
+	// BlobV1 requires 20-byte signer (dummy for commitment computation)
+	dummySigner := make([]byte, 20)
+	b, err := blob.NewBlobV1(d.Namespace, data, dummySigner)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +264,10 @@ func submitAndCreateBlobID(
 	data []byte,
 	compactBlobID bool,
 ) ([]byte, []byte, error) {
-	b, err := blob.NewBlob(libshare.ShareVersionZero, namespace, data, nil)
+	// Use BlobV1 for signed blobs (CIP-21)
+	// BlobV1 requires 20-byte signer (actual signer added by Submit from keyring)
+	dummySigner := make([]byte, 20)
+	b, err := blob.NewBlobV1(namespace, data, dummySigner)
 	if err != nil {
 		return nil, nil, err
 	}

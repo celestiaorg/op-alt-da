@@ -409,7 +409,8 @@ func TestEventListener_Reconciliation(t *testing.T) {
 	mock := &mockCelestiaAPI{
 		getFunc: func(ctx context.Context, height uint64, ns libshare.Namespace, commitment blob.Commitment) (*blob.Blob, error) {
 			// Return blob to simulate successful Get
-			b, _ := blob.NewBlobV0(namespace, []byte("data"))
+			dummySigner := make([]byte, 20)
+			b, _ := blob.NewBlobV1(namespace, []byte("data"), dummySigner)
 			return b, nil
 		},
 	}
