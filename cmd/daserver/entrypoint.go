@@ -22,6 +22,7 @@ import (
 )
 
 const (
+	ConfigFileFlagName     = "config"
 	DBPathFlagName         = "db.path"
 	BackupEnabledFlagName  = "backup.enabled"
 	BackupIntervalFlagName = "backup.interval"
@@ -53,6 +54,12 @@ const (
 )
 
 var (
+	ConfigFileFlag = &cli.StringFlag{
+		Name:    ConfigFileFlagName,
+		Usage:   "path to TOML configuration file (takes precedence over env vars and CLI flags)",
+		Value:   "",
+		EnvVars: prefixEnvVars("CONFIG"),
+	}
 	DBPathFlag = &cli.StringFlag{
 		Name:    DBPathFlagName,
 		Usage:   "path to SQLite database file",
@@ -176,6 +183,66 @@ var (
 )
 
 func StartDAServer(cliCtx *cli.Context) error {
+	// Initialize logger early for warnings
+	logCfg := oplog.ReadCLIConfig(cliCtx)
+	l := oplog.NewLogger(oplog.AppOut(cliCtx), logCfg)
+
+	// Check if TOML config file is specified
+	configFile := cliCtx.String(ConfigFileFlagName)
+	if configFile != "" {
+		l.Info("Loading configuration from TOML file", "path", configFile)
+
+		// Load and validate TOML config
+		tomlCfg, err := LoadConfig(configFile)
+		if err != nil {
+			return fmt.Errorf("failed to load config file '%s': %w", configFile, err)
+		}
+		if err := tomlCfg.Validate(); err != nil {
+			return fmt.Errorf("invalid config in '%s': %w", configFile, err)
+		}
+
+		l.Info("✓ TOML configuration loaded and validated successfully")
+
+		// Warn about conflicting environment variables
+		prefix := "OP_ALTDA_"
+		hasConflicts := false
+		for _, envLine := range os.Environ() {
+			// envLine format is "KEY=value"
+			keyName := envLine
+			if idx := strings.Index(envLine, "="); idx > 0 {
+				keyName = envLine[:idx]
+			}
+
+			if len(keyName) > len(prefix) && keyName[:len(prefix)] == prefix {
+				if keyName != prefix+"CONFIG" { // Ignore the CONFIG var itself
+					if !hasConflicts {
+						l.Warn("⚠️  CONFIGURATION CONFLICT DETECTED ⚠️")
+						l.Warn("TOML configuration file is specified, but environment variables are also set.")
+						l.Warn("TOML file takes precedence. The following environment variables will be IGNORED:")
+						hasConflicts = true
+					}
+					l.Warn("  → " + keyName)
+				}
+			}
+		}
+		if hasConflicts {
+			l.Warn("To fix: Remove conflicting environment variables or use TOML configuration exclusively")
+			l.Warn("========================================")
+		}
+
+		// Convert TOML config to environment variables (OVERWRITE any existing)
+		// TOML is the source of truth when --config is specified
+		envVars := tomlCfg.ConvertToEnvVars()
+		for key, value := range envVars {
+			os.Setenv(key, value) // Overwrite, don't check if exists
+		}
+
+		l.Info("Configuration source: TOML file", "path", configFile)
+	} else {
+		l.Info("Configuration source: Environment variables and CLI flags")
+		l.Info("Tip: Use --config config.toml for production deployments")
+	}
+
 	if err := CheckRequired(cliCtx); err != nil {
 		return err
 	}
@@ -185,8 +252,7 @@ func StartDAServer(cliCtx *cli.Context) error {
 		return err
 	}
 
-	logCfg := oplog.ReadCLIConfig(cliCtx)
-	l := oplog.NewLogger(oplog.AppOut(cliCtx), logCfg)
+	// Set global log handler (logger already initialized above)
 	oplog.SetGlobalLogHandler(l.Handler())
 
 	l.Info("Initializing Async Alt-DA server...")

@@ -1,0 +1,238 @@
+# Celestia Alt-DA Server Configuration
+# ==============================================================================
+# IMPORTANT: CHOOSE YOUR DEPLOYMENT MODE
+# ==============================================================================
+#
+# You have TWO options for connecting to Celestia:
+#
+# OPTION B: Service Provider (e.g., Quicknode) - RECOMMENDED
+#   - No local node required
+#   - Uses RPC endpoint for reads (Get, GetAll, Subscribe)
+#   - Uses gRPC endpoint for writes (Submit transactions via client-tx)
+#   - Requires keyring for transaction signing
+#   - Easiest setup for production
+#
+# OPTION A: Local Celestia Node (Light/Bridge Node)
+#   - Run your own celestia-node locally
+#   - Use RPC endpoint for both reads and writes
+#   - Requires running local infrastructure
+#
+# Configure ONLY the section for your chosen mode below.
+# ==============================================================================
+
+# ==============================================================================
+# BASIC OP-ALT-DA SERVER CONFIGURATION (Required for both options)
+# ==============================================================================
+
+# Server listening address
+addr = "127.0.0.1"
+
+# Server listening port
+port = 3100
+
+# SQLite database file path
+db_path = "./data/blobs.db"
+
+# Log level: DEBUG, INFO, WARN, ERROR
+log_level = "INFO"
+
+# Log format: text, terminal, logfmt, json, json-pretty
+log_format = "text"
+
+# Enable colored log output
+log_color = false
+
+# Show process ID in logs
+log_pid = false
+
+# ==============================================================================
+# CELESTIA CONFIGURATION
+# ==============================================================================
+
+[celestia]
+# Celestia namespace (29 bytes hex, version 0 requires 18 leading zeros)
+# Generate with: 00000000000000000000000000000000000000$(openssl rand -hex 10)
+namespace = ""
+
+# DA Node RPC server URL (for reads: Get, GetAll, Subscribe)
+# Option A: http://localhost:26658
+# Option B: https://your-endpoint.celestia-mocha.quiknode.pro/your-auth-token
+da_rpc_server = ""
+
+# RPC auth token (Option A only - from ~/.celestia-*/keys/keyring-test/auth-token)
+# Leave empty for Option B
+auth_token = ""
+
+# RPC TLS enabled
+tls_enabled = true
+
+# Use compact blob IDs (recommended: true for smaller commitments)
+blobid_compact = true
+
+# ==============================================================================
+# CELESTIA TX CLIENT CONFIGURATION (Option B only - Service Provider)
+# ==============================================================================
+# Configure this section if using a service provider (Quicknode, etc.)
+# Leave empty if using Option A (local node)
+
+[celestia.tx_client]
+# gRPC endpoint for transaction submission
+# Example: your-endpoint.celestia-mocha.quiknode.pro:9090
+core_grpc_addr = ""
+
+# gRPC auth token (if required by provider)
+core_grpc_auth_token = ""
+
+# gRPC TLS enabled
+core_grpc_tls_enabled = true
+
+# Keyring key name
+default_key_name = "my_celes_key"
+
+# Keyring path (where your keys are stored)
+# Example: ~/.celestia-light-mocha-4/keys
+# Initialize with: celestia light init --p2p.network mocha-4
+# Create key with: celestia-appd keys add my_key --keyring-backend test --home ~/.celestia-light-mocha-4
+keyring_path = ""
+
+# P2P network: mocha-4, arabica-11, mainnet
+p2p_network = "mocha-4"
+
+# ==============================================================================
+# BATCH CONFIGURATION
+# ==============================================================================
+# Control how blobs are batched before submission to Celestia
+# Tune these as Celestia throughput grows
+
+[batch]
+# Minimum number of blobs before creating a batch
+min_blobs = 10
+
+# Maximum number of blobs per batch
+max_blobs = 50
+
+# Target number of blobs to fetch for batching
+target_blobs = 20
+
+# Maximum batch size in MB
+max_size_mb = 1
+
+# Minimum batch size in KB before forcing submission
+min_size_kb = 500
+
+# ==============================================================================
+# WORKER CONFIGURATION
+# ==============================================================================
+# Control worker timeouts and retry behavior
+# Optimized for Celestia block time (~6 seconds)
+
+[worker]
+# How often submission worker checks for pending blobs
+# Recommended: 6s (aligned with Celestia block time)
+submit_period = "6s"
+
+# Timeout for submitting batch to Celestia
+submit_timeout = "60s"
+
+# Maximum retries for failed submissions
+max_retries = 10
+
+# Max time a blob waits before forced submission
+# Recommended: 12s (2 blocks - allows batching but prevents long waits)
+max_blob_wait_time = "12s"
+
+# How often event listener reconciles unconfirmed batches
+# Recommended: 6s (check every Celestia block for confirmations)
+reconcile_period = "6s"
+
+# Age threshold for reconciling unconfirmed batches
+# Recommended: 12s (2 blocks - enough time for Celestia confirmation)
+reconcile_age = "12s"
+
+# Timeout for Celestia Get operations during reconciliation
+get_timeout = "30s"
+
+# Comma-separated Celestia addresses (hex format) of trusted write servers
+# Example: ["a1b2c3d4e5f6789012345678901234567890abcd", "1234567890abcdef1234567890abcdef12345678"]
+# REQUIRED for read-only mode to prevent Woods attack
+# Get your writer's signer address from logs: "Celestia signer address configured"
+trusted_signers = []
+
+# ==============================================================================
+# READ-ONLY MODE CONFIGURATION
+# ==============================================================================
+# Run server in read-only mode (no writes to Celestia)
+# Requires trusted_signers to be configured for security
+
+read_only = false
+
+# ==============================================================================
+# BACKFILL CONFIGURATION
+# ==============================================================================
+# Backfill historical blobs from Celestia into local database
+
+[backfill]
+# Enable backfill on startup
+enabled = false
+
+# Starting Celestia block height for backfill
+start_height = 1
+
+# Ending Celestia block height for backfill (0 = current chain tip)
+end_height = 0
+
+# ==============================================================================
+# S3 BACKUP CONFIGURATION (Optional)
+# ==============================================================================
+# Enable periodic database backups to S3 for disaster recovery
+
+[backup]
+# Enable periodic S3 database backups
+enabled = false
+
+# Backup interval (examples: 1h, 30m, 6h)
+interval = "1h"
+
+[s3]
+# S3 authentication type: iam or static
+credential_type = "iam"
+
+# S3 bucket name for database backups
+bucket = ""
+
+# S3 path prefix
+path = "celestia-da/backups"
+
+# S3 endpoint URL (leave empty for AWS S3)
+endpoint = ""
+
+# S3 access key ID (if credential_type = "static")
+access_key_id = ""
+
+# S3 access key secret (if credential_type = "static")
+access_key_secret = ""
+
+# S3 timeout
+timeout = "5s"
+
+# ==============================================================================
+# METRICS CONFIGURATION
+# ==============================================================================
+# Exposes Prometheus metrics for monitoring Celestia DA operations
+
+[metrics]
+# Enable Prometheus metrics server
+enabled = false
+
+# Prometheus metrics server port
+port = 6060
+
+# Available metrics:
+# - celestia_submission_duration_seconds: Time to submit batches to Celestia
+# - celestia_submission_size_bytes: Size of data submitted (in bytes)
+# - celestia_submissions_total: Total number of submissions
+# - celestia_submission_errors_total: Total number of failed submissions
+# - celestia_retrieval_duration_seconds: Time to retrieve blobs from Celestia
+# - celestia_retrieval_size_bytes: Size of data retrieved (in bytes)
+# - celestia_retrievals_total: Total number of retrievals
+# - celestia_retrieval_errors_total: Total number of failed retrievals

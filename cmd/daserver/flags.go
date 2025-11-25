@@ -189,6 +189,7 @@ var requiredFlags = []cli.Flag{
 }
 
 var optionalFlags = []cli.Flag{
+	ConfigFileFlag,
 	ListenAddrFlag,
 	PortFlag,
 	CelestiaServerFlag,
