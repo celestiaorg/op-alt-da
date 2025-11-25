@@ -233,11 +233,23 @@ func (c *Config) ConvertToEnvVars() map[string]string {
 	env[prefix+"ADDR"] = c.Addr
 	env[prefix+"PORT"] = fmt.Sprintf("%d", c.Port)
 	env[prefix+"DB_PATH"] = c.DBPath
-	env[prefix+"LOG_LEVEL"] = c.LogLevel
-	env[prefix+"LOG_FORMAT"] = c.LogFormat
-	env[prefix+"LOG_COLOR"] = fmt.Sprintf("%t", c.LogColor)
-	env[prefix+"LOG_PID"] = fmt.Sprintf("%t", c.LogPID)
-	env[prefix+"READ_ONLY"] = fmt.Sprintf("%t", c.ReadOnly)
+
+	// Only set log settings if they're explicitly configured (non-default values)
+	if c.LogLevel != "" {
+		env[prefix+"LOG_LEVEL"] = c.LogLevel
+	}
+	if c.LogFormat != "" {
+		env[prefix+"LOG_FORMAT"] = c.LogFormat
+	}
+	if c.LogColor {
+		env[prefix+"LOG_COLOR"] = "true"
+	}
+	if c.LogPID {
+		env[prefix+"LOG_PID"] = "true"
+	}
+	if c.ReadOnly {
+		env[prefix+"READ_ONLY"] = "true"
+	}
 
 	// Celestia settings
 	env[prefix+"CELESTIA_NAMESPACE"] = c.Celestia.Namespace

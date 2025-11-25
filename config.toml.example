@@ -37,10 +37,10 @@ db_path = "./data/blobs.db"
 log_level = "INFO"
 
 # Log format: text, terminal, logfmt, json, json-pretty
-log_format = "text"
+log_format = "terminal"
 
 # Enable colored log output
-log_color = false
+log_color = true
 
 # Show process ID in logs
 log_pid = false
