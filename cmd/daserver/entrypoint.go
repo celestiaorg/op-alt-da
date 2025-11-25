@@ -182,6 +182,35 @@ var (
 	}
 )
 
+// LoadTOMLConfigIfPresent loads TOML config and sets environment variables BEFORE flag parsing
+// This is called as app.Before hook to ensure env vars are set before CLI context is created
+func LoadTOMLConfigIfPresent(cliCtx *cli.Context) error {
+	configFile := cliCtx.String(ConfigFileFlagName)
+	if configFile == "" {
+		// No TOML config, use env vars and CLI flags
+		return nil
+	}
+
+	// Load and validate TOML config
+	tomlCfg, err := LoadConfig(configFile)
+	if err != nil {
+		return fmt.Errorf("failed to load config file '%s': %w", configFile, err)
+	}
+
+	// Validate TOML config
+	if err := tomlCfg.Validate(); err != nil {
+		return fmt.Errorf("invalid config in '%s': %w", configFile, err)
+	}
+
+	// Convert TOML to env vars and set them BEFORE CLI context processes flags
+	envVars := tomlCfg.ConvertToEnvVars()
+	for key, value := range envVars {
+		os.Setenv(key, value)
+	}
+
+	return nil
+}
+
 func StartDAServer(cliCtx *cli.Context) error {
 	// Initialize logger early for warnings
 	logCfg := oplog.ReadCLIConfig(cliCtx)
@@ -192,7 +221,7 @@ func StartDAServer(cliCtx *cli.Context) error {
 	if configFile != "" {
 		l.Info("Loading configuration from TOML file", "path", configFile)
 
-		// Load and validate TOML config
+		// Config was already loaded in Before hook, just re-load for validation messages
 		tomlCfg, err := LoadConfig(configFile)
 		if err != nil {
 			return fmt.Errorf("failed to load config file '%s': %w", configFile, err)
@@ -202,49 +231,20 @@ func StartDAServer(cliCtx *cli.Context) error {
 		}
 
 		l.Info("✓ TOML configuration loaded and validated successfully")
-
-		// Warn about conflicting environment variables
-		prefix := "OP_ALTDA_"
-		hasConflicts := false
-		for _, envLine := range os.Environ() {
-			// envLine format is "KEY=value"
-			keyName := envLine
-			if idx := strings.Index(envLine, "="); idx > 0 {
-				keyName = envLine[:idx]
-			}
-
-			if len(keyName) > len(prefix) && keyName[:len(prefix)] == prefix {
-				if keyName != prefix+"CONFIG" { // Ignore the CONFIG var itself
-					if !hasConflicts {
-						l.Warn("⚠️  CONFIGURATION CONFLICT DETECTED ⚠️")
-						l.Warn("TOML configuration file is specified, but environment variables are also set.")
-						l.Warn("TOML file takes precedence. The following environment variables will be IGNORED:")
-						hasConflicts = true
-					}
-					l.Warn("  → " + keyName)
-				}
-			}
-		}
-		if hasConflicts {
-			l.Warn("To fix: Remove conflicting environment variables or use TOML configuration exclusively")
-			l.Warn("========================================")
-		}
-
-		// Convert TOML config to environment variables (OVERWRITE any existing)
-		// TOML is the source of truth when --config is specified
-		envVars := tomlCfg.ConvertToEnvVars()
-		for key, value := range envVars {
-			os.Setenv(key, value) // Overwrite, don't check if exists
-		}
-
 		l.Info("Configuration source: TOML file", "path", configFile)
+		l.Info("Note: Environment variables were set from TOML in main() before CLI parsing")
+
+		// Skip CheckRequired when using TOML - we already validated the config
+		// CheckRequired uses ctx.IsSet() which only checks command-line flags,
+		// not environment variables set programmatically
 	} else {
 		l.Info("Configuration source: Environment variables and CLI flags")
 		l.Info("Tip: Use --config config.toml for production deployments")
-	}
 
-	if err := CheckRequired(cliCtx); err != nil {
-		return err
+		// Only check required flags when NOT using TOML config
+		if err := CheckRequired(cliCtx); err != nil {
+			return err
+		}
 	}
 
 	cfg := ReadCLIConfig(cliCtx)

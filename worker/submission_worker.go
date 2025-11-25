@@ -19,32 +19,35 @@ import (
 )
 
 type SubmissionWorker struct {
-	store     *db.BlobStore
-	celestia  blobAPI.Module
-	namespace libshare.Namespace
-	log       log.Logger
-	batchCfg  *batch.Config
-	workerCfg *Config
-	metrics   *metrics.CelestiaMetrics
+	store      *db.BlobStore
+	celestia   blobAPI.Module
+	namespace  libshare.Namespace
+	signerAddr []byte // 20-byte signer address for BlobV1 (CIP-21)
+	log        log.Logger
+	batchCfg   *batch.Config
+	workerCfg  *Config
+	metrics    *metrics.CelestiaMetrics
 }
 
 func NewSubmissionWorker(
 	store *db.BlobStore,
 	celestia blobAPI.Module,
 	namespace libshare.Namespace,
+	signerAddr []byte,
 	batchCfg *batch.Config,
 	workerCfg *Config,
 	metrics *metrics.CelestiaMetrics,
 	log log.Logger,
 ) *SubmissionWorker {
 	return &SubmissionWorker{
-		store:     store,
-		celestia:  celestia,
-		namespace: namespace,
-		log:       log,
-		batchCfg:  batchCfg,
-		workerCfg: workerCfg,
-		metrics:   metrics,
+		store:      store,
+		celestia:   celestia,
+		namespace:  namespace,
+		signerAddr: signerAddr,
+		log:        log,
+		batchCfg:   batchCfg,
+		workerCfg:  workerCfg,
+		metrics:    metrics,
 	}
 }
 
@@ -250,10 +253,11 @@ func (w *SubmissionWorker) selectBlobsForBatch(blobs []*db.Blob) []*db.Blob {
 
 func (w *SubmissionWorker) submitBatch(ctx context.Context, batchCommitment, packedData []byte) (uint64, error) {
 	// Create Celestia blob with V1 (signed) for CIP-21 signer verification
-	// BlobV1 requires a 20-byte signer placeholder (actual signer added by Submit)
-	// Use dummy 20-byte signer - the keyring will override this during Submit()
-	dummySigner := make([]byte, 20)
-	celestiaBlob, err := blob.NewBlobV1(w.namespace, packedData, dummySigner)
+	// BlobV1 requires 20-byte signer address for proper signature
+	if len(w.signerAddr) != 20 {
+		return 0, fmt.Errorf("invalid signer address: expected 20 bytes, got %d", len(w.signerAddr))
+	}
+	celestiaBlob, err := blob.NewBlobV1(w.namespace, packedData, w.signerAddr)
 	if err != nil {
 		return 0, fmt.Errorf("create celestia blob: %w", err)
 	}

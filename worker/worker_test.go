@@ -139,7 +139,8 @@ func TestSubmissionWorker_ProcessBatch(t *testing.T) {
 	batchCfg := batch.DefaultConfig()
 	workerCfg := DefaultConfig()
 	workerCfg.SubmitPeriod = 100 * time.Millisecond
-	worker := NewSubmissionWorker(store, mock, namespace, batchCfg, workerCfg, nil,  logger)
+	signerAddr := make([]byte, 20) // Test signer
+	worker := NewSubmissionWorker(store, mock, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
 
 	// Process one batch
 	err := worker.processBatch(ctx)
@@ -199,7 +200,8 @@ func TestSubmissionWorker_InsufficientBlobs(t *testing.T) {
 	batchCfg := batch.DefaultConfig()
 	workerCfg := DefaultConfig()
 	workerCfg.MaxBlobWaitTime = 1 * time.Hour // Disable time-based submission for this test
-	worker := NewSubmissionWorker(store, mock, namespace, batchCfg, workerCfg, nil,  logger)
+	signerAddr := make([]byte, 20) // Test signer
+	worker := NewSubmissionWorker(store, mock, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
 
 	// Process batch
 	err := worker.processBatch(ctx)
@@ -257,7 +259,8 @@ func TestSubmissionWorker_LargeSize(t *testing.T) {
 	logger := log.NewLogger(log.DiscardHandler())
 	batchCfg := batch.DefaultConfig()
 	workerCfg := DefaultConfig()
-	worker := NewSubmissionWorker(store, mock, namespace, batchCfg, workerCfg, nil, logger)
+	signerAddr := make([]byte, 20) // Test signer
+	worker := NewSubmissionWorker(store, mock, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
 
 	// Process batch
 	err := worker.processBatch(ctx)
@@ -312,7 +315,8 @@ func TestSubmissionWorker_ManyLargeBlobs(t *testing.T) {
 	logger := log.NewLogger(log.DiscardHandler())
 	batchCfg := batch.DefaultConfig()
 	workerCfg := DefaultConfig()
-	worker := NewSubmissionWorker(store, mock, namespace, batchCfg, workerCfg, nil, logger)
+	signerAddr := make([]byte, 20) // Test signer
+	worker := NewSubmissionWorker(store, mock, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
 
 	// Process batch
 	err := worker.processBatch(ctx)
@@ -352,7 +356,8 @@ func TestSubmissionWorker_ContextCancellation(t *testing.T) {
 	batchCfg := batch.DefaultConfig()
 	workerCfg := DefaultConfig()
 	workerCfg.SubmitPeriod = 10 * time.Millisecond
-	worker := NewSubmissionWorker(store, mock, namespace, batchCfg, workerCfg, nil,  logger)
+	signerAddr := make([]byte, 20) // Test signer
+	worker := NewSubmissionWorker(store, mock, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
 
 	// Create context with cancel
 	ctx, cancel := context.WithCancel(context.Background())

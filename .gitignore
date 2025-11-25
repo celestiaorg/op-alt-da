@@ -1,4 +1,4 @@
 bin/
 .env
 tests/sanity/sanity.test
-
+config.toml

@@ -57,15 +57,25 @@ type Batch struct {
 
 // NewBlobStore creates a new blob store with SQLite backend
 func NewBlobStore(dbPath string) (*BlobStore, error) {
-	// Create parent directory if it doesn't exist
-	dir := filepath.Dir(dbPath)
-	if dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return nil, fmt.Errorf("create database directory: %w", err)
+	var connStr string
+
+	// Handle in-memory database specially
+	if dbPath == ":memory:" {
+		// For in-memory databases with shared cache, use file:memdb1?mode=memory&cache=shared
+		// This ensures all connections share the same in-memory database
+		connStr = "file:memdb1?mode=memory&cache=shared&_busy_timeout=5000&_synchronous=NORMAL"
+	} else {
+		// Create parent directory if it doesn't exist
+		dir := filepath.Dir(dbPath)
+		if dir != "" && dir != "." {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return nil, fmt.Errorf("create database directory: %w", err)
+			}
 		}
+		connStr = dbPath + "?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL&cache=shared"
 	}
 
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL&cache=shared")
+	db, err := sql.Open("sqlite3", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}

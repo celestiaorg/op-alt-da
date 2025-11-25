@@ -112,6 +112,7 @@ func NewCelestiaServer(
 			store,
 			celestiaStore.Client,
 			celestiaStore.Namespace,
+			celestiaStore.SignerAddr, // Real signer address from keyring/RPC
 			batchCfg,
 			workerCfg,
 			celestiaMetrics,

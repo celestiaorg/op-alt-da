@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -124,10 +125,8 @@ func (w *BackfillWorker) scanAndIndexBlocks(ctx context.Context) error {
 	batchesFound := 0
 
 	for height := startHeight; height < endHeight; height++ {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 
 		// Get all blobs at this height for our namespace
@@ -141,10 +140,10 @@ func (w *BackfillWorker) scanAndIndexBlocks(ctx context.Context) error {
 		}
 
 		blocksScanned++
+		w.currentHeight = height + 1
 
 		if len(blobs) == 0 {
 			w.log.Debug("No blobs found at height", "height", height)
-			w.currentHeight = height + 1
 			continue
 		}
 
@@ -162,8 +161,6 @@ func (w *BackfillWorker) scanAndIndexBlocks(ctx context.Context) error {
 			}
 			batchesFound++
 		}
-
-		w.currentHeight = height + 1
 	}
 
 	// Persist sync progress after successful scan
@@ -191,56 +188,11 @@ func (w *BackfillWorker) scanAndIndexBlocks(ctx context.Context) error {
 // indexBatch unpacks a discovered batch and indexes individual blobs
 func (w *BackfillWorker) indexBatch(ctx context.Context, celestiaBlob *blob.Blob, height uint64) error {
 	batchData := celestiaBlob.Data()
-
-	// Compute batch commitment
 	batchCommitment := celestiaBlob.Commitment
 
-	// CIP-21 Signer Verification for Security
-	// Verify the blob came from one of our trusted write servers
-	if len(w.workerCfg.TrustedSigners) > 0 {
-		blobSigner := celestiaBlob.Signer()
-
-		if len(blobSigner) == 0 {
-			// Blob has no signer - reject it
-			w.log.Warn("Rejecting unsigned blob (potential junk data)",
-				"height", height,
-				"commitment", fmt.Sprintf("%x", batchCommitment))
-			return fmt.Errorf("blob has no signer, rejecting for security")
-		}
-
-		// Check if blob signer matches any of the trusted signers
-		// Note: Celestia blob.Signer() returns 20-byte raw address (not bech32)
-		blobSignerHex := fmt.Sprintf("%x", blobSigner)
-
-		signerTrusted := false
-		for _, trustedSigner := range w.workerCfg.TrustedSigners {
-			// Trusted signer should be hex (40 chars) - Celestia addresses are bech32 but
-			// blob.Signer() returns raw 20-byte address, so we expect hex in config
-			// Compare hex representations (case-insensitive)
-			if strings.EqualFold(blobSignerHex, trustedSigner) {
-				signerTrusted = true
-				w.log.Debug("Blob signer verified",
-					"height", height,
-					"signer", blobSignerHex,
-					"matched_trusted_signer", trustedSigner)
-				break
-			}
-		}
-
-		if !signerTrusted {
-			// Signer doesn't match any trusted signer - this is junk data from another party
-			w.log.Warn("Rejecting blob from untrusted signer (potential attack)",
-				"height", height,
-				"commitment", fmt.Sprintf("%x", batchCommitment),
-				"blob_signer", blobSignerHex,
-				"trusted_signers", fmt.Sprintf("%v", w.workerCfg.TrustedSigners))
-			return fmt.Errorf("blob signer does not match any trusted signer, rejecting")
-		}
-	} else {
-		// No trusted signers configured - log warning
-		w.log.Warn("No trusted signers configured - accepting all blobs (INSECURE)",
-			"height", height,
-			"commitment", fmt.Sprintf("%x", batchCommitment))
+	// 1. Verify Signer
+	if err := w.verifySigner(celestiaBlob, height); err != nil {
+		return err
 	}
 
 	w.log.Debug("Indexing batch",
@@ -248,7 +200,7 @@ func (w *BackfillWorker) indexBatch(ctx context.Context, celestiaBlob *blob.Blob
 		"batch_size", len(batchData),
 		"commitment", fmt.Sprintf("%x", batchCommitment))
 
-	// Check if we already have this batch
+	// 2. Check for existence
 	existingBatch, err := w.store.GetBatchByCommitment(ctx, batchCommitment)
 	if err == nil && existingBatch != nil {
 		w.log.Debug("Batch already indexed, skipping",
@@ -257,44 +209,98 @@ func (w *BackfillWorker) indexBatch(ctx context.Context, celestiaBlob *blob.Blob
 		return nil
 	}
 
-	// Unpack the batch to get individual blobs
-	// This also serves as secondary validation - malformed batches will fail to unpack
-	unpacked, err := batch.UnpackBlobs(batchData, w.batchCfg)
+	// 3. Unpack and Validate
+	unpacked, err := w.unpackBatch(batchData, height, batchCommitment)
 	if err != nil {
-		w.log.Warn("Failed to unpack batch - rejecting (malformed or junk data)",
-			"height", height,
-			"commitment", fmt.Sprintf("%x", batchCommitment),
-			"error", err)
-		return fmt.Errorf("unpack batch failed, rejecting: %w", err)
-	}
-
-	// Validate unpacked data is not empty
-	if len(unpacked) == 0 {
-		w.log.Warn("Unpacked batch contains zero blobs - rejecting",
-			"height", height,
-			"commitment", fmt.Sprintf("%x", batchCommitment))
-		return fmt.Errorf("batch contains no blobs, rejecting")
+		return err
 	}
 
 	w.log.Info("Unpacked batch",
 		"blob_count", len(unpacked),
 		"height", height)
 
-	// Start a transaction for atomic insertion
+	// 4. Persist to DB
+	batchID, err := w.persistBatch(ctx, batchCommitment, batchData, unpacked, height)
+	if err != nil {
+		return err
+	}
+
+	w.log.Info("Successfully indexed batch",
+		"batch_id", batchID,
+		"blob_count", len(unpacked),
+		"height", height)
+
+	return nil
+}
+
+func (w *BackfillWorker) verifySigner(celestiaBlob *blob.Blob, height uint64) error {
+	if len(w.workerCfg.TrustedSigners) == 0 {
+		w.log.Warn("No trusted signers configured - accepting all blobs (INSECURE)",
+			"height", height,
+			"commitment", fmt.Sprintf("%x", celestiaBlob.Commitment))
+		return nil
+	}
+
+	blobSigner := celestiaBlob.Signer()
+	if len(blobSigner) == 0 {
+		w.log.Warn("Rejecting unsigned blob (potential junk data)",
+			"height", height,
+			"commitment", fmt.Sprintf("%x", celestiaBlob.Commitment))
+		return fmt.Errorf("blob has no signer, rejecting for security")
+	}
+
+	blobSignerHex := fmt.Sprintf("%x", blobSigner)
+	for _, trustedSigner := range w.workerCfg.TrustedSigners {
+		if strings.EqualFold(blobSignerHex, trustedSigner) {
+			w.log.Debug("Blob signer verified",
+				"height", height,
+				"signer", blobSignerHex,
+				"matched_trusted_signer", trustedSigner)
+			return nil
+		}
+	}
+
+	w.log.Warn("Rejecting blob from untrusted signer (potential attack)",
+		"height", height,
+		"commitment", fmt.Sprintf("%x", celestiaBlob.Commitment),
+		"blob_signer", blobSignerHex,
+		"trusted_signers", fmt.Sprintf("%v", w.workerCfg.TrustedSigners))
+	return fmt.Errorf("blob signer does not match any trusted signer, rejecting")
+}
+
+func (w *BackfillWorker) unpackBatch(batchData []byte, height uint64, commitment []byte) ([][]byte, error) {
+	unpacked, err := batch.UnpackBlobs(batchData, w.batchCfg)
+	if err != nil {
+		w.log.Warn("Failed to unpack batch - rejecting (malformed or junk data)",
+			"height", height,
+			"commitment", fmt.Sprintf("%x", commitment),
+			"error", err)
+		return nil, fmt.Errorf("unpack batch failed, rejecting: %w", err)
+	}
+
+	if len(unpacked) == 0 {
+		w.log.Warn("Unpacked batch contains zero blobs - rejecting",
+			"height", height,
+			"commitment", fmt.Sprintf("%x", commitment))
+		return nil, fmt.Errorf("batch contains no blobs, rejecting")
+	}
+	return unpacked, nil
+}
+
+func (w *BackfillWorker) persistBatch(ctx context.Context, batchCommitment, batchData []byte, unpacked [][]byte, height uint64) (int64, error) {
 	tx, err := w.store.BeginTx(ctx)
 	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
+		return 0, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	// Create batch record
 	now := time.Now()
 	batchRecord := &db.Batch{
 		BatchCommitment: batchCommitment,
 		BatchData:       batchData,
 		BatchSize:       len(batchData),
 		BlobCount:       len(unpacked),
-		Status:          "confirmed", // Already on Celestia, so confirmed
+		Status:          "confirmed",
 		CelestiaHeight:  &height,
 		CreatedAt:       now,
 		SubmittedAt:     now,
@@ -303,76 +309,69 @@ func (w *BackfillWorker) indexBatch(ctx context.Context, celestiaBlob *blob.Blob
 
 	batchID, err := w.store.InsertBatchTx(ctx, tx, batchRecord)
 	if err != nil {
-		return fmt.Errorf("insert batch: %w", err)
+		return 0, fmt.Errorf("insert batch: %w", err)
 	}
 
-	// Index each individual blob
 	successfulInserts := 0
 	for i, blobData := range unpacked {
-		// Compute commitment for this individual blob
-		blobCommitment, err := commitment.ComputeCommitment(blobData, w.namespace)
-		if err != nil {
-			w.log.Error("Failed to compute commitment for blob",
-				"batch_index", i,
-				"error", err)
-			// Fail the entire transaction if we can't compute commitment
-			return fmt.Errorf("compute commitment for blob %d: %w", i, err)
+		if err := w.persistBlob(ctx, tx, blobData, batchID, i, height, now); err != nil {
+			return 0, err
 		}
-
-		// Check if blob already exists (to avoid duplicate work)
-		existing, err := w.store.GetBlobByCommitment(ctx, blobCommitment)
-		if err == nil && existing != nil {
-			w.log.Debug("Blob already exists, skipping",
-				"commitment", fmt.Sprintf("%x", blobCommitment))
-			successfulInserts++
-			continue
-		}
-
-		// Create blob record
-		batchIndex := i
-		blobRecord := &db.Blob{
-			Commitment:     blobCommitment,
-			Namespace:      w.namespace.Bytes(),
-			Data:           blobData,
-			Size:           len(blobData),
-			Status:         "confirmed",
-			CelestiaHeight: &height,
-			BatchID:        &batchID,
-			BatchIndex:     &batchIndex,
-			CreatedAt:      now,
-			SubmittedAt:    &now,
-			ConfirmedAt:    &now,
-		}
-
-		if err := w.store.InsertBlobTx(ctx, tx, blobRecord); err != nil {
-			w.log.Error("Failed to insert blob - failing entire batch to maintain consistency",
-				"batch_index", i,
-				"commitment", fmt.Sprintf("%x", blobCommitment),
-				"error", err)
-			// Fail entire transaction to maintain consistency
-			return fmt.Errorf("insert blob %d: %w", i, err)
-		}
-
 		successfulInserts++
-		w.log.Debug("Indexed blob",
-			"batch_index", i,
-			"commitment", fmt.Sprintf("%x", blobCommitment))
 	}
 
-	// Verify all blobs were successfully indexed
 	if successfulInserts != len(unpacked) {
-		return fmt.Errorf("only indexed %d/%d blobs, failing transaction for consistency", successfulInserts, len(unpacked))
+		return 0, fmt.Errorf("only indexed %d/%d blobs, failing transaction for consistency", successfulInserts, len(unpacked))
 	}
 
-	// Commit transaction
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
+		return 0, fmt.Errorf("commit transaction: %w", err)
 	}
 
-	w.log.Info("Successfully indexed batch",
-		"batch_id", batchID,
-		"blob_count", len(unpacked),
-		"height", height)
+	return batchID, nil
+}
 
+func (w *BackfillWorker) persistBlob(ctx context.Context, tx *sql.Tx, blobData []byte, batchID int64, batchIndex int, height uint64, now time.Time) error {
+	blobCommitment, err := commitment.ComputeCommitment(blobData, w.namespace)
+	if err != nil {
+		w.log.Error("Failed to compute commitment for blob",
+			"batch_index", batchIndex,
+			"error", err)
+		return fmt.Errorf("compute commitment for blob %d: %w", batchIndex, err)
+	}
+
+	existing, err := w.store.GetBlobByCommitment(ctx, blobCommitment)
+	if err == nil && existing != nil {
+		w.log.Debug("Blob already exists, skipping",
+			"commitment", fmt.Sprintf("%x", blobCommitment))
+		return nil
+	}
+
+	idx := batchIndex
+	blobRecord := &db.Blob{
+		Commitment:     blobCommitment,
+		Namespace:      w.namespace.Bytes(),
+		Data:           blobData,
+		Size:           len(blobData),
+		Status:         "confirmed",
+		CelestiaHeight: &height,
+		BatchID:        &batchID,
+		BatchIndex:     &idx,
+		CreatedAt:      now,
+		SubmittedAt:    &now,
+		ConfirmedAt:    &now,
+	}
+
+	if err := w.store.InsertBlobTx(ctx, tx, blobRecord); err != nil {
+		w.log.Error("Failed to insert blob - failing entire batch to maintain consistency",
+			"batch_index", batchIndex,
+			"commitment", fmt.Sprintf("%x", blobCommitment),
+			"error", err)
+		return fmt.Errorf("insert blob %d: %w", batchIndex, err)
+	}
+
+	w.log.Debug("Indexed blob",
+		"batch_index", batchIndex,
+		"commitment", fmt.Sprintf("%x", blobCommitment))
 	return nil
 }

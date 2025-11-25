@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/celestiaorg/celestia-node/blob"
 	libshare "github.com/celestiaorg/go-square/v3/share"
 	celestia "github.com/celestiaorg/op-alt-da"
 	"github.com/celestiaorg/op-alt-da/batch"
@@ -18,16 +19,60 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 )
 
+// mockCelestiaClient is a mock implementation of Celestia blob API for testing
+type mockCelestiaClient struct{}
+
+func (m *mockCelestiaClient) Submit(ctx context.Context, blobs []*blob.Blob, opts *blob.SubmitOptions) (uint64, error) {
+	// Return a fake height
+	return 12345, nil
+}
+
+func (m *mockCelestiaClient) Get(ctx context.Context, height uint64, namespace libshare.Namespace, commitment blob.Commitment) (*blob.Blob, error) {
+	// Return nil to simulate no blob found (for graceful handling)
+	return nil, blob.ErrBlobNotFound
+}
+
+func (m *mockCelestiaClient) GetAll(ctx context.Context, height uint64, namespaces []libshare.Namespace) ([]*blob.Blob, error) {
+	// Return empty list to simulate no blobs at this height
+	return []*blob.Blob{}, nil
+}
+
+func (m *mockCelestiaClient) GetProof(ctx context.Context, height uint64, namespace libshare.Namespace, commitment blob.Commitment) (*blob.Proof, error) {
+	return nil, blob.ErrBlobNotFound
+}
+
+func (m *mockCelestiaClient) Included(ctx context.Context, height uint64, namespace libshare.Namespace, proof *blob.Proof, commitment blob.Commitment) (bool, error) {
+	return false, nil
+}
+
+func (m *mockCelestiaClient) GetCommitmentProof(ctx context.Context, height uint64, namespace libshare.Namespace, shareCommitment []byte) (*blob.CommitmentProof, error) {
+	return nil, blob.ErrBlobNotFound
+}
+
+func (m *mockCelestiaClient) Subscribe(ctx context.Context, namespace libshare.Namespace) (<-chan *blob.SubscriptionResponse, error) {
+	// Return a channel that will be closed when context is canceled
+	ch := make(chan *blob.SubscriptionResponse)
+	go func() {
+		<-ctx.Done()
+		close(ch)
+	}()
+	return ch, nil
+}
+
 // TestServer_GracefulShutdown tests server shutdown with active requests
 func TestServer_GracefulShutdown(t *testing.T) {
 	store, celestiaStore := setupTestShutdownServer(t)
+
+	workerCfg := worker.DefaultConfig()
+	workerCfg.ReadOnly = false
+
 	server := celestia.NewCelestiaServer(
 		"localhost",
 		0, // Random port
 		store,
 		celestiaStore,
 		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: false},
+		workerCfg,
 		false,
 		0,
 		log.New(),
@@ -53,8 +98,11 @@ func TestServer_GracefulShutdown(t *testing.T) {
 	select {
 	case <-serverDone:
 		// Server stopped successfully
+		if serverErr != nil && serverErr != context.Canceled {
+			t.Logf("Server error: %v (type: %T)", serverErr, serverErr)
+		}
 		assert.True(t, serverErr == nil || serverErr == context.Canceled,
-			"server should stop gracefully or with context.Canceled error")
+			"server should stop gracefully or with context.Canceled error, got: %v", serverErr)
 	case <-time.After(10 * time.Second):
 		t.Fatal("server did not stop within timeout")
 	}
@@ -63,13 +111,17 @@ func TestServer_GracefulShutdown(t *testing.T) {
 // TestServer_ShutdownWithInflightRequests tests shutdown while handling requests
 func TestServer_ShutdownWithInflightRequests(t *testing.T) {
 	store, celestiaStore := setupTestShutdownServer(t)
+
+	workerCfg := worker.DefaultConfig()
+	workerCfg.ReadOnly = false
+
 	server := celestia.NewCelestiaServer(
 		"localhost",
 		8765, // Fixed port for testing
 		store,
 		celestiaStore,
 		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: false},
+		workerCfg,
 		false,
 		0,
 		log.New(),
@@ -137,13 +189,17 @@ func TestServer_ShutdownWithInflightRequests(t *testing.T) {
 // TestServer_ShutdownTimeout tests that shutdown completes within reasonable time
 func TestServer_ShutdownTimeout(t *testing.T) {
 	store, celestiaStore := setupTestShutdownServer(t)
+
+	workerCfg := worker.DefaultConfig()
+	workerCfg.ReadOnly = false
+
 	server := celestia.NewCelestiaServer(
 		"localhost",
 		0,
 		store,
 		celestiaStore,
 		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: false},
+		workerCfg,
 		false,
 		0,
 		log.New(),
@@ -180,13 +236,17 @@ func TestServer_ShutdownTimeout(t *testing.T) {
 // TestServer_MultipleShutdowns tests that multiple shutdown calls are safe
 func TestServer_MultipleShutdowns(t *testing.T) {
 	store, celestiaStore := setupTestShutdownServer(t)
+
+	workerCfg := worker.DefaultConfig()
+	workerCfg.ReadOnly = false
+
 	server := celestia.NewCelestiaServer(
 		"localhost",
 		0,
 		store,
 		celestiaStore,
 		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: false},
+		workerCfg,
 		false,
 		0,
 		log.New(),
@@ -283,13 +343,16 @@ func TestServer_WorkersShutdownCleanly(t *testing.T) {
 func TestServer_ReadOnlyModeShutdown(t *testing.T) {
 	store, celestiaStore := setupTestShutdownServer(t)
 
+	workerCfg := worker.DefaultConfig()
+	workerCfg.ReadOnly = true // Read-only mode
+
 	server := celestia.NewCelestiaServer(
 		"localhost",
 		0,
 		store,
 		celestiaStore,
 		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: true}, // Read-only mode
+		workerCfg,
 		false,
 		0,
 		log.New(),
@@ -319,13 +382,16 @@ func TestServer_ReadOnlyModeShutdown(t *testing.T) {
 func TestServer_ShutdownWithMetrics(t *testing.T) {
 	store, celestiaStore := setupTestShutdownServer(t)
 
+	workerCfg := worker.DefaultConfig()
+	workerCfg.ReadOnly = false
+
 	server := celestia.NewCelestiaServer(
 		"localhost",
 		0,
 		store,
 		celestiaStore,
 		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: false},
+		workerCfg,
 		true,  // Metrics enabled
 		19090, // Metrics port
 		log.New(),
@@ -372,13 +438,16 @@ func TestServer_RepeatedStartStop(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		t.Logf("Iteration %d", i+1)
 
+		workerCfg := worker.DefaultConfig()
+		workerCfg.ReadOnly = false
+
 		server := celestia.NewCelestiaServer(
 			"localhost",
 			0,
 			store,
 			celestiaStore,
 			batch.DefaultConfig(),
-			&worker.Config{ReadOnly: false},
+			workerCfg,
 			false,
 			0,
 			log.New(),
@@ -409,13 +478,16 @@ func TestServer_RepeatedStartStop(t *testing.T) {
 func TestServer_ShutdownDuringDatabaseOperation(t *testing.T) {
 	store, celestiaStore := setupTestShutdownServer(t)
 
+	workerCfg := worker.DefaultConfig()
+	workerCfg.ReadOnly = false
+
 	server := celestia.NewCelestiaServer(
 		"localhost",
 		8766,
 		store,
 		celestiaStore,
 		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: false},
+		workerCfg,
 		false,
 		0,
 		log.New(),
@@ -466,13 +538,16 @@ func TestServer_ShutdownDuringDatabaseOperation(t *testing.T) {
 func TestServer_ImmediateShutdown(t *testing.T) {
 	store, celestiaStore := setupTestShutdownServer(t)
 
+	workerCfg := worker.DefaultConfig()
+	workerCfg.ReadOnly = false
+
 	server := celestia.NewCelestiaServer(
 		"localhost",
 		0,
 		store,
 		celestiaStore,
 		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: false},
+		workerCfg,
 		false,
 		0,
 		log.New(),
@@ -510,8 +585,19 @@ func setupTestShutdownServer(t *testing.T) (*db.BlobStore, *celestia.CelestiaSto
 		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
 	}
 
+	// Create test signer address (20 bytes)
+	testSignerAddr := make([]byte, 20)
+	for i := range testSignerAddr {
+		testSignerAddr[i] = byte(i)
+	}
+
+	// Create a mock Celestia client for testing
+	mockClient := &mockCelestiaClient{}
+
 	celestiaStore := &celestia.CelestiaStore{
-		Log: log.New(),
+		Log:        log.New(),
+		SignerAddr: testSignerAddr,
+		Client:     mockClient,
 	}
 
 	ns, err := libshare.NewNamespaceFromBytes(nsBytes)

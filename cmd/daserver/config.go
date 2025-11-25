@@ -31,11 +31,11 @@ type Config struct {
 
 // CelestiaConfig holds Celestia connection settings
 type CelestiaConfig struct {
-	Namespace     string        `toml:"namespace"`
-	Server        string        `toml:"server"`
-	AuthToken     string        `toml:"auth_token"`
-	TLSEnabled    bool          `toml:"tls_enabled"`
-	BlobIDCompact bool          `toml:"blobid_compact"`
+	Namespace     string         `toml:"namespace"`
+	DARPCServer   string         `toml:"da_rpc_server"`
+	AuthToken     string         `toml:"auth_token"`
+	TLSEnabled    bool           `toml:"tls_enabled"`
+	BlobIDCompact bool           `toml:"blobid_compact"`
 	TxClient      TxClientConfig `toml:"tx_client"`
 }
 
@@ -135,8 +135,8 @@ func (c *Config) Validate() error {
 	if len(c.Celestia.Namespace) != 58 { // 29 bytes = 58 hex chars
 		return fmt.Errorf("celestia.namespace must be 58 hex characters (29 bytes)")
 	}
-	if c.Celestia.Server == "" {
-		return fmt.Errorf("celestia.server is required")
+	if c.Celestia.DARPCServer == "" {
+		return fmt.Errorf("celestia.da_rpc_server is required")
 	}
 
 	// Validate deployment mode
@@ -241,7 +241,7 @@ func (c *Config) ConvertToEnvVars() map[string]string {
 
 	// Celestia settings
 	env[prefix+"CELESTIA_NAMESPACE"] = c.Celestia.Namespace
-	env[prefix+"CELESTIA_SERVER"] = c.Celestia.Server
+	env[prefix+"CELESTIA_SERVER"] = c.Celestia.DARPCServer
 	if c.Celestia.AuthToken != "" {
 		env[prefix+"CELESTIA_AUTH_TOKEN"] = c.Celestia.AuthToken
 	}
