@@ -249,8 +249,9 @@ func TestCelestiaStore_CreateCommitment(t *testing.T) {
 	ns := createTestNamespace(t)
 
 	store := &CelestiaStore{
-		Log:       log.New(),
-		Namespace: ns,
+		Log:        log.New(),
+		Namespace:  ns,
+		SignerAddr: make([]byte, 20), // Valid 20-byte signer
 	}
 
 	testData := []byte("test data for commitment")
@@ -279,8 +280,9 @@ func TestCelestiaStore_CreateCommitment_EmptyData(t *testing.T) {
 	ns := createTestNamespace(t)
 
 	store := &CelestiaStore{
-		Log:       log.New(),
-		Namespace: ns,
+		Log:        log.New(),
+		Namespace:  ns,
+		SignerAddr: make([]byte, 20), // Valid 20-byte signer
 	}
 
 	// Empty data
@@ -299,8 +301,9 @@ func TestCelestiaStore_CreateCommitment_LargeData(t *testing.T) {
 	ns := createTestNamespace(t)
 
 	store := &CelestiaStore{
-		Log:       log.New(),
-		Namespace: ns,
+		Log:        log.New(),
+		Namespace:  ns,
+		SignerAddr: make([]byte, 20), // Valid 20-byte signer
 	}
 
 	// Large data (~1MB)
