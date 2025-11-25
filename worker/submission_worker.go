@@ -145,7 +145,8 @@ func (w *SubmissionWorker) processBatch(ctx context.Context) error {
 	}
 
 	// Compute batch commitment
-	batchCommitment, err := commitment.ComputeCommitment(packedData, w.namespace)
+	// IMPORTANT: Must use the same signer that will be used for submission
+	batchCommitment, err := commitment.ComputeCommitment(packedData, w.namespace, w.signerAddr)
 	if err != nil {
 		return fmt.Errorf("compute batch commitment: %w", err)
 	}

@@ -311,7 +311,8 @@ func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Pre-compute commitment (deterministic)
-	blobCommitment, err := commitment.ComputeCommitment(blobData, s.namespace)
+	// IMPORTANT: Must use the same signer that will be used for submission
+	blobCommitment, err := commitment.ComputeCommitment(blobData, s.namespace, s.celestiaStore.SignerAddr)
 	if err != nil {
 		s.log.Error("Failed to compute commitment", "error", err)
 		http.Error(w, "failed to compute commitment: "+err.Error(), http.StatusInternalServerError)

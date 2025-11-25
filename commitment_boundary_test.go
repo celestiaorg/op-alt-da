@@ -53,7 +53,7 @@ func TestCommitment_LengthBoundaries(t *testing.T) {
 				data[i] = byte(i % 256)
 			}
 
-			commitment, err := commitment.ComputeCommitment(data, namespace)
+			commitment, err := commitment.ComputeCommitment(data, namespace, make([]byte, 20))
 
 			if tt.expectErr {
 				assert.Error(t, err, "should reject invalid data")
@@ -218,7 +218,7 @@ func TestCommitment_Collisions(t *testing.T) {
 		data := make([]byte, 100)
 		binary.BigEndian.PutUint64(data, uint64(i))
 
-		commitment, err := commitment.ComputeCommitment(data, namespace)
+		commitment, err := commitment.ComputeCommitment(data, namespace, make([]byte, 20))
 		require.NoError(t, err)
 
 		commitmentStr := string(commitment)
@@ -237,7 +237,7 @@ func TestCommitment_Determinism(t *testing.T) {
 	// Compute commitment multiple times
 	var commitments [][]byte
 	for i := 0; i < 10; i++ {
-		commitment, err := commitment.ComputeCommitment(data, namespace)
+		commitment, err := commitment.ComputeCommitment(data, namespace, make([]byte, 20))
 		require.NoError(t, err)
 		commitments = append(commitments, commitment)
 	}

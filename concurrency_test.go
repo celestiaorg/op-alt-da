@@ -72,7 +72,7 @@ func TestConcurrentInserts(t *testing.T) {
 				data := []byte(fmt.Sprintf("routine-%d-blob-%d", routineID, j))
 
 				// Compute commitment
-				comm, err := commitment.ComputeCommitment(data, namespace)
+				comm, err := commitment.ComputeCommitment(data, namespace, make([]byte, 20))
 				if err != nil {
 					errChan <- fmt.Errorf("compute commitment: %w", err)
 					continue
@@ -136,7 +136,7 @@ func TestConcurrentReads(t *testing.T) {
 	commitments := make([][]byte, 100)
 	for i := 0; i < 100; i++ {
 		data := []byte(fmt.Sprintf("blob-%d-data", i))
-		comm, _ := commitment.ComputeCommitment(data, namespace)
+		comm, _ := commitment.ComputeCommitment(data, namespace, make([]byte, 20))
 
 		blob := &db.Blob{
 			Commitment: comm,
@@ -214,7 +214,7 @@ func TestConcurrentMixedOps(t *testing.T) {
 	existingCommitments := make([][]byte, 50)
 	for i := 0; i < 50; i++ {
 		data := []byte(fmt.Sprintf("existing-blob-%d", i))
-		comm, _ := commitment.ComputeCommitment(data, namespace)
+		comm, _ := commitment.ComputeCommitment(data, namespace, make([]byte, 20))
 
 		blob := &db.Blob{
 			Commitment: comm,
@@ -244,7 +244,7 @@ func TestConcurrentMixedOps(t *testing.T) {
 
 			for j := 0; j < 10; j++ {
 				data := []byte(fmt.Sprintf("new-blob-%d-%d", routineID, j))
-				comm, err := commitment.ComputeCommitment(data, namespace)
+				comm, err := commitment.ComputeCommitment(data, namespace, make([]byte, 20))
 				if err != nil {
 					errChan <- err
 					continue
@@ -314,7 +314,7 @@ func TestConcurrentBatchCreation(t *testing.T) {
 	blobIDs := make([]int64, numBlobs)
 	for i := 0; i < numBlobs; i++ {
 		data := []byte(fmt.Sprintf("blob-%d", i))
-		comm, _ := commitment.ComputeCommitment(data, namespace)
+		comm, _ := commitment.ComputeCommitment(data, namespace, make([]byte, 20))
 
 		blob := &db.Blob{
 			Commitment: comm,
@@ -412,7 +412,7 @@ func TestConcurrentCommitmentComputation(t *testing.T) {
 			for j := 0; j < computationsPerGoroutine; j++ {
 				data := []byte(fmt.Sprintf("data-%d-%d", routineID, j))
 
-				comm, err := commitment.ComputeCommitment(data, namespace)
+				comm, err := commitment.ComputeCommitment(data, namespace, make([]byte, 20))
 				if err != nil {
 					errChan <- err
 					continue
@@ -471,7 +471,7 @@ func TestRaceConditions(t *testing.T) {
 
 			for j := 0; j < 10; j++ {
 				data := []byte(fmt.Sprintf("data-%d-%d", id, j))
-				comm, _ := commitment.ComputeCommitment(data, namespace)
+				comm, _ := commitment.ComputeCommitment(data, namespace, make([]byte, 20))
 
 				blob := &db.Blob{
 					Commitment: comm,
@@ -542,7 +542,7 @@ func TestStressLoad(t *testing.T) {
 
 			for j := 0; j < opsPerGoroutine; j++ {
 				data := []byte(fmt.Sprintf("stress-%d-%d", routineID, j))
-				comm, err := commitment.ComputeCommitment(data, namespace)
+				comm, err := commitment.ComputeCommitment(data, namespace, make([]byte, 20))
 				if err != nil {
 					mu.Lock()
 					errorCount++
@@ -601,7 +601,7 @@ func TestConcurrentStatsAccess(t *testing.T) {
 	// Insert some blobs
 	for i := 0; i < 50; i++ {
 		data := []byte(fmt.Sprintf("blob-%d", i))
-		comm, _ := commitment.ComputeCommitment(data, namespace)
+		comm, _ := commitment.ComputeCommitment(data, namespace, make([]byte, 20))
 
 		blob := &db.Blob{
 			Commitment: comm,
@@ -653,7 +653,7 @@ func TestConcurrentDuplicateInserts(t *testing.T) {
 
 	// Same data (will produce same commitment)
 	data := []byte("duplicate-data")
-	comm, _ := commitment.ComputeCommitment(data, namespace)
+	comm, _ := commitment.ComputeCommitment(data, namespace, make([]byte, 20))
 
 	var wg sync.WaitGroup
 	successChan := make(chan bool, 10)
@@ -721,7 +721,7 @@ func TestDataIntegrity(t *testing.T) {
 			defer wg.Done()
 
 			data := []byte(fmt.Sprintf("integrity-test-data-%d", idx))
-			comm, _ := commitment.ComputeCommitment(data, namespace)
+			comm, _ := commitment.ComputeCommitment(data, namespace, make([]byte, 20))
 
 			blob := &db.Blob{
 				Commitment: comm,

@@ -23,15 +23,21 @@ func TestHTTP_PutBoundaries(t *testing.T) {
 	defer cleanup()
 
 	namespace := createTestNamespace(t)
+
+	// Create mock celestia store with test signer
+	testSignerAddr := make([]byte, 20)
+	for i := range testSignerAddr { testSignerAddr[i] = byte(i + 1) }
+	celestiaStore := &CelestiaStore{Log: log.New(), Namespace: namespace, SignerAddr: testSignerAddr}
 	batchCfg := batch.DefaultConfig()
 	workerCfg := worker.DefaultConfig()
 
 	server := &CelestiaServer{
-		store:       store,
-		namespace:   namespace,
-		batchCfg:    batchCfg,
-		workerCfg:   workerCfg,
-		log:         log.New(),
+		store:         store,
+		namespace:     namespace,
+		celestiaStore: celestiaStore,
+		batchCfg:      batchCfg,
+		workerCfg:     workerCfg,
+		log:           log.New(),
 	}
 
 	tests := []struct {
@@ -114,15 +120,21 @@ func TestHTTP_GetBoundaries(t *testing.T) {
 	defer cleanup()
 
 	namespace := createTestNamespace(t)
+
+	// Create mock celestia store with test signer
+	testSignerAddr := make([]byte, 20)
+	for i := range testSignerAddr { testSignerAddr[i] = byte(i + 1) }
+	celestiaStore := &CelestiaStore{Log: log.New(), Namespace: namespace, SignerAddr: testSignerAddr}
 	batchCfg := batch.DefaultConfig()
 	workerCfg := worker.DefaultConfig()
 
 	server := &CelestiaServer{
-		store:       store,
-		namespace:   namespace,
-		batchCfg:    batchCfg,
-		workerCfg:   workerCfg,
-		log:         log.New(),
+		store:         store,
+		namespace:     namespace,
+		celestiaStore: celestiaStore,
+		batchCfg:      batchCfg,
+		workerCfg:     workerCfg,
+		log:           log.New(),
 	}
 
 	tests := []struct {
@@ -227,16 +239,22 @@ func TestHTTP_ReadOnlyMode(t *testing.T) {
 	defer cleanup()
 
 	namespace := createTestNamespace(t)
+
+	// Create mock celestia store with test signer
+	testSignerAddr := make([]byte, 20)
+	for i := range testSignerAddr { testSignerAddr[i] = byte(i + 1) }
+	celestiaStore := &CelestiaStore{Log: log.New(), Namespace: namespace, SignerAddr: testSignerAddr}
 	batchCfg := batch.DefaultConfig()
 	workerCfg := worker.DefaultConfig()
 	workerCfg.ReadOnly = true
 
 	server := &CelestiaServer{
-		store:       store,
-		namespace:   namespace,
-		batchCfg:    batchCfg,
-		workerCfg:   workerCfg,
-		log:         log.New(),
+		store:         store,
+		namespace:     namespace,
+		celestiaStore: celestiaStore,
+		batchCfg:      batchCfg,
+		workerCfg:     workerCfg,
+		log:           log.New(),
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/put", bytes.NewReader([]byte("test data")))

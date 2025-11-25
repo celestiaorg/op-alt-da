@@ -220,7 +220,8 @@ func (w *BackfillWorker) indexBatch(ctx context.Context, celestiaBlob *blob.Blob
 		"height", height)
 
 	// 4. Persist to DB
-	batchID, err := w.persistBatch(ctx, batchCommitment, batchData, unpacked, height)
+	blobSigner := celestiaBlob.Signer()
+	batchID, err := w.persistBatch(ctx, batchCommitment, batchData, unpacked, blobSigner, height)
 	if err != nil {
 		return err
 	}
@@ -287,7 +288,7 @@ func (w *BackfillWorker) unpackBatch(batchData []byte, height uint64, commitment
 	return unpacked, nil
 }
 
-func (w *BackfillWorker) persistBatch(ctx context.Context, batchCommitment, batchData []byte, unpacked [][]byte, height uint64) (int64, error) {
+func (w *BackfillWorker) persistBatch(ctx context.Context, batchCommitment, batchData []byte, unpacked [][]byte, signerAddr []byte, height uint64) (int64, error) {
 	tx, err := w.store.BeginTx(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("begin transaction: %w", err)
@@ -314,7 +315,7 @@ func (w *BackfillWorker) persistBatch(ctx context.Context, batchCommitment, batc
 
 	successfulInserts := 0
 	for i, blobData := range unpacked {
-		if err := w.persistBlob(ctx, tx, blobData, batchID, i, height, now); err != nil {
+		if err := w.persistBlob(ctx, tx, blobData, signerAddr, batchID, i, height, now); err != nil {
 			return 0, err
 		}
 		successfulInserts++
@@ -331,8 +332,9 @@ func (w *BackfillWorker) persistBatch(ctx context.Context, batchCommitment, batc
 	return batchID, nil
 }
 
-func (w *BackfillWorker) persistBlob(ctx context.Context, tx *sql.Tx, blobData []byte, batchID int64, batchIndex int, height uint64, now time.Time) error {
-	blobCommitment, err := commitment.ComputeCommitment(blobData, w.namespace)
+func (w *BackfillWorker) persistBlob(ctx context.Context, tx *sql.Tx, blobData []byte, signerAddr []byte, batchID int64, batchIndex int, height uint64, now time.Time) error {
+	// Compute commitment using the same signer that was used when the blob was submitted to Celestia
+	blobCommitment, err := commitment.ComputeCommitment(blobData, w.namespace, signerAddr)
 	if err != nil {
 		w.log.Error("Failed to compute commitment for blob",
 			"batch_index", batchIndex,

@@ -49,8 +49,8 @@ func FuzzCommitmentDeterminism(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		// Compute commitment twice
-		commitment1, err1 := commitment.ComputeCommitment(data, ns)
-		commitment2, err2 := commitment.ComputeCommitment(data, ns)
+		commitment1, err1 := commitment.ComputeCommitment(data, ns, make([]byte, 20))
+		commitment2, err2 := commitment.ComputeCommitment(data, ns, make([]byte, 20))
 
 		// Both should have same error status
 		if (err1 == nil) != (err2 == nil) {
@@ -98,8 +98,8 @@ func FuzzCommitmentUniqueness(f *testing.F) {
 			t.Skip("identical data")
 		}
 
-		commitment1, err1 := commitment.ComputeCommitment(data1, ns)
-		commitment2, err2 := commitment.ComputeCommitment(data2, ns)
+		commitment1, err1 := commitment.ComputeCommitment(data1, ns, make([]byte, 20))
+		commitment2, err2 := commitment.ComputeCommitment(data2, ns, make([]byte, 20))
 
 		// Both should succeed or both should fail
 		if err1 != nil || err2 != nil {
@@ -136,7 +136,7 @@ func FuzzCommitmentSize(f *testing.F) {
 	f.Add(make([]byte, 1000000))  // 1MB
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		commitment, err := commitment.ComputeCommitment(data, ns)
+		commitment, err := commitment.ComputeCommitment(data, ns, make([]byte, 20))
 
 		if err != nil {
 			// Some sizes might be rejected, which is fine
@@ -175,7 +175,7 @@ func FuzzCommitmentStability(f *testing.F) {
 		// Compute commitment multiple times in sequence
 		commitments := make([][]byte, 10)
 		for i := 0; i < 10; i++ {
-			c, err := commitment.ComputeCommitment(data, ns)
+			c, err := commitment.ComputeCommitment(data, ns, make([]byte, 20))
 			if err != nil {
 				return
 			}
@@ -214,7 +214,7 @@ func FuzzCommitmentBytePatterns(f *testing.F) {
 		// Create data by repeating pattern
 		data := bytes.Repeat(pattern, int(repeats))
 
-		comm, err := commitment.ComputeCommitment(data, ns)
+		comm, err := commitment.ComputeCommitment(data, ns, make([]byte, 20))
 		if err != nil {
 			return // Some patterns might be invalid
 		}
@@ -223,7 +223,7 @@ func FuzzCommitmentBytePatterns(f *testing.F) {
 		require.Len(t, comm, 32)
 
 		// Should be deterministic
-		comm2, _ := commitment.ComputeCommitment(data, ns)
+		comm2, _ := commitment.ComputeCommitment(data, ns, make([]byte, 20))
 		require.Equal(t, comm, comm2)
 	})
 }
@@ -264,7 +264,7 @@ func FuzzCommitmentBoundaries(f *testing.F) {
 			data[i] = byte(i % 256)
 		}
 
-		commitment, err := commitment.ComputeCommitment(data, ns)
+		commitment, err := commitment.ComputeCommitment(data, ns, make([]byte, 20))
 		if err != nil {
 			return
 		}
@@ -285,7 +285,7 @@ func FuzzCommitmentConcurrent(f *testing.F) {
 		}
 
 		// Compute commitment once to get reference
-		reference, err := commitment.ComputeCommitment(data, ns)
+		reference, err := commitment.ComputeCommitment(data, ns, make([]byte, 20))
 		if err != nil {
 			t.Skip()
 		}
@@ -296,7 +296,7 @@ func FuzzCommitmentConcurrent(f *testing.F) {
 
 		for i := 0; i < 20; i++ {
 			go func() {
-				c, err := commitment.ComputeCommitment(data, ns)
+				c, err := commitment.ComputeCommitment(data, ns, make([]byte, 20))
 				if err != nil {
 					errors <- err
 					return
@@ -332,7 +332,7 @@ func FuzzCommitmentMemoryCorruption(f *testing.F) {
 	f.Fuzz(func(t *testing.T, data []byte) {
 		// Try to trigger memory issues
 		for i := 0; i < 3; i++ {
-			commitment, err := commitment.ComputeCommitment(data, ns)
+			commitment, err := commitment.ComputeCommitment(data, ns, make([]byte, 20))
 			if err == nil {
 				// Basic sanity checks
 				if len(commitment) != 32 {

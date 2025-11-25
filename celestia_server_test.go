@@ -50,12 +50,24 @@ func setupServerTest(t *testing.T) (*CelestiaServer, *db.BlobStore, func()) {
 
 	logger := log.NewLogger(log.DiscardHandler())
 
+	// Create a mock celestia store with signer address
+	testSignerAddr := make([]byte, 20)
+	for i := range testSignerAddr {
+		testSignerAddr[i] = byte(i + 1) // Non-zero test signer
+	}
+	celestiaStore := &CelestiaStore{
+		Log:        logger,
+		Namespace:  namespace,
+		SignerAddr: testSignerAddr,
+	}
+
 	server := &CelestiaServer{
-		log:       logger,
-		store:     store,
-		namespace: namespace,
-		batchCfg:  batch.DefaultConfig(),
-		workerCfg: worker.DefaultConfig(),
+		log:           logger,
+		store:         store,
+		namespace:     namespace,
+		celestiaStore: celestiaStore,
+		batchCfg:      batch.DefaultConfig(),
+		workerCfg:     worker.DefaultConfig(),
 	}
 
 	cleanup := func() {
@@ -91,7 +103,7 @@ func confirmBlobOnDA(t *testing.T, server *CelestiaServer, store *db.BlobStore, 
 	}
 
 	// Compute batch commitment
-	batchCommitment, err := commitment.ComputeCommitment(packedData, server.namespace)
+	batchCommitment, err := commitment.ComputeCommitment(packedData, server.namespace, make([]byte, 20))
 	if err != nil {
 		t.Fatalf("Failed to compute batch commitment: %v", err)
 	}
@@ -156,7 +168,7 @@ func TestHandleGet(t *testing.T) {
 
 	// Insert blob first
 	testData := []byte("test blob data for GET request")
-	comm, err := commitment.ComputeCommitment(testData, server.namespace)
+	comm, err := commitment.ComputeCommitment(testData, server.namespace, make([]byte, 20))
 	if err != nil {
 		t.Fatalf("ComputeCommitment failed: %v", err)
 	}
@@ -209,7 +221,7 @@ func TestHandleGet_WithoutVersionByte(t *testing.T) {
 
 	// Insert blob
 	testData := []byte("test data without version byte")
-	comm, _ := commitment.ComputeCommitment(testData, server.namespace)
+	comm, _ := commitment.ComputeCommitment(testData, server.namespace, make([]byte, 20))
 
 	blob := &db.Blob{
 		Commitment: comm,
@@ -352,7 +364,7 @@ func TestHandleStats(t *testing.T) {
 	statuses := []string{"pending_submission", "batched", "confirmed"}
 	for i, status := range statuses {
 		data := []byte(fmt.Sprintf("blob-%d", i))
-		comm, _ := commitment.ComputeCommitment(data, server.namespace)
+		comm, _ := commitment.ComputeCommitment(data, server.namespace, make([]byte, 20))
 
 		blob := &db.Blob{
 			Commitment: comm,
@@ -448,7 +460,7 @@ func TestPutGetRoundTrip(t *testing.T) {
 	}
 
 	// Compute batch commitment from packed data
-	batchCommitment, err := commitment.ComputeCommitment(packedData, server.namespace)
+	batchCommitment, err := commitment.ComputeCommitment(packedData, server.namespace, make([]byte, 20))
 	if err != nil {
 		t.Fatalf("Failed to compute batch commitment: %v", err)
 	}

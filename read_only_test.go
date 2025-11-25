@@ -47,12 +47,18 @@ func TestReadOnlyMode_BlocksPUT(t *testing.T) {
 	workerCfg := worker.DefaultConfig()
 	workerCfg.ReadOnly = true
 
+	// Create mock celestia store with test signer
+	testSignerAddr := make([]byte, 20)
+	for i := range testSignerAddr { testSignerAddr[i] = byte(i + 1) }
+	celestiaStore := &CelestiaStore{Log: logger, Namespace: namespace, SignerAddr: testSignerAddr}
+
 	server := &CelestiaServer{
-		log:       logger,
-		store:     store,
-		namespace: namespace,
-		batchCfg:  batch.DefaultConfig(),
-		workerCfg: workerCfg,
+		log:           logger,
+		store:         store,
+		namespace:     namespace,
+		celestiaStore: celestiaStore,
+		batchCfg:      batch.DefaultConfig(),
+		workerCfg:     workerCfg,
 	}
 
 	// Try to PUT data
@@ -103,12 +109,18 @@ func TestReadOnlyMode_AllowsGET(t *testing.T) {
 	workerCfg := worker.DefaultConfig()
 	workerCfg.ReadOnly = true
 
+	// Create mock celestia store with test signer
+	testSignerAddr := make([]byte, 20)
+	for i := range testSignerAddr { testSignerAddr[i] = byte(i + 1) }
+	celestiaStore := &CelestiaStore{Log: logger, Namespace: namespace, SignerAddr: testSignerAddr}
+
 	server := &CelestiaServer{
-		log:       logger,
-		store:     store,
-		namespace: namespace,
-		batchCfg:  batch.DefaultConfig(),
-		workerCfg: workerCfg,
+		log:           logger,
+		store:         store,
+		namespace:     namespace,
+		celestiaStore: celestiaStore,
+		batchCfg:      batch.DefaultConfig(),
+		workerCfg:     workerCfg,
 	}
 
 	// Try to GET data (should work even in read-only mode, though will return 404 for non-existent data)
@@ -159,12 +171,18 @@ func TestNormalMode_AllowsPUT(t *testing.T) {
 	workerCfg := worker.DefaultConfig()
 	workerCfg.ReadOnly = false
 
+	// Create mock celestia store with test signer
+	testSignerAddr := make([]byte, 20)
+	for i := range testSignerAddr { testSignerAddr[i] = byte(i + 1) }
+	celestiaStore := &CelestiaStore{Log: logger, Namespace: namespace, SignerAddr: testSignerAddr}
+
 	server := &CelestiaServer{
-		log:       logger,
-		store:     store,
-		namespace: namespace,
-		batchCfg:  batch.DefaultConfig(),
-		workerCfg: workerCfg,
+		log:           logger,
+		store:         store,
+		namespace:     namespace,
+		celestiaStore: celestiaStore,
+		batchCfg:      batch.DefaultConfig(),
+		workerCfg:     workerCfg,
 	}
 
 	// Try to PUT data
