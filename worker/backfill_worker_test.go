@@ -8,11 +8,18 @@ import (
 
 	"github.com/celestiaorg/celestia-node/blob"
 	libshare "github.com/celestiaorg/go-square/v3/share"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/celestiaorg/op-alt-da/batch"
 	"github.com/celestiaorg/op-alt-da/db"
+	"github.com/celestiaorg/op-alt-da/sdkconfig"
 )
+
+func init() {
+	// Configure SDK to use Celestia Bech32 prefix
+	sdkconfig.InitCelestiaPrefix()
+}
 
 // TestBackfillWorker_IndexBatch tests indexing a discovered batch
 func TestBackfillWorker_IndexBatch(t *testing.T) {
@@ -100,6 +107,10 @@ func TestBackfillWorker_SignerVerification(t *testing.T) {
 		t.Fatalf("NewBlobV1 failed: %v", err)
 	}
 
+	// Convert test signer to Bech32 format
+	trustedSignerAddr := sdk.AccAddress(trustedSigner)
+	trustedSignerBech32 := trustedSignerAddr.String()
+
 	tests := []struct {
 		name           string
 		trustedSigners []string
@@ -111,18 +122,18 @@ func TestBackfillWorker_SignerVerification(t *testing.T) {
 			expectError:    false,
 		},
 		{
-			name:           "matching trusted signer (hex)",
-			trustedSigners: []string{fmt.Sprintf("%x", trustedSigner)},
+			name:           "matching trusted signer (Bech32)",
+			trustedSigners: []string{trustedSignerBech32},
 			expectError:    false,
 		},
 		{
 			name:           "non-matching trusted signer",
-			trustedSigners: []string{"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"},
+			trustedSigners: []string{"celestia1qqgjyv6y24n80zye42aueh0wluqsyqcyf07sls"},
 			expectError:    true,
 		},
 		{
 			name:           "multiple signers with match",
-			trustedSigners: []string{"1111111111111111111111111111111111111111", fmt.Sprintf("%x", trustedSigner)},
+			trustedSigners: []string{"celestia1qqgjyv6y24n80zye42aueh0wluqsyqcyf07sls", trustedSignerBech32},
 			expectError:    false,
 		},
 	}
@@ -191,7 +202,8 @@ func TestBackfillWorker_RejectUnsignedBlob(t *testing.T) {
 	mock := &mockCelestiaAPI{}
 	workerCfg := DefaultConfig()
 	workerCfg.StartHeight = 1
-	workerCfg.TrustedSigners = []string{"aa00000000000000000000000000000000000000"}
+	// Use a Bech32 address
+	workerCfg.TrustedSigners = []string{"celestia15m7s9d0ldd9ur9mgh9m6r4kc396dp68szwqmyc"}
 	logger := log.NewLogger(log.DiscardHandler())
 	worker := NewBackfillWorker(store, mock, namespace, batchCfg, workerCfg, nil, logger)
 

@@ -152,10 +152,10 @@ reconcile_age = "12s"
 # Timeout for Celestia Get operations during reconciliation
 get_timeout = "30s"
 
-# Comma-separated Celestia addresses (hex format) of trusted write servers
-# Example: ["a1b2c3d4e5f6789012345678901234567890abcd", "1234567890abcdef1234567890abcdef12345678"]
-# REQUIRED for read-only mode to prevent Woods attack
+# Trusted write server signers (REQUIRED for read-only mode to prevent Woods attack)
+# Must be Celestia Bech32 addresses (format defined by celestia-app)
 # Get your writer's signer address from logs: "Celestia signer address configured"
+# Example: trusted_signers = ["celestia15m7s9d0ldd9ur9mgh9m6r4kc396dp68szwqmyc"]
 trusted_signers = []
 
 # ==============================================================================

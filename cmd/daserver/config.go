@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/celestiaorg/celestia-app/v6/app/params"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
 // Config represents the complete application configuration
@@ -162,11 +164,9 @@ func (c *Config) Validate() error {
 		if len(c.Worker.TrustedSigners) == 0 {
 			return fmt.Errorf("read-only mode requires worker.trusted_signers to be configured for security (prevents Woods attack)")
 		}
-		// Validate trusted signers format (should be 40-char hex)
-		for i, signer := range c.Worker.TrustedSigners {
-			if len(signer) != 40 {
-				return fmt.Errorf("worker.trusted_signers[%d] must be 40 hex characters (20 bytes)", i)
-			}
+		// Validate trusted signers are valid Bech32 addresses
+		if err := validateTrustedSigners(c.Worker.TrustedSigners); err != nil {
+			return fmt.Errorf("invalid worker.trusted_signers: %w", err)
 		}
 	}
 
@@ -326,4 +326,31 @@ func (c *Config) ConvertToEnvVars() map[string]string {
 	}
 
 	return env
+}
+
+// validateTrustedSigners validates that all signers are valid Celestia Bech32 addresses
+// Only accepts Bech32 format with the official Celestia prefix from celestia-app
+func validateTrustedSigners(signers []string) error {
+	for i, signer := range signers {
+		signer = strings.TrimSpace(signer)
+
+		// Must be a Celestia Bech32 address with the official prefix
+		if !strings.HasPrefix(signer, params.Bech32PrefixAccAddr) {
+			return fmt.Errorf("signer[%d] must be a Celestia Bech32 address starting with %q, got: %q",
+				i, params.Bech32PrefixAccAddr, signer)
+		}
+
+		// Validate it's a valid Bech32 address by trying to decode it
+		addr, err := sdk.AccAddressFromBech32(signer)
+		if err != nil {
+			return fmt.Errorf("signer[%d] invalid Bech32 address %q: %w", i, signer, err)
+		}
+
+		// Verify it decodes to 20 bytes (Celestia address format)
+		if len(addr) != 20 {
+			return fmt.Errorf("signer[%d] Bech32 address %q decoded to %d bytes (expected 20)", i, signer, len(addr))
+		}
+	}
+
+	return nil
 }

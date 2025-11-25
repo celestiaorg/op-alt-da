@@ -11,12 +11,17 @@ import (
 	"github.com/ethereum-optimism/optimism/op-service/cliapp"
 	"github.com/ethereum-optimism/optimism/op-service/ctxinterrupt"
 	oplog "github.com/ethereum-optimism/optimism/op-service/log"
+
+	"github.com/celestiaorg/op-alt-da/sdkconfig"
 )
 
 var Version = "v0.0.1"
 
 func main() {
 	oplog.SetupDefaults()
+
+	// Configure Cosmos SDK for Celestia Bech32 addresses
+	sdkconfig.InitCelestiaPrefix()
 
 	// Load TOML config BEFORE creating the CLI app so env vars are set before flag parsing
 	// Check if --config flag is in os.Args

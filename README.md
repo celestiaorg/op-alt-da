@@ -173,7 +173,7 @@ celestia-appd keys add my_key --keyring-backend test --home ~/.celestia-light-mo
 # 3. Get signer address (for read-only servers)
 # Check logs after first submission:
 grep "Celestia signer address configured" /var/log/celestia-da.log
-# Output: signer_hex=a1b2c3d4e5f6789012345678901234567890abcd
+# Output: signer_bech32=celestia15m7s9d0ldd9ur9mgh9m6r4kc396dp68szwqmyc
 ```
 
 ### Read-Only Server (op-node sidecar)
@@ -192,7 +192,7 @@ da_rpc_server = "..."
 
 [worker]
 trusted_signers = [
-  "a1b2c3d4e5f6789012345678901234567890abcd"  # From writer logs
+  "celestia15m7s9d0ldd9ur9mgh9m6r4kc396dp68szwqmyc"  # Bech32 address from writer logs
 ]
 
 [backfill]

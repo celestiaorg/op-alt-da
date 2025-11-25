@@ -15,6 +15,7 @@ import (
 	"github.com/celestiaorg/celestia-node/state"
 	libshare "github.com/celestiaorg/go-square/v3/share"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	altda "github.com/ethereum-optimism/optimism/op-alt-da"
 	"github.com/ethereum/go-ethereum/log"
 )
@@ -153,7 +154,10 @@ func NewCelestiaStore(ctx context.Context, cfg RPCClientConfig) (*CelestiaStore,
 
 	// Log signer address for verification
 	if len(signerAddr) == 20 && !isZeroAddress(signerAddr) {
-		logger.Info("Celestia signer address configured", "signer_hex", hex.EncodeToString(signerAddr))
+		signerBech32 := sdk.AccAddress(signerAddr).String()
+		logger.Info("Celestia signer address configured",
+			"signer_bech32", signerBech32,
+			"signer_hex", hex.EncodeToString(signerAddr))
 	}
 
 	return &CelestiaStore{

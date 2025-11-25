@@ -4,12 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/celestiaorg/celestia-node/blob"
 	blobAPI "github.com/celestiaorg/celestia-node/nodebuilder/blob"
 	libshare "github.com/celestiaorg/go-square/v3/share"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/celestiaorg/op-alt-da/batch"
@@ -250,12 +250,15 @@ func (w *BackfillWorker) verifySigner(celestiaBlob *blob.Blob, height uint64) er
 		return fmt.Errorf("blob has no signer, rejecting for security")
 	}
 
-	blobSignerHex := fmt.Sprintf("%x", blobSigner)
+	// Convert blob signer (raw bytes) to Bech32 address for comparison
+	blobSignerAddr := sdk.AccAddress(blobSigner)
+	blobSignerBech32 := blobSignerAddr.String()
+
 	for _, trustedSigner := range w.workerCfg.TrustedSigners {
-		if strings.EqualFold(blobSignerHex, trustedSigner) {
+		if blobSignerBech32 == trustedSigner {
 			w.log.Debug("Blob signer verified",
 				"height", height,
-				"signer", blobSignerHex,
+				"signer", blobSignerBech32,
 				"matched_trusted_signer", trustedSigner)
 			return nil
 		}
@@ -264,7 +267,7 @@ func (w *BackfillWorker) verifySigner(celestiaBlob *blob.Blob, height uint64) er
 	w.log.Warn("Rejecting blob from untrusted signer (potential attack)",
 		"height", height,
 		"commitment", fmt.Sprintf("%x", celestiaBlob.Commitment),
-		"blob_signer", blobSignerHex,
+		"blob_signer", blobSignerBech32,
 		"trusted_signers", fmt.Sprintf("%v", w.workerCfg.TrustedSigners))
 	return fmt.Errorf("blob signer does not match any trusted signer, rejecting")
 }
