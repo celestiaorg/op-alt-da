@@ -76,18 +76,31 @@ func (l *EventListener) Run(ctx context.Context) error {
 }
 
 func (l *EventListener) reconcileUnconfirmed(ctx context.Context) error {
-	// Get batches older than configured age that are not confirmed
+	// Get total count of all unconfirmed batches (regardless of age)
+	totalUnconfirmed, err := l.store.CountUnconfirmedBatches(ctx)
+	if err != nil {
+		return fmt.Errorf("count unconfirmed batches: %w", err)
+	}
+
+	// Get batches older than configured age that need reconciliation
 	batches, err := l.store.GetUnconfirmedBatches(ctx, l.workerCfg.ReconcileAge)
 	if err != nil {
 		return fmt.Errorf("get unconfirmed batches: %w", err)
 	}
 
 	if len(batches) == 0 {
-		l.log.Debug("No unconfirmed batches to reconcile")
+		if totalUnconfirmed > 0 {
+			l.log.Debug("No batches ready for reconciliation",
+				"total_unconfirmed", totalUnconfirmed,
+				"min_age", l.workerCfg.ReconcileAge)
+		}
 		return nil
 	}
 
-	l.log.Info("Reconciling unconfirmed batches", "count", len(batches))
+	l.log.Info("Reconciling unconfirmed batches",
+		"ready_for_reconciliation", len(batches),
+		"total_unconfirmed", totalUnconfirmed,
+		"min_age", l.workerCfg.ReconcileAge)
 
 	for _, batch := range batches {
 		if err := l.reconcileBatch(ctx, batch); err != nil {

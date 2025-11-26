@@ -23,6 +23,7 @@ type Config struct {
 	BackfillEnabled bool          // Enable backfill worker for read-only servers
 	StartHeight     uint64        // Celestia block height to start syncing from
 	BackfillPeriod  time.Duration // How often to scan for new Celestia blocks
+	BlocksPerScan   int           // How many blocks to scan per iteration (default: 10)
 }
 
 // DefaultConfig returns default worker configuration
@@ -40,5 +41,6 @@ func DefaultConfig() *Config {
 		BackfillEnabled: false,
 		StartHeight:     0,
 		BackfillPeriod:  15 * time.Second, // Check for new blocks every 15s
+		BlocksPerScan:   10,               // Scan 10 blocks per iteration
 	}
 }

@@ -14,7 +14,6 @@ import (
 
 	celestia "github.com/celestiaorg/op-alt-da"
 	"github.com/celestiaorg/op-alt-da/backup"
-	"github.com/celestiaorg/op-alt-da/batch"
 	"github.com/celestiaorg/op-alt-da/db"
 	s3store "github.com/celestiaorg/op-alt-da/s3"
 	"github.com/celestiaorg/op-alt-da/worker"
@@ -31,7 +30,7 @@ const (
 	BatchMinBlobsFlagName    = "batch.min-blobs"
 	BatchMaxBlobsFlagName    = "batch.max-blobs"
 	BatchTargetBlobsFlagName = "batch.target-blobs"
-	BatchMaxSizeFlagName     = "batch.max-size-mb"
+	BatchMaxSizeFlagName     = "batch.max-size-kb"
 	BatchMinSizeFlagName     = "batch.min-size-kb"
 
 	// Worker configuration
@@ -44,13 +43,14 @@ const (
 	WorkerGetTimeoutFlagName      = "worker.get-timeout"
 
 	// Read-only configuration
-	ReadOnlyFlagName      = "read-only"
-	TrustedSignerFlagName = "trusted-signer"
+	ReadOnlyFlagName       = "read-only"
+	TrustedSignersFlagName = "trusted-signers"
 
 	// Backfill configuration
-	BackfillEnabledFlagName     = "backfill.enabled"
-	BackfillStartHeightFlagName = "backfill.start-height"
-	BackfillPeriodFlagName      = "backfill.period"
+	BackfillEnabledFlagName      = "backfill.enabled"
+	BackfillStartHeightFlagName  = "backfill.start-height"
+	BackfillPeriodFlagName       = "backfill.period"
+	BackfillBlocksPerScanFlagName = "backfill.blocks-per-scan"
 )
 
 var (
@@ -98,9 +98,9 @@ var (
 	}
 	BatchMaxSizeFlag = &cli.IntFlag{
 		Name:    BatchMaxSizeFlagName,
-		Usage:   "maximum batch size in MB",
-		Value:   1,
-		EnvVars: prefixEnvVars("BATCH_MAX_SIZE_MB"),
+		Usage:   "maximum batch size in KB (use KB for precision, e.g., 1800 for 1.8MB)",
+		Value:   1024,
+		EnvVars: prefixEnvVars("BATCH_MAX_SIZE_KB"),
 	}
 	BatchMinSizeFlag = &cli.IntFlag{
 		Name:    BatchMinSizeFlagName,
@@ -156,11 +156,11 @@ var (
 		Value:   false,
 		EnvVars: prefixEnvVars("READ_ONLY"),
 	}
-	TrustedSignerFlag = &cli.StringFlag{
-		Name:    TrustedSignerFlagName,
+	TrustedSignersFlag = &cli.StringFlag{
+		Name:    TrustedSignersFlagName,
 		Usage:   "Comma-separated Celestia addresses of trusted write servers (CIP-21 signer verification for HA failover)",
 		Value:   "",
-		EnvVars: prefixEnvVars("TRUSTED_SIGNER"),
+		EnvVars: prefixEnvVars("TRUSTED_SIGNERS"),
 	}
 	BackfillEnabledFlag = &cli.BoolFlag{
 		Name:    BackfillEnabledFlagName,
@@ -180,48 +180,30 @@ var (
 		Value:   15 * time.Second,
 		EnvVars: prefixEnvVars("BACKFILL_PERIOD"),
 	}
+	BackfillBlocksPerScanFlag = &cli.IntFlag{
+		Name:    BackfillBlocksPerScanFlagName,
+		Usage:   "how many blocks to scan per backfill iteration (Celestia Mocha: ~10 blocks/min, default: 10)",
+		Value:   10,
+		EnvVars: prefixEnvVars("BACKFILL_BLOCKS_PER_SCAN"),
+	}
 )
 
-// LoadTOMLConfigIfPresent loads TOML config and sets environment variables BEFORE flag parsing
-// This is called as app.Before hook to ensure env vars are set before CLI context is created
-func LoadTOMLConfigIfPresent(cliCtx *cli.Context) error {
-	configFile := cliCtx.String(ConfigFileFlagName)
-	if configFile == "" {
-		// No TOML config, use env vars and CLI flags
-		return nil
-	}
-
-	// Load and validate TOML config
-	tomlCfg, err := LoadConfig(configFile)
-	if err != nil {
-		return fmt.Errorf("failed to load config file '%s': %w", configFile, err)
-	}
-
-	// Validate TOML config
-	if err := tomlCfg.Validate(); err != nil {
-		return fmt.Errorf("invalid config in '%s': %w", configFile, err)
-	}
-
-	// Convert TOML to env vars and set them BEFORE CLI context processes flags
-	envVars := tomlCfg.ConvertToEnvVars()
-	for key, value := range envVars {
-		os.Setenv(key, value)
-	}
-
-	return nil
-}
+// Note: LoadTOMLConfigIfPresent() has been removed as part of idiomatic Go refactor
+// TOML config is now loaded directly in StartDAServer() without environment variable conversion
 
 func StartDAServer(cliCtx *cli.Context) error {
 	// Initialize logger early for warnings
 	logCfg := oplog.ReadCLIConfig(cliCtx)
 	l := oplog.NewLogger(oplog.AppOut(cliCtx), logCfg)
 
-	// Check if TOML config file is specified
 	configFile := cliCtx.String(ConfigFileFlagName)
+	var runtimeCfg *RuntimeConfig
+	var cfg CLIConfig
+	var err error
+
 	if configFile != "" {
 		l.Info("Loading configuration from TOML file", "path", configFile)
 
-		// Config was already loaded in Before hook, just re-load for validation messages
 		tomlCfg, err := LoadConfig(configFile)
 		if err != nil {
 			return fmt.Errorf("failed to load config file '%s': %w", configFile, err)
@@ -230,24 +212,31 @@ func StartDAServer(cliCtx *cli.Context) error {
 			return fmt.Errorf("invalid config in '%s': %w", configFile, err)
 		}
 
+		runtimeCfg, err = BuildConfigFromTOML(tomlCfg)
+		if err != nil {
+			return fmt.Errorf("failed to build config from TOML: %w", err)
+		}
+
+		cfg = runtimeCfg.CelestiaConfig
+
 		l.Info("✓ TOML configuration loaded and validated successfully")
 		l.Info("Configuration source: TOML file", "path", configFile)
-		l.Info("Note: Environment variables were set from TOML in main() before CLI parsing")
-
-		// Skip CheckRequired when using TOML - we already validated the config
-		// CheckRequired uses ctx.IsSet() which only checks command-line flags,
-		// not environment variables set programmatically
 	} else {
 		l.Info("Configuration source: Environment variables and CLI flags")
 		l.Info("Tip: Use --config config.toml for production deployments")
 
-		// Only check required flags when NOT using TOML config
 		if err := CheckRequired(cliCtx); err != nil {
 			return err
 		}
+
+		runtimeCfg, err = BuildConfigFromCLI(cliCtx)
+		if err != nil {
+			return fmt.Errorf("failed to build config from CLI: %w", err)
+		}
+
+		cfg = runtimeCfg.CelestiaConfig
 	}
 
-	cfg := ReadCLIConfig(cliCtx)
 	if err := cfg.Check(); err != nil {
 		return err
 	}
@@ -277,13 +266,14 @@ func StartDAServer(cliCtx *cli.Context) error {
 	}
 	l.Info("========================================")
 
-	dbPath := cliCtx.String(DBPathFlagName)
-	l.Info("Opening database", "path", dbPath)
+	// Use runtime config that was built from either TOML or CLI
+	l.Info("Opening database", "path", runtimeCfg.DBPath)
 
-	store, err := db.NewBlobStore(dbPath)
+	store, err := db.NewBlobStore(runtimeCfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
+
 	// Initialize Celestia store (for client access)
 	l.Info("Connecting to Celestia", "url", cfg.CelestiaConfig().URL)
 	celestiaStore, err := celestia.NewCelestiaStore(cliCtx.Context, cfg.CelestiaConfig())
@@ -291,78 +281,36 @@ func StartDAServer(cliCtx *cli.Context) error {
 		return fmt.Errorf("failed to connect to Celestia: %w", err)
 	}
 
-	batchCfg := &batch.Config{
-		MinBlobs:          cliCtx.Int(BatchMinBlobsFlagName),
-		MaxBlobs:          cliCtx.Int(BatchMaxBlobsFlagName),
-		TargetBlobs:       cliCtx.Int(BatchTargetBlobsFlagName),
-		MaxBatchSizeBytes: cliCtx.Int(BatchMaxSizeFlagName) * 1024 * 1024, // Convert MB to bytes
-		MinBatchSizeBytes: cliCtx.Int(BatchMinSizeFlagName) * 1024,        // Convert KB to bytes
-	}
-
-	if err := batchCfg.Validate(); err != nil {
-		return fmt.Errorf("invalid batch configuration: %w", err)
-	}
-
+	// Log batch configuration
 	l.Info("Batch configuration",
-		"min_blobs", batchCfg.MinBlobs,
-		"max_blobs", batchCfg.MaxBlobs,
-		"target_blobs", batchCfg.TargetBlobs,
-		"max_size_mb", cliCtx.Int(BatchMaxSizeFlagName),
-		"min_size_kb", cliCtx.Int(BatchMinSizeFlagName))
+		"min_blobs", runtimeCfg.BatchConfig.MinBlobs,
+		"max_blobs", runtimeCfg.BatchConfig.MaxBlobs,
+		"target_blobs", runtimeCfg.BatchConfig.TargetBlobs,
+		"max_size_kb", runtimeCfg.BatchConfig.MaxBatchSizeBytes/1024,
+		"min_size_kb", runtimeCfg.BatchConfig.MinBatchSizeBytes/1024)
 
-	// Parse trusted signers from comma-separated string
-	var trustedSigners []string
-	trustedSignerStr := cliCtx.String(TrustedSignerFlagName)
-	if trustedSignerStr != "" {
-		// Split by comma and trim whitespace
-		for _, signer := range strings.Split(trustedSignerStr, ",") {
-			trimmed := strings.TrimSpace(signer)
-			if trimmed != "" {
-				trustedSigners = append(trustedSigners, trimmed)
-			}
-		}
-	}
-
-	workerCfg := &worker.Config{
-		SubmitPeriod:    cliCtx.Duration(WorkerSubmitPeriodFlagName),
-		SubmitTimeout:   cliCtx.Duration(WorkerSubmitTimeoutFlagName),
-		MaxRetries:      cliCtx.Int(WorkerMaxRetriesFlagName),
-		MaxBlobWaitTime: cliCtx.Duration(WorkerMaxBlobWaitTimeFlagName),
-		ReconcilePeriod: cliCtx.Duration(WorkerReconcilePeriodFlagName),
-		ReconcileAge:    cliCtx.Duration(WorkerReconcileAgeFlagName),
-		GetTimeout:      cliCtx.Duration(WorkerGetTimeoutFlagName),
-		ReadOnly:        cliCtx.Bool(ReadOnlyFlagName),
-		TrustedSigners:  trustedSigners,
-		BackfillEnabled: cliCtx.Bool(BackfillEnabledFlagName),
-		StartHeight:     cliCtx.Uint64(BackfillStartHeightFlagName),
-		BackfillPeriod:  cliCtx.Duration(BackfillPeriodFlagName),
-	}
-
-	if err := validateWorkerConfig(workerCfg); err != nil {
-		return fmt.Errorf("invalid worker configuration: %w", err)
-	}
-
+	// Log worker configuration
 	l.Info("Worker configuration",
-		"read_only", workerCfg.ReadOnly,
-		"trusted_signers", strings.Join(workerCfg.TrustedSigners, ","),
-		"submit_period", workerCfg.SubmitPeriod,
-		"submit_timeout", workerCfg.SubmitTimeout,
-		"max_retries", workerCfg.MaxRetries,
-		"max_blob_wait_time", workerCfg.MaxBlobWaitTime,
-		"reconcile_period", workerCfg.ReconcilePeriod,
-		"reconcile_age", workerCfg.ReconcileAge,
-		"get_timeout", workerCfg.GetTimeout,
-		"backfill_enabled", workerCfg.BackfillEnabled,
-		"start_height", workerCfg.StartHeight,
-		"backfill_period", workerCfg.BackfillPeriod)
+		"read_only", runtimeCfg.WorkerConfig.ReadOnly,
+		"trusted_signers", strings.Join(runtimeCfg.WorkerConfig.TrustedSigners, ","),
+		"submit_period", runtimeCfg.WorkerConfig.SubmitPeriod,
+		"submit_timeout", runtimeCfg.WorkerConfig.SubmitTimeout,
+		"max_retries", runtimeCfg.WorkerConfig.MaxRetries,
+		"max_blob_wait_time", runtimeCfg.WorkerConfig.MaxBlobWaitTime,
+		"reconcile_period", runtimeCfg.WorkerConfig.ReconcilePeriod,
+		"reconcile_age", runtimeCfg.WorkerConfig.ReconcileAge,
+		"get_timeout", runtimeCfg.WorkerConfig.GetTimeout,
+		"backfill_enabled", runtimeCfg.WorkerConfig.BackfillEnabled,
+		"start_height", runtimeCfg.WorkerConfig.StartHeight,
+		"backfill_period", runtimeCfg.WorkerConfig.BackfillPeriod)
 
 	server := celestia.NewCelestiaServer(
-		cliCtx.String(ListenAddrFlagName),
-		cliCtx.Int(PortFlagName),
+		runtimeCfg.Addr,
+		runtimeCfg.Port,
 		store,
 		celestiaStore,
-		batchCfg,
-		workerCfg,
+		runtimeCfg.BatchConfig,
+		runtimeCfg.WorkerConfig,
 		cfg.MetricsEnabled,
 		cfg.MetricsPort,
 		l,
@@ -384,10 +332,15 @@ func StartDAServer(cliCtx *cli.Context) error {
 	})
 
 	// Start S3 backup service if enabled
-	if cliCtx.Bool(BackupEnabledFlagName) {
+	if runtimeCfg.BackupEnabled {
 		// Check if S3 is configured (bucket must be set)
 		if cfg.S3Config.Bucket != "" {
-			l.Info("S3 backup enabled", "interval", cliCtx.Duration(BackupIntervalFlagName))
+			backupInterval, err := time.ParseDuration(runtimeCfg.BackupInterval)
+			if err != nil {
+				return fmt.Errorf("invalid backup interval: %w", err)
+			}
+
+			l.Info("S3 backup enabled", "interval", backupInterval)
 
 			s3Store, err := s3store.NewS3(cfg.S3Config)
 			if err != nil {
@@ -400,8 +353,8 @@ func StartDAServer(cliCtx *cli.Context) error {
 			backupService := backup.NewS3BackupService(
 				sqlDB,
 				s3Store,
-				dbPath,
-				cliCtx.Duration(BackupIntervalFlagName),
+				runtimeCfg.DBPath,
+				backupInterval,
 				l.New("component", "s3_backup"),
 			)
 

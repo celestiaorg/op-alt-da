@@ -58,8 +58,6 @@ type CelestiaServer struct {
 	metricsRegistry *prometheus.Registry
 	celestiaMetrics *metrics.CelestiaMetrics
 
-	// Time-to-availability tracking (Option A)
-	// Maps commitment hex string -> first request time
 	firstRequestTimes sync.Map
 }
 
@@ -88,7 +86,7 @@ func NewCelestiaServer(
 	server := &CelestiaServer{
 		log:             log,
 		endpoint:        endpoint,
-		host:            host, // Store host for metrics server
+		host:            host,
 		store:           store,
 		namespace:       celestiaStore.Namespace,
 		celestiaStore:   celestiaStore,
@@ -100,8 +98,8 @@ func NewCelestiaServer(
 		celestiaMetrics: celestiaMetrics,
 		httpServer: &http.Server{
 			Addr:         endpoint,
-			ReadTimeout:  30 * time.Second,  // Prevent slow client attacks
-			WriteTimeout: 30 * time.Second,  // Prevent slow writes
+			ReadTimeout:  30 * time.Second,
+			WriteTimeout: 30 * time.Second,
 			IdleTimeout:  120 * time.Second, // Close idle connections
 		},
 	}
@@ -310,8 +308,7 @@ func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 		s.celestiaMetrics.RecordBlobSize(len(blobData))
 	}
 
-	// Pre-compute commitment (deterministic)
-	// IMPORTANT: Must use the same signer that will be used for submission
+	// Compute commitment using the same signer as submission
 	blobCommitment, err := commitment.ComputeCommitment(blobData, s.namespace, s.celestiaStore.SignerAddr)
 	if err != nil {
 		s.log.Error("Failed to compute commitment", "error", err)
@@ -319,17 +316,14 @@ func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Debug: log full commitment details
 	s.log.Debug("Computed commitment",
 		"length", len(blobCommitment),
 		"full_hex", hex.EncodeToString(blobCommitment),
 		"truncated", hex.EncodeToString(blobCommitment[:min(8, len(blobCommitment))]))
 
-	// Check if blob already exists (idempotent PUT behavior)
 	existingBlob, err := s.store.GetBlobByCommitment(r.Context(), blobCommitment)
 	if err == nil {
-		// Blob already exists - return existing commitment (idempotent, normal behavior)
-		s.log.Debug("Blob retrieved from cache (already submitted)",
+		s.log.Debug("Blob already exists (idempotent)",
 			"blob_id", existingBlob.ID,
 			"size", len(blobData),
 			"commitment", hex.EncodeToString(blobCommitment),
@@ -337,7 +331,6 @@ func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 			"latency_ms", time.Since(startTime).Milliseconds())
 
 		// Return commitment in GenericCommitment format (binary bytes)
-		// Format: [commitment_type_byte][version_byte][blob_commitment]
 		genericComm := altda.NewGenericCommitment(append([]byte{VersionByte}, blobCommitment...))
 		encodedComm := genericComm.Encode()
 
@@ -381,7 +374,7 @@ func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 		"latency_ms", time.Since(startTime).Milliseconds())
 
 	// Return commitment in GenericCommitment format (binary bytes)
-	// This matches OP-Batcher expectations: [commitment_type_byte][version_byte][blob_commitment]
+	// [commitment_type_byte][version_byte][blob_commitment]
 	genericComm := altda.NewGenericCommitment(append([]byte{VersionByte}, blobCommitment...))
 	encodedComm := genericComm.Encode()
 
@@ -449,18 +442,12 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	// Try to decode as GenericCommitment first
 	_, decodeErr := altda.DecodeCommitmentData(encodedCommitment)
 	if decodeErr == nil && len(encodedCommitment) >= 34 {
-		// Successfully decoded GenericCommitment
-		// Format: [type_byte][version_byte][32_byte_blob_commitment]
-		// Extract just the blob commitment (skip first 2 bytes)
 		if encodedCommitment[1] == VersionByte {
 			requestedCommitment = encodedCommitment[2:]
 		} else {
-			// Fallback: might have different format
 			requestedCommitment = encodedCommitment[1:]
 		}
 	} else {
-		// Not GenericCommitment format - treat as raw commitment
-		// Check if it starts with version byte
 		if len(encodedCommitment) > 1 && encodedCommitment[0] == VersionByte {
 			requestedCommitment = encodedCommitment[1:]
 		} else {
@@ -468,21 +455,18 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Debug: log what we're looking for
 	s.log.Info("GET request details",
 		"encoded_length", len(encodedCommitment),
 		"encoded_hex", hex.EncodeToString(encodedCommitment),
 		"commitment_length", len(requestedCommitment),
 		"commitment_hex", hex.EncodeToString(requestedCommitment))
 
-	// Option A: Track first request time for this commitment (time-to-availability)
 	commitmentKey := hex.EncodeToString(requestedCommitment)
 	s.firstRequestTimes.LoadOrStore(commitmentKey, startTime)
 
 	// Defer cleanup to prevent memory leak (remove after 1 hour or on success)
 	defer func() {
 		if rw.statusCode == http.StatusOK {
-			// Success - record time to availability from FIRST request
 			if firstTime, ok := s.firstRequestTimes.Load(commitmentKey); ok && s.celestiaMetrics != nil {
 				firstRequestTime := firstTime.(time.Time)
 				timeToAvailability := time.Since(firstRequestTime)
@@ -492,18 +476,14 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 					"time_to_availability_seconds", timeToAvailability.Seconds(),
 					"first_request_time", firstRequestTime.Format(time.RFC3339))
 			}
-			// Clean up - blob is now available
 			s.firstRequestTimes.Delete(commitmentKey)
 		}
 	}()
 
-	// Query database for blob metadata
 	blob, err := s.store.GetBlobByCommitment(r.Context(), requestedCommitment)
 	if err == db.ErrBlobNotFound {
-		// Not found as individual blob - try as batch commitment
 		batch, batchErr := s.store.GetBatchByCommitment(r.Context(), requestedCommitment)
 		if batchErr == db.ErrBatchNotFound {
-			// Not found in our DB
 			s.log.Warn("Blob not found in DB",
 				"commitment", hex.EncodeToString(requestedCommitment))
 			http.Error(rw, "blob not found", http.StatusNotFound)
@@ -515,7 +495,6 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Check if batch is confirmed on DA layer
 		if batch.Status != "confirmed" || batch.CelestiaHeight == nil {
 			s.log.Warn("Batch not yet confirmed on DA layer",
 				"batch_id", batch.BatchID,
@@ -546,73 +525,20 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Only return blob if it's confirmed on DA layer
-	if blob.Status != "confirmed" || blob.CelestiaHeight == nil || blob.BatchID == nil {
+	if blob.Status != "confirmed" || blob.CelestiaHeight == nil {
 		s.log.Warn("Blob not yet confirmed on DA layer",
 			"blob_id", blob.ID,
 			"status", blob.Status,
-			"has_height", blob.CelestiaHeight != nil,
-			"has_batch", blob.BatchID != nil)
+			"has_height", blob.CelestiaHeight != nil)
 		http.Error(rw, "blob not yet available on DA layer", http.StatusNotFound)
 		return
 	}
 
-	// Blob is confirmed - get batch from DB
-	s.log.Debug("Retrieving blob from confirmed batch",
+	blobData := blob.Data
+	s.log.Debug("Retrieved blob from database",
 		"blob_id", blob.ID,
-		"batch_id", *blob.BatchID,
+		"size", len(blobData),
 		"height", *blob.CelestiaHeight)
-
-	// Get batch metadata and data from DB
-	batchRecord, err := s.store.GetBatchByID(r.Context(), *blob.BatchID)
-	if err != nil {
-		s.log.Error("Failed to get batch metadata", "batch_id", *blob.BatchID, "error", err)
-		http.Error(rw, "failed to get batch metadata: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Use cached batch data from database
-	// This is faster than fetching from Celestia every time, and we know it's confirmed
-	packedData := batchRecord.BatchData
-
-	// Optionally verify against Celestia if celestiaStore is available
-	// (In production, the confirmation worker already verified the data matches)
-	if s.celestiaStore != nil && s.celestiaStore.Client != nil {
-		// This is optional - we could fetch from Celestia to double-check
-		// but for now we trust our cached data since it was confirmed by the worker
-		s.log.Debug("Using cached batch data (already confirmed on Celestia)",
-			"batch_id", *blob.BatchID,
-			"height", *blob.CelestiaHeight)
-	}
-
-	// Unpack batch to extract individual blob
-	unpackedBlobs, err := batch.UnpackBlobs(packedData, s.batchCfg)
-	if err != nil {
-		s.log.Error("Failed to unpack batch from Celestia", "error", err)
-		http.Error(rw, "failed to unpack batch: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if blob.BatchIndex == nil {
-		s.log.Error("Blob has no batch index", "blob_id", blob.ID)
-		http.Error(rw, "blob missing batch index", http.StatusInternalServerError)
-		return
-	}
-
-	if *blob.BatchIndex >= len(unpackedBlobs) || *blob.BatchIndex < 0 {
-		s.log.Error("Blob batch index out of range",
-			"blob_id", blob.ID,
-			"batch_index", *blob.BatchIndex,
-			"batch_size", len(unpackedBlobs))
-		http.Error(rw, "blob batch index out of range", http.StatusInternalServerError)
-		return
-	}
-
-	// Directly access blob by its index - much more efficient!
-	blobData := unpackedBlobs[*blob.BatchIndex]
-	s.log.Debug("Retrieved blob from batch using index",
-		"blob_id", blob.ID,
-		"batch_index", *blob.BatchIndex,
-		"size", len(blobData))
 
 	// Record inclusion height if available
 	if s.celestiaMetrics != nil && blob.CelestiaHeight != nil {

@@ -367,13 +367,17 @@ OPTION B (Service Provider): Set --celestia.tx-client.keyring-path
 See .env.example for detailed configuration examples`)
 	}
 
-	// S3 config validation (existing logic)
-	if c.S3Config.S3CredentialType != s3.S3CredentialUnknown && c.S3Config.Bucket == "" {
-		return errors.New("s3: bucket must be set when S3 is enabled")
-	}
-	if c.S3Config.S3CredentialType == s3.S3CredentialStatic {
-		if c.S3Config.AccessKeyID == "" || c.S3Config.AccessKeySecret == "" {
-			return errors.New("s3 static credentials: access key ID and secret must be set")
+	// S3 config validation - only validate if bucket is set (S3 is being used)
+	if c.S3Config.Bucket != "" {
+		// If bucket is set, validate credential type
+		if c.S3Config.S3CredentialType == s3.S3CredentialUnknown {
+			return errors.New("s3: credential_type must be set to 'iam' or 'static' when bucket is configured")
+		}
+		// If using static credentials, validate they are provided
+		if c.S3Config.S3CredentialType == s3.S3CredentialStatic {
+			if c.S3Config.AccessKeyID == "" || c.S3Config.AccessKeySecret == "" {
+				return errors.New("s3 static credentials: access_key_id and access_key_secret must be set")
+			}
 		}
 	}
 

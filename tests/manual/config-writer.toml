@@ -1,0 +1,169 @@
+# Celestia Alt-DA Server Configuration - WRITER
+# ==============================================================================
+# WRITE SERVER: Accepts PUT requests and submits to Celestia
+# ==============================================================================
+
+# ==============================================================================
+# BASIC OP-ALT-DA SERVER CONFIGURATION
+# ==============================================================================
+
+# Server listening address
+addr = "0.0.0.0"
+
+# Server listening port
+port = 3100
+
+# SQLite database file path
+db_path = "./tests/manual/writer-blobs.db"
+
+# Log level: DEBUG, INFO, WARN, ERROR
+log_level = "INFO"
+
+# Log format: text, terminal, logfmt, json, json-pretty
+log_format = "text"
+
+# Enable colored log output
+log_color = false
+
+# Show process ID in logs
+log_pid = false
+
+# ==============================================================================
+# WRITE MODE CONFIGURATION
+# ==============================================================================
+
+# WRITER: read_only = false (accepts PUT requests)
+read_only = false
+
+# ==============================================================================
+# CELESTIA CONFIGURATION
+# ==============================================================================
+
+[celestia]
+# Celestia namespace (29 bytes hex, version 0 requires 18 leading zeros)
+# Changed last 5 chars for testing: ...c3 -> ...ab
+namespace = "00000000000000000000000000000000000000655bc8d4c270c556acfe"
+
+# DA Node RPC server URL (for reads: Get, GetAll, Subscribe)
+da_rpc_server = "http://151.115.62.190:26658"
+
+# RPC auth token (from ~/.celestia-*/keys/keyring-test/auth-token)
+auth_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJBbGxvdyI6WyJwdWJsaWMiLCJyZWFkIiwid3JpdGUiLCJhZG1pbiJdLCJOb25jZSI6IlhJakVKNXV4UjJXOG1ERnErbzh5NkdtRHFhTUV3ZDRmejM3RC92MzdMWTg9IiwiRXhwaXJlc0F0IjoiMDAwMS0wMS0wMVQwMDowMDowMFoifQ.Bokj6b5p2AXz-QjcSSG2qAyA3Lrnc5uleczXd106jN8"
+
+# RPC TLS enabled
+tls_enabled = false
+
+# Use compact blob IDs (recommended: true for smaller commitments)
+blobid_compact = true
+
+# ==============================================================================
+# CELESTIA TX CLIENT CONFIGURATION (Option B only - Service Provider)
+# ==============================================================================
+
+[celestia.tx_client]
+# Not using service provider - using local node auth_token instead
+core_grpc_addr = ""
+core_grpc_auth_token = ""
+core_grpc_tls_enabled = true
+default_key_name = "my_celes_key"
+keyring_path = ""
+p2p_network = "mocha-4"
+
+# ==============================================================================
+# BATCH CONFIGURATION
+# ==============================================================================
+# PRODUCTION SETTINGS for 400KB/s throughput (1MB blocks every 2.5s)
+# Celestia block time: ~6s → accumulate 2-3 execution blocks per DA batch
+
+[batch]
+# Minimum number of blobs before creating a batch
+# With 1MB blobs every 2.5s, we get ~2.4 blobs per 6s Celestia block
+# Setting to 2 allows efficient batching without unnecessary delay
+min_blobs = 2
+
+# Maximum number of blobs per batch
+# Celestia max blob size ~2MB, so max 2 x 1MB blobs per batch
+max_blobs = 3
+
+# Target number of blobs to fetch for batching
+# Aim for 2 blobs (2MB total) to fill Celestia efficiently
+target_blobs = 2
+
+# Maximum batch size in KB
+# Celestia supports ~2MB blobs, set to 1.8MB (1843KB) for safety margin
+max_size_kb = 1843
+
+# Minimum batch size in KB before forcing submission
+# With 1MB execution blocks, wait for at least 1.5MB before submitting
+# This ensures 1-2 execution blocks per batch
+min_size_kb = 500
+
+# ==============================================================================
+# WORKER CONFIGURATION
+# ==============================================================================
+# PRODUCTION SETTINGS for 400KB/s throughput
+
+[worker]
+# How often submission worker checks for pending blobs
+# Check frequently to catch accumulation of 2-3 blobs quickly
+submit_period = "3s"
+
+# Timeout for submitting batch to Celestia
+submit_timeout = "60s"
+
+# Maximum retries for failed submissions
+max_retries = 10
+
+# Max time a blob waits before forced submission
+# With 1MB blocks every 2.5s, force submission after 8s to avoid stale data
+# This ensures max 3-4 execution blocks per batch (worst case)
+max_blob_wait_time = "8s"
+
+# How often event listener reconciles unconfirmed batches
+# Faster reconciliation for production (check every 3s)
+reconcile_period = "3s"
+
+# Age threshold for reconciling unconfirmed batches
+reconcile_age = "12s"
+
+# Timeout for Celestia Get operations during reconciliation
+get_timeout = "30s"
+
+# WRITER: No trusted_signers needed (we are the writer)
+trusted_signers = []
+
+# ==============================================================================
+# BACKFILL CONFIGURATION
+# ==============================================================================
+
+[backfill]
+# WRITER: Backfill disabled (we submit directly)
+enabled = false
+start_height = 0
+end_height = 0
+blocks_per_scan = 10
+
+# ==============================================================================
+# S3 BACKUP CONFIGURATION (Optional)
+# ==============================================================================
+
+[backup]
+enabled = false
+interval = "1h"
+
+[s3]
+credential_type = "iam"
+bucket = ""
+path = "celestia-da/backups"
+endpoint = ""
+access_key_id = ""
+access_key_secret = ""
+timeout = "5s"
+
+# ==============================================================================
+# METRICS CONFIGURATION
+# ==============================================================================
+
+[metrics]
+enabled = false
+port = 6060

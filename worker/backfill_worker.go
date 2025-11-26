@@ -110,12 +110,14 @@ func (w *BackfillWorker) Run(ctx context.Context) error {
 
 // scanAndIndexBlocks scans a range of Celestia blocks and indexes discovered batches
 func (w *BackfillWorker) scanAndIndexBlocks(ctx context.Context) error {
-	// Scan blocks in batches to avoid overwhelming the system
-	// For now, scan one block at a time
-	const maxBlocksPerScan = 10
+	// Determine blocks to scan per iteration
+	maxBlocksPerScan := w.workerCfg.BlocksPerScan
+	if maxBlocksPerScan <= 0 {
+		maxBlocksPerScan = 10 // Default fallback
+	}
 
 	startHeight := w.currentHeight
-	endHeight := startHeight + maxBlocksPerScan
+	endHeight := startHeight + uint64(maxBlocksPerScan)
 
 	w.log.Debug("Scanning Celestia blocks",
 		"start_height", startHeight,
@@ -185,12 +187,13 @@ func (w *BackfillWorker) scanAndIndexBlocks(ctx context.Context) error {
 	return nil
 }
 
-// indexBatch unpacks a discovered batch and indexes individual blobs
+// indexBatch verifies, unpacks, and indexes a discovered batch from Celestia.
+// It verifies the signer, checks for duplicate batches, unpacks individual blobs,
+// and persists everything to the database.
 func (w *BackfillWorker) indexBatch(ctx context.Context, celestiaBlob *blob.Blob, height uint64) error {
 	batchData := celestiaBlob.Data()
 	batchCommitment := celestiaBlob.Commitment
 
-	// 1. Verify Signer
 	if err := w.verifySigner(celestiaBlob, height); err != nil {
 		return err
 	}
@@ -200,7 +203,6 @@ func (w *BackfillWorker) indexBatch(ctx context.Context, celestiaBlob *blob.Blob
 		"batch_size", len(batchData),
 		"commitment", fmt.Sprintf("%x", batchCommitment))
 
-	// 2. Check for existence
 	existingBatch, err := w.store.GetBatchByCommitment(ctx, batchCommitment)
 	if err == nil && existingBatch != nil {
 		w.log.Debug("Batch already indexed, skipping",
@@ -209,7 +211,6 @@ func (w *BackfillWorker) indexBatch(ctx context.Context, celestiaBlob *blob.Blob
 		return nil
 	}
 
-	// 3. Unpack and Validate
 	unpacked, err := w.unpackBatch(batchData, height, batchCommitment)
 	if err != nil {
 		return err
@@ -219,7 +220,6 @@ func (w *BackfillWorker) indexBatch(ctx context.Context, celestiaBlob *blob.Blob
 		"blob_count", len(unpacked),
 		"height", height)
 
-	// 4. Persist to DB
 	blobSigner := celestiaBlob.Signer()
 	batchID, err := w.persistBatch(ctx, batchCommitment, batchData, unpacked, blobSigner, height)
 	if err != nil {

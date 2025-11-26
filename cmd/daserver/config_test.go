@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -135,7 +137,7 @@ func TestConfig_Validate_TrustedSigners(t *testing.T) {
 					MinBlobs:    1,
 					MaxBlobs:    100,
 					TargetBlobs: 50,
-					MaxSizeMB:   10,
+					MaxSizeKB:   10240,  // 10 MB in KB
 					MinSizeKB:   1,
 				},
 				Worker: WorkerConfig{
@@ -169,4 +171,41 @@ func TestConfig_Validate_TrustedSigners(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestConfig_LoadReaderToml(t *testing.T) {
+	// Get current working directory
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+
+	// Build path to test config
+	configPath := filepath.Join(wd, "..", "..", "test-data", "config-reader.toml")
+
+	// Load config
+	cfg, err := LoadConfig(configPath)
+	require.NoError(t, err, "Failed to load reader config")
+
+	// Check that read_only is true
+	assert.True(t, cfg.ReadOnly, "Expected read_only=true in reader config")
+
+	// Check that trusted_signers is set
+	assert.NotEmpty(t, cfg.Worker.TrustedSigners, "Expected trusted_signers to be non-empty")
+	assert.Equal(t, "celestia15m7s9d0ldd9ur9mgh9m6r4kc396dp68szwqmyc", cfg.Worker.TrustedSigners[0])
+
+	// Build runtime config directly from TOML (idiomatic Go approach)
+	runtimeCfg, err := BuildConfigFromTOML(cfg)
+	require.NoError(t, err, "Failed to build runtime config from TOML")
+
+	// Check that read_only is set correctly
+	assert.True(t, runtimeCfg.WorkerConfig.ReadOnly, "Expected read_only=true")
+
+	// Check that trusted_signers is set correctly
+	assert.NotEmpty(t, runtimeCfg.WorkerConfig.TrustedSigners, "Expected trusted_signers to be non-empty")
+	assert.Equal(t, "celestia15m7s9d0ldd9ur9mgh9m6r4kc396dp68szwqmyc", runtimeCfg.WorkerConfig.TrustedSigners[0])
+
+	t.Logf("✓ Reader config loaded correctly (direct TOML → runtime config)")
+	t.Logf("  ReadOnly: %v", runtimeCfg.WorkerConfig.ReadOnly)
+	t.Logf("  TrustedSigners: %v", runtimeCfg.WorkerConfig.TrustedSigners)
+	t.Logf("  DBPath: %s", runtimeCfg.DBPath)
+	t.Logf("  Port: %d", runtimeCfg.Port)
 }

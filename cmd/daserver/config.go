@@ -56,7 +56,7 @@ type BatchConfig struct {
 	MinBlobs    int `toml:"min_blobs"`
 	MaxBlobs    int `toml:"max_blobs"`
 	TargetBlobs int `toml:"target_blobs"`
-	MaxSizeMB   int `toml:"max_size_mb"`
+	MaxSizeKB   int `toml:"max_size_kb"`  // Changed from MB to KB for precision
 	MinSizeKB   int `toml:"min_size_kb"`
 }
 
@@ -74,9 +74,10 @@ type WorkerConfig struct {
 
 // BackfillConfig holds backfill settings
 type BackfillConfig struct {
-	Enabled     bool   `toml:"enabled"`
-	StartHeight uint64 `toml:"start_height"`
-	EndHeight   uint64 `toml:"end_height"`
+	Enabled          bool   `toml:"enabled"`
+	StartHeight      uint64 `toml:"start_height"`
+	EndHeight        uint64 `toml:"end_height"`
+	BlocksPerScan    int    `toml:"blocks_per_scan"`    // How many blocks to scan per iteration
 }
 
 // BackupConfig holds backup settings
@@ -201,6 +202,16 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("worker.get_timeout is invalid: %w", err)
 	}
 
+	// Validate backfill settings
+	if c.Backfill.Enabled {
+		if c.Backfill.BlocksPerScan < 1 {
+			return fmt.Errorf("backfill.blocks_per_scan must be at least 1")
+		}
+		if c.Backfill.BlocksPerScan > 100 {
+			return fmt.Errorf("backfill.blocks_per_scan too large (max 100, got %d)", c.Backfill.BlocksPerScan)
+		}
+	}
+
 	// Validate backup settings
 	if c.Backup.Enabled {
 		if _, err := time.ParseDuration(c.Backup.Interval); err != nil {
@@ -222,111 +233,8 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// ConvertToEnvVars converts TOML config to environment variables map
-// This allows us to use existing CLI flag parsing infrastructure
-func (c *Config) ConvertToEnvVars() map[string]string {
-	env := make(map[string]string)
-
-	prefix := "OP_ALTDA_"
-
-	// Basic settings
-	env[prefix+"ADDR"] = c.Addr
-	env[prefix+"PORT"] = fmt.Sprintf("%d", c.Port)
-	env[prefix+"DB_PATH"] = c.DBPath
-
-	// Only set log settings if they're explicitly configured (non-default values)
-	if c.LogLevel != "" {
-		env[prefix+"LOG_LEVEL"] = c.LogLevel
-	}
-	if c.LogFormat != "" {
-		env[prefix+"LOG_FORMAT"] = c.LogFormat
-	}
-	if c.LogColor {
-		env[prefix+"LOG_COLOR"] = "true"
-	}
-	if c.LogPID {
-		env[prefix+"LOG_PID"] = "true"
-	}
-	if c.ReadOnly {
-		env[prefix+"READ_ONLY"] = "true"
-	}
-
-	// Celestia settings
-	env[prefix+"CELESTIA_NAMESPACE"] = c.Celestia.Namespace
-	env[prefix+"CELESTIA_SERVER"] = c.Celestia.DARPCServer
-	if c.Celestia.AuthToken != "" {
-		env[prefix+"CELESTIA_AUTH_TOKEN"] = c.Celestia.AuthToken
-	}
-	env[prefix+"CELESTIA_TLS_ENABLED"] = fmt.Sprintf("%t", c.Celestia.TLSEnabled)
-	env[prefix+"CELESTIA_BLOBID_COMPACT"] = fmt.Sprintf("%t", c.Celestia.BlobIDCompact)
-
-	// TxClient settings (Option B)
-	if c.Celestia.TxClient.CoreGRPCAddr != "" {
-		env[prefix+"CELESTIA_TX_CLIENT_CORE_GRPC_ADDR"] = c.Celestia.TxClient.CoreGRPCAddr
-		if c.Celestia.TxClient.CoreGRPCAuthToken != "" {
-			env[prefix+"CELESTIA_TX_CLIENT_CORE_GRPC_AUTH_TOKEN"] = c.Celestia.TxClient.CoreGRPCAuthToken
-		}
-		env[prefix+"CELESTIA_TX_CLIENT_CORE_GRPC_TLS_ENABLED"] = fmt.Sprintf("%t", c.Celestia.TxClient.CoreGRPCTLSEnabled)
-		env[prefix+"CELESTIA_TX_CLIENT_KEY_NAME"] = c.Celestia.TxClient.DefaultKeyName
-		env[prefix+"CELESTIA_TX_CLIENT_KEYRING_PATH"] = c.Celestia.TxClient.KeyringPath
-		env[prefix+"CELESTIA_TX_CLIENT_P2P_NETWORK"] = c.Celestia.TxClient.P2PNetwork
-	}
-
-	// Batch settings
-	env[prefix+"BATCH_MIN_BLOBS"] = fmt.Sprintf("%d", c.Batch.MinBlobs)
-	env[prefix+"BATCH_MAX_BLOBS"] = fmt.Sprintf("%d", c.Batch.MaxBlobs)
-	env[prefix+"BATCH_TARGET_BLOBS"] = fmt.Sprintf("%d", c.Batch.TargetBlobs)
-	env[prefix+"BATCH_MAX_SIZE_MB"] = fmt.Sprintf("%d", c.Batch.MaxSizeMB)
-	env[prefix+"BATCH_MIN_SIZE_KB"] = fmt.Sprintf("%d", c.Batch.MinSizeKB)
-
-	// Worker settings
-	env[prefix+"WORKER_SUBMIT_PERIOD"] = c.Worker.SubmitPeriod
-	env[prefix+"WORKER_SUBMIT_TIMEOUT"] = c.Worker.SubmitTimeout
-	env[prefix+"WORKER_MAX_RETRIES"] = fmt.Sprintf("%d", c.Worker.MaxRetries)
-	env[prefix+"WORKER_MAX_BLOB_WAIT_TIME"] = c.Worker.MaxBlobWaitTime
-	env[prefix+"WORKER_RECONCILE_PERIOD"] = c.Worker.ReconcilePeriod
-	env[prefix+"WORKER_RECONCILE_AGE"] = c.Worker.ReconcileAge
-	env[prefix+"WORKER_GET_TIMEOUT"] = c.Worker.GetTimeout
-	if len(c.Worker.TrustedSigners) > 0 {
-		env[prefix+"WORKER_TRUSTED_SIGNERS"] = strings.Join(c.Worker.TrustedSigners, ",")
-	}
-
-	// Backfill settings
-	env[prefix+"BACKFILL_ENABLED"] = fmt.Sprintf("%t", c.Backfill.Enabled)
-	if c.Backfill.Enabled {
-		env[prefix+"BACKFILL_START_HEIGHT"] = fmt.Sprintf("%d", c.Backfill.StartHeight)
-		env[prefix+"BACKFILL_END_HEIGHT"] = fmt.Sprintf("%d", c.Backfill.EndHeight)
-	}
-
-	// Backup settings
-	env[prefix+"BACKUP_ENABLED"] = fmt.Sprintf("%t", c.Backup.Enabled)
-	if c.Backup.Enabled {
-		env[prefix+"BACKUP_INTERVAL"] = c.Backup.Interval
-	}
-
-	// S3 settings
-	if c.Backup.Enabled {
-		env[prefix+"S3_CREDENTIAL_TYPE"] = c.S3.CredentialType
-		env[prefix+"S3_BUCKET"] = c.S3.Bucket
-		env[prefix+"S3_PATH"] = c.S3.Path
-		if c.S3.Endpoint != "" {
-			env[prefix+"S3_ENDPOINT"] = c.S3.Endpoint
-		}
-		if c.S3.CredentialType == "static" {
-			env[prefix+"S3_ACCESS_KEY_ID"] = c.S3.AccessKeyID
-			env[prefix+"S3_ACCESS_KEY_SECRET"] = c.S3.AccessKeySecret
-		}
-		env[prefix+"S3_TIMEOUT"] = c.S3.Timeout
-	}
-
-	// Metrics settings
-	env[prefix+"METRICS_ENABLED"] = fmt.Sprintf("%t", c.Metrics.Enabled)
-	if c.Metrics.Enabled {
-		env[prefix+"METRICS_PORT"] = fmt.Sprintf("%d", c.Metrics.Port)
-	}
-
-	return env
-}
+// Note: ConvertToEnvVars() has been removed as part of idiomatic Go refactor
+// TOML config is now used directly without environment variable conversion
 
 // validateTrustedSigners validates that all signers are valid Celestia Bech32 addresses
 // Only accepts Bech32 format with the official Celestia prefix from celestia-app

@@ -23,35 +23,8 @@ func main() {
 	// Configure Cosmos SDK for Celestia Bech32 addresses
 	sdkconfig.InitCelestiaPrefix()
 
-	// Load TOML config BEFORE creating the CLI app so env vars are set before flag parsing
-	// Check if --config flag is in os.Args
-	configFile := ""
-	for i, arg := range os.Args {
-		if arg == "--config" && i+1 < len(os.Args) {
-			configFile = os.Args[i+1]
-			break
-		} else if len(arg) > 9 && arg[:9] == "--config=" {
-			configFile = arg[9:]
-			break
-		}
-	}
-
-	if configFile != "" {
-		// Load TOML and set env vars before CLI app processes flags
-		tomlCfg, err := LoadConfig(configFile)
-		if err != nil {
-			log.Crit("Failed to load TOML config", "file", configFile, "error", err)
-		}
-		if err := tomlCfg.Validate(); err != nil {
-			log.Crit("Invalid TOML config", "file", configFile, "error", err)
-		}
-
-		// Set environment variables from TOML
-		envVars := tomlCfg.ConvertToEnvVars()
-		for key, value := range envVars {
-			os.Setenv(key, value)
-		}
-	}
+	// Note: TOML config is now loaded directly in StartDAServer, not via env vars
+	// This is more idiomatic for Go applications
 
 	app := cli.NewApp()
 	app.Flags = cliapp.ProtectFlags(append(Flags,
@@ -71,7 +44,7 @@ func main() {
 		WorkerReconcileAgeFlag,
 		WorkerGetTimeoutFlag,
 		ReadOnlyFlag,
-		TrustedSignerFlag,
+		TrustedSignersFlag,
 		BackfillEnabledFlag,
 		BackfillStartHeightFlag,
 		BackfillPeriodFlag,

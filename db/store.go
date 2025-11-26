@@ -350,6 +350,20 @@ func (s *BlobStore) GetUnconfirmedBatches(ctx context.Context, olderThan time.Du
 	return batches, rows.Err()
 }
 
+// CountUnconfirmedBatches returns the total count of all unconfirmed batches regardless of age
+func (s *BlobStore) CountUnconfirmedBatches(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM batches
+		WHERE status = 'submitted'
+	`).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count unconfirmed batches: %w", err)
+	}
+	return count, nil
+}
+
 // GetBatchByID retrieves a batch by its ID with full batch data
 func (s *BlobStore) GetBatchByID(ctx context.Context, batchID int64) (*Batch, error) {
 	var batch Batch
