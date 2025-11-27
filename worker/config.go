@@ -24,6 +24,10 @@ type Config struct {
 	StartHeight     uint64        // Celestia block height to start syncing from
 	BackfillPeriod  time.Duration // How often to scan for new Celestia blocks
 	BlocksPerScan   int           // How many blocks to scan per iteration (default: 10)
+
+	// Multi-blob submission settings
+	MaxTxSizeBytes    int // Maximum Celestia transaction size in bytes (default: 1.8MB)
+	MaxBlockSizeBytes int // Maximum Celestia block size in bytes (default: 32MB)
 }
 
 // DefaultConfig returns default worker configuration
@@ -40,7 +44,9 @@ func DefaultConfig() *Config {
 		TrustedSigners:  []string{}, // Empty = accept all blobs (insecure for read-only mode)
 		BackfillEnabled: false,
 		StartHeight:     0,
-		BackfillPeriod:  15 * time.Second, // Check for new blocks every 15s
-		BlocksPerScan:   10,               // Scan 10 blocks per iteration
+		BackfillPeriod:    15 * time.Second, // Check for new blocks every 15s
+		BlocksPerScan:     10,               // Scan 10 blocks per iteration
+		MaxTxSizeBytes:    1843200,          // 1.8MB (safe limit below Celestia's 2MB max)
+		MaxBlockSizeBytes: 33554432,         // 32MB Celestia block size
 	}
 }

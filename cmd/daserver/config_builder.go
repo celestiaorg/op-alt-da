@@ -59,6 +59,18 @@ func BuildConfigFromTOML(tomlCfg *Config) (*RuntimeConfig, error) {
 		return nil, fmt.Errorf("invalid batch configuration: %w", err)
 	}
 
+	// Calculate MaxTxSizeBytes from MaxTxSizeKB (default 1800 KB = 1.8 MB)
+	maxTxSizeBytes := 1843200 // Default: 1800KB
+	if tomlCfg.Worker.MaxTxSizeKB > 0 {
+		maxTxSizeBytes = tomlCfg.Worker.MaxTxSizeKB * 1024
+	}
+
+	// Calculate MaxBlockSizeBytes from MaxBlockSizeKB (default 32768 KB = 32 MB)
+	maxBlockSizeBytes := 33554432 // Default: 32MB
+	if tomlCfg.Worker.MaxBlockSizeKB > 0 {
+		maxBlockSizeBytes = tomlCfg.Worker.MaxBlockSizeKB * 1024
+	}
+
 	// Build worker config
 	workerCfg := &worker.Config{
 		SubmitPeriod:    submitPeriod,
@@ -72,8 +84,10 @@ func BuildConfigFromTOML(tomlCfg *Config) (*RuntimeConfig, error) {
 		TrustedSigners:  tomlCfg.Worker.TrustedSigners,
 		BackfillEnabled: tomlCfg.Backfill.Enabled,
 		StartHeight:     tomlCfg.Backfill.StartHeight,
-		BackfillPeriod:  backfillPeriod,
-		BlocksPerScan:   tomlCfg.Backfill.BlocksPerScan,
+		BackfillPeriod:    backfillPeriod,
+		BlocksPerScan:     tomlCfg.Backfill.BlocksPerScan,
+		MaxTxSizeBytes:    maxTxSizeBytes,
+		MaxBlockSizeBytes: maxBlockSizeBytes,
 	}
 
 	if err := validateWorkerConfig(workerCfg); err != nil {

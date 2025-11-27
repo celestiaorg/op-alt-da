@@ -141,7 +141,7 @@ enabled = true
 # Starting Celestia block height for backfill
 # Set to 0 to start from latest (recommended for new deployments)
 # Set to specific height only if you need historical data
-start_height = 8967969
+start_height = 8986927
 
 # Ending Celestia block height for backfill (0 = current chain tip)
 end_height = 0
@@ -179,5 +179,5 @@ timeout = "5s"
 # ==============================================================================
 
 [metrics]
-enabled = false
+enabled = true
 port = 6061  # Different port from writer if running on same machine

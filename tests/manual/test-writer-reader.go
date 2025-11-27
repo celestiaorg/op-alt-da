@@ -15,7 +15,7 @@ import (
 const (
 	writerURL   = "http://localhost:3100"
 	readerURL   = "http://localhost:3101"
-	blobSize    = 900 * 1024 // 100 KB
+	blobSize    = 1000 * 1024 // 3500 KB
 	putInterval = 1 * time.Second
 	readerLag   = 35 * time.Second // 30-40 seconds
 	getInterval = 20 * time.Second

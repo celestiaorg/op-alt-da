@@ -68,8 +68,10 @@ type WorkerConfig struct {
 	MaxBlobWaitTime  string   `toml:"max_blob_wait_time"`
 	ReconcilePeriod  string   `toml:"reconcile_period"`
 	ReconcileAge     string   `toml:"reconcile_age"`
-	GetTimeout       string   `toml:"get_timeout"`
-	TrustedSigners   []string `toml:"trusted_signers"`
+	GetTimeout        string   `toml:"get_timeout"`
+	TrustedSigners    []string `toml:"trusted_signers"`
+	MaxTxSizeKB       int      `toml:"max_tx_size_kb"`    // Maximum Celestia transaction size in KB (default: 1800KB = 1.8MB)
+	MaxBlockSizeKB    int      `toml:"max_block_size_kb"` // Maximum Celestia block size in KB (default: 32768KB = 32MB)
 }
 
 // BackfillConfig holds backfill settings
