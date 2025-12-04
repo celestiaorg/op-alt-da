@@ -39,17 +39,18 @@ const (
 	WorkerMaxRetriesFlagName             = "worker.max-retries"
 	WorkerMaxParallelSubmissionsFlagName = "worker.max-parallel-submissions"
 	WorkerMaxBlobWaitTimeFlagName        = "worker.max-blob-wait-time"
-	WorkerReconcilePeriodFlagName = "worker.reconcile-period"
-	WorkerReconcileAgeFlagName    = "worker.reconcile-age"
-	WorkerGetTimeoutFlagName      = "worker.get-timeout"
+	WorkerReconcilePeriodFlagName        = "worker.reconcile-period"
+	WorkerReconcileAgeFlagName           = "worker.reconcile-age"
+	WorkerGetTimeoutFlagName             = "worker.get-timeout"
 
 	// Read-only configuration
 	ReadOnlyFlagName       = "read-only"
 	TrustedSignersFlagName = "trusted-signers"
 
-	// Backfill configuration
+	// Backfill configuration (for historical data migration)
 	BackfillEnabledFlagName       = "backfill.enabled"
 	BackfillStartHeightFlagName   = "backfill.start-height"
+	BackfillTargetHeightFlagName  = "backfill.target-height"
 	BackfillPeriodFlagName        = "backfill.period"
 	BackfillBlocksPerScanFlagName = "backfill.blocks-per-scan"
 )
@@ -177,9 +178,15 @@ var (
 	}
 	BackfillStartHeightFlag = &cli.Uint64Flag{
 		Name:    BackfillStartHeightFlagName,
-		Usage:   "Celestia block height to start backfilling from (0 = latest)",
+		Usage:   "Celestia block height to start backfilling from",
 		Value:   0,
 		EnvVars: prefixEnvVars("BACKFILL_START_HEIGHT"),
+	}
+	BackfillTargetHeightFlag = &cli.Uint64Flag{
+		Name:    BackfillTargetHeightFlagName,
+		Usage:   "Celestia block height to backfill to (0 = disabled)",
+		Value:   0,
+		EnvVars: prefixEnvVars("BACKFILL_TARGET_HEIGHT"),
 	}
 	BackfillPeriodFlag = &cli.DurationFlag{
 		Name:    BackfillPeriodFlagName,
@@ -244,9 +251,8 @@ func StartDAServer(cliCtx *cli.Context) error {
 		cfg = runtimeCfg.CelestiaConfig
 	}
 
-	// Check CLI config with read-only mode awareness
-	readOnly := runtimeCfg.WorkerConfig != nil && runtimeCfg.WorkerConfig.ReadOnly
-	if err := cfg.Check(readOnly); err != nil {
+	// Check CLI config
+	if err := cfg.Check(false); err != nil {
 		return err
 	}
 
@@ -300,7 +306,6 @@ func StartDAServer(cliCtx *cli.Context) error {
 
 	// Log worker configuration
 	l.Info("Worker configuration",
-		"read_only", runtimeCfg.WorkerConfig.ReadOnly,
 		"trusted_signers", strings.Join(runtimeCfg.WorkerConfig.TrustedSigners, ","),
 		"submit_period", runtimeCfg.WorkerConfig.SubmitPeriod,
 		"submit_timeout", runtimeCfg.WorkerConfig.SubmitTimeout,
@@ -308,10 +313,16 @@ func StartDAServer(cliCtx *cli.Context) error {
 		"max_blob_wait_time", runtimeCfg.WorkerConfig.MaxBlobWaitTime,
 		"reconcile_period", runtimeCfg.WorkerConfig.ReconcilePeriod,
 		"reconcile_age", runtimeCfg.WorkerConfig.ReconcileAge,
-		"get_timeout", runtimeCfg.WorkerConfig.GetTimeout,
-		"backfill_enabled", runtimeCfg.WorkerConfig.BackfillEnabled,
-		"start_height", runtimeCfg.WorkerConfig.StartHeight,
-		"backfill_period", runtimeCfg.WorkerConfig.BackfillPeriod)
+		"get_timeout", runtimeCfg.WorkerConfig.GetTimeout)
+
+	// Log backfill configuration if enabled
+	if runtimeCfg.WorkerConfig.BackfillEnabled && runtimeCfg.WorkerConfig.BackfillTargetHeight > 0 {
+		l.Info("Backfill configuration",
+			"start_height", runtimeCfg.WorkerConfig.StartHeight,
+			"target_height", runtimeCfg.WorkerConfig.BackfillTargetHeight,
+			"period", runtimeCfg.WorkerConfig.BackfillPeriod,
+			"blocks_per_scan", runtimeCfg.WorkerConfig.BlocksPerScan)
+	}
 
 	server := celestia.NewCelestiaServer(
 		runtimeCfg.Addr,
@@ -406,20 +417,19 @@ func StartDAServer(cliCtx *cli.Context) error {
 
 // validateWorkerConfig validates worker configuration for common mistakes
 func validateWorkerConfig(cfg *worker.Config) error {
-	// Warn if read-only mode is enabled but backfill is not
-	if cfg.ReadOnly && !cfg.BackfillEnabled {
-		return fmt.Errorf("read-only mode requires backfill to be enabled (set --backfill.enabled=true)")
-	}
-
-	// Strongly recommend trusted signers in read-only mode for security (CIP-21)
-	if cfg.ReadOnly && len(cfg.TrustedSigners) == 0 {
-		return fmt.Errorf("read-only mode requires trusted signers for security (set --trusted-signer=<address1>,<address2>,...). Without it, malicious actors can inject junk data into your namespace")
-	}
-
-	// Warn if backfill is enabled without specifying a start height
-	if cfg.BackfillEnabled && cfg.StartHeight == 0 {
-		// This is just a warning - starting from 0 means "latest"
-		// We don't return an error here
+	// Validate backfill configuration
+	if cfg.BackfillEnabled {
+		if cfg.BackfillTargetHeight == 0 {
+			return fmt.Errorf("backfill.target_height is required when backfill is enabled")
+		}
+		if cfg.StartHeight > cfg.BackfillTargetHeight {
+			return fmt.Errorf("backfill.start_height (%d) cannot be greater than target_height (%d)",
+				cfg.StartHeight, cfg.BackfillTargetHeight)
+		}
+		// Warn if backfill has trusted signers configured (for verification)
+		if len(cfg.TrustedSigners) == 0 {
+			// Just a warning - without trusted signers, all blobs in namespace are accepted
+		}
 	}
 
 	return nil

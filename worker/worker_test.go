@@ -287,6 +287,7 @@ func TestSubmissionWorker_FewBlobs(t *testing.T) {
 	logger := log.NewLogger(log.DiscardHandler())
 	batchCfg := batch.DefaultConfig()
 	workerCfg := DefaultConfig()
+	workerCfg.MaxBlobWaitTime = 0 // Force immediate submission in tests
 	signerAddr := make([]byte, 20) // Test signer
 	worker := NewSubmissionWorker(store, mock, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
 
@@ -296,7 +297,7 @@ func TestSubmissionWorker_FewBlobs(t *testing.T) {
 		t.Fatalf("submitPendingBlobs failed: %v", err)
 	}
 
-	// Should have submitted (we always submit pending blobs)
+	// Should have submitted (MaxBlobWaitTime=0 forces immediate)
 	if !submitted {
 		t.Error("Batch was not submitted")
 	}
@@ -400,6 +401,7 @@ func TestSubmissionWorker_OneBatchPerTick(t *testing.T) {
 	logger := log.NewLogger(log.DiscardHandler())
 	batchCfg := batch.DefaultConfig()
 	workerCfg := DefaultConfig()
+	workerCfg.MaxBlobWaitTime = 0 // Force immediate submission in tests
 	signerAddr := make([]byte, 20)
 	worker := NewSubmissionWorker(store, mock, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
 

@@ -56,13 +56,13 @@ bridge_tls_enabled = true
 # core_grpc_addr = "celestia-testnet-consensus.itrocket.net:9090"
 # core_grpc_auth_token = ""
 # core_grpc_tls_enabled = false
-# core_grpc_addr = "151.115.60.15:9090"
-# core_grpc_auth_token = ""
-# core_grpc_tls_enabled = false
+core_grpc_addr = "151.115.60.15:9090"
+core_grpc_auth_token = ""
+core_grpc_tls_enabled = false
 # CoreGRPC settings (for submitting blobs)
-core_grpc_addr = "https://young-weathered-scion.celestia-mocha.quiknode.pro:9090"
-core_grpc_auth_token = "2ae91d0d78ef0a253990449d0bb7e9f054f024c0"
-core_grpc_tls_enabled = true
+# core_grpc_addr = "https://young-weathered-scion.celestia-mocha.quiknode.pro:9090"
+# core_grpc_auth_token = "2ae91d0d78ef0a253990449d0bb7e9f054f024c0"
+# core_grpc_tls_enabled = true
 
 # Keyring settings (for signing)
 keyring_path = "~/.celestia-light-mocha-4/keys"
@@ -98,7 +98,7 @@ target_blobs = 1
 
 # Maximum batch size in KB
 # Celestia supports ~2MB blobs, set to 1.8MB (1843KB) for safety margin
-max_size_kb = 7543
+max_size_kb = 7943
 
 # Minimum batch size in KB before forcing submission
 # With 1MB execution blocks, wait for at least 1.5MB before submitting
@@ -113,10 +113,10 @@ min_size_kb = 500
 [worker]
 # How often submission worker checks for pending blobs
 # Check frequently to catch accumulation of 2-3 blobs quickly
-submit_period = "4s"
+submit_period = "1s"
 
 # Timeout for submitting batch to Celestia
-submit_timeout = "20s"
+submit_timeout = "60s"
 
 # Maximum retries for failed submissions
 max_retries = 3
@@ -132,17 +132,17 @@ max_parallel_submissions = 8
 # Max time a blob waits before forced submission
 # With 1MB blocks every 2.5s, force submission after 8s to avoid stale data
 # This ensures max 3-4 execution blocks per batch (worst case)
-max_blob_wait_time = "8s"
+max_blob_wait_time = "1s"
 
 # How often event listener reconciles unconfirmed batches
 # Faster reconciliation for production (check every 3s)
-reconcile_period = "10s"
+reconcile_period = "3s"
 
 # Age threshold for reconciling unconfirmed batches
-reconcile_age = "12s"
+reconcile_age = "6s"
 
 # Timeout for Celestia Get operations during reconciliation
-get_timeout = "30s"
+get_timeout = "10s"
 
 trusted_signers = [
     "celestia1gazv7rsqd5tdmr67tg8p0s5ardxv60k4wnyqfw",

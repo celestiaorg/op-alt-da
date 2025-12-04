@@ -272,41 +272,6 @@ func TestHTTP_GetBoundaries(t *testing.T) {
 	}
 }
 
-// TestHTTP_ReadOnlyMode tests PUT rejection in read-only mode
-func TestHTTP_ReadOnlyMode(t *testing.T) {
-	store, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	namespace := createTestNamespace(t)
-
-	// Create mock celestia store with test signer
-	testSignerAddr := make([]byte, 20)
-	for i := range testSignerAddr {
-		testSignerAddr[i] = byte(i + 1)
-	}
-	celestiaStore := &CelestiaStore{Log: log.New(), Namespace: namespace, SignerAddr: testSignerAddr}
-	batchCfg := batch.DefaultConfig()
-	workerCfg := worker.DefaultConfig()
-	workerCfg.ReadOnly = true
-
-	server := &CelestiaServer{
-		store:         store,
-		namespace:     namespace,
-		celestiaStore: celestiaStore,
-		batchCfg:      batchCfg,
-		workerCfg:     workerCfg,
-		log:           log.New(),
-	}
-
-	req := httptest.NewRequest(http.MethodPost, "/put", bytes.NewReader([]byte("test data")))
-	w := httptest.NewRecorder()
-
-	server.HandlePut(w, req)
-
-	assert.Equal(t, http.StatusForbidden, w.Code, "should reject PUT in read-only mode")
-	assert.Contains(t, w.Body.String(), "read-only mode", "error should mention read-only mode")
-}
-
 // Helper functions
 
 func setupTestDB(t *testing.T) (*db.BlobStore, func()) {

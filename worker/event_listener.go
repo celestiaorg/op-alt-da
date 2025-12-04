@@ -77,6 +77,14 @@ func (l *EventListener) Run(ctx context.Context) error {
 }
 
 func (l *EventListener) reconcileUnconfirmed(ctx context.Context) error {
+	// First, clean up stuck batches (no height, submission failed/crashed)
+	// Use 5 minutes - must be MUCH longer than Celestia submission time (30-60s)
+	// to avoid cleaning up batches that are still being submitted
+	stuckThreshold := 5 * time.Minute
+	if err := l.cleanupStuckBatches(ctx, stuckThreshold); err != nil {
+		l.log.Error("Cleanup stuck batches failed", "error", err)
+	}
+
 	// Get total count of all unconfirmed batches (regardless of age)
 	totalUnconfirmed, err := l.store.CountUnconfirmedBatches(ctx)
 	if err != nil {
@@ -109,6 +117,37 @@ func (l *EventListener) reconcileUnconfirmed(ctx context.Context) error {
 				"batch_id", batch.BatchID,
 				"error", err)
 		}
+	}
+
+	return nil
+}
+
+// cleanupStuckBatches reverts batches that have no celestia_height (submission failed/crashed).
+// These blobs are stuck as 'batched' and need to be returned to pending_submission for retry.
+func (l *EventListener) cleanupStuckBatches(ctx context.Context, olderThan time.Duration) error {
+	stuckBatches, err := l.store.GetStuckBatches(ctx, olderThan)
+	if err != nil {
+		return fmt.Errorf("get stuck batches: %w", err)
+	}
+
+	if len(stuckBatches) == 0 {
+		return nil
+	}
+
+	l.log.Warn("Found stuck batches with no height, reverting to pending",
+		"count", len(stuckBatches),
+		"threshold", olderThan)
+
+	for _, batch := range stuckBatches {
+		if err := l.store.RevertBatchToPending(ctx, batch.BatchID); err != nil {
+			l.log.Error("Failed to revert stuck batch",
+				"batch_id", batch.BatchID,
+				"error", err)
+			continue
+		}
+		l.log.Info("Reverted stuck batch to pending",
+			"batch_id", batch.BatchID,
+			"age", time.Since(batch.SubmittedAt).Round(time.Second))
 	}
 
 	return nil

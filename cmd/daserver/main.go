@@ -44,11 +44,12 @@ func main() {
 		WorkerReconcilePeriodFlag,
 		WorkerReconcileAgeFlag,
 		WorkerGetTimeoutFlag,
-		ReadOnlyFlag,
 		TrustedSignersFlag,
 		BackfillEnabledFlag,
 		BackfillStartHeightFlag,
+		BackfillTargetHeightFlag,
 		BackfillPeriodFlag,
+		BackfillBlocksPerScanFlag,
 	))
 	app.Version = opservice.FormatVersion(Version, "", "", "")
 	app.Name = "da-server"

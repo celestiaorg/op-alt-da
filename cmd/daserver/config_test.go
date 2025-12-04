@@ -1,8 +1,6 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -83,42 +81,24 @@ func TestValidateTrustedSigners(t *testing.T) {
 func TestConfig_Validate_TrustedSigners(t *testing.T) {
 	tests := []struct {
 		name           string
-		readOnly       bool
 		trustedSigners []string
 		expectError    bool
 		errorMsg       string
 	}{
 		{
-			name:           "read-only with valid Bech32 signer",
-			readOnly:       true,
+			name:           "valid Bech32 signer",
 			trustedSigners: []string{"celestia15m7s9d0ldd9ur9mgh9m6r4kc396dp68szwqmyc"},
 			expectError:    false,
 		},
 		{
-			name:           "read-only with valid second Bech32 signer",
-			readOnly:       true,
-			trustedSigners: []string{"celestia1qqgjyv6y24n80zye42aueh0wluqsyqcyf07sls"},
+			name:           "multiple valid Bech32 signers",
+			trustedSigners: []string{"celestia15m7s9d0ldd9ur9mgh9m6r4kc396dp68szwqmyc", "celestia1qqgjyv6y24n80zye42aueh0wluqsyqcyf07sls"},
 			expectError:    false,
 		},
 		{
-			name:           "read-only with no signers",
-			readOnly:       true,
+			name:           "no signers (allowed in single-server mode)",
 			trustedSigners: []string{},
-			expectError:    true,
-			errorMsg:       "read-only mode requires worker.trusted_signers",
-		},
-		{
-			name:           "read-only with invalid signer",
-			readOnly:       true,
-			trustedSigners: []string{"invalid"},
-			expectError:    true,
-			errorMsg:       "invalid worker.trusted_signers",
-		},
-		{
-			name:           "not read-only with no signers",
-			readOnly:       false,
-			trustedSigners: []string{},
-			expectError:    false, // No validation when not read-only
+			expectError:    false,
 		},
 	}
 
@@ -140,7 +120,7 @@ func TestConfig_Validate_TrustedSigners(t *testing.T) {
 					MinBlobs:    1,
 					MaxBlobs:    100,
 					TargetBlobs: 50,
-					MaxSizeKB:   10240, // 10 MB in KB
+					MaxSizeKB:   10240,
 					MinSizeKB:   1,
 				},
 				Worker: WorkerConfig{
@@ -153,7 +133,6 @@ func TestConfig_Validate_TrustedSigners(t *testing.T) {
 					GetTimeout:      "30s",
 					TrustedSigners:  tt.trustedSigners,
 				},
-				ReadOnly: tt.readOnly,
 			}
 
 			err := cfg.Validate()
@@ -166,7 +145,7 @@ func TestConfig_Validate_TrustedSigners(t *testing.T) {
 			} else {
 				require.NoError(t, err, "unexpected validation error")
 				// Signers should remain in Bech32 format
-				if tt.readOnly && len(tt.trustedSigners) > 0 {
+				if len(tt.trustedSigners) > 0 {
 					for _, signer := range cfg.Worker.TrustedSigners {
 						assert.True(t, strings.HasPrefix(signer, "celestia"), "signer should remain in Bech32 format with celestia prefix")
 					}
@@ -176,39 +155,60 @@ func TestConfig_Validate_TrustedSigners(t *testing.T) {
 	}
 }
 
-func TestConfig_LoadReaderToml(t *testing.T) {
-	// Get current working directory
-	wd, err := os.Getwd()
-	require.NoError(t, err)
+func TestConfig_BuildFromTOML(t *testing.T) {
+	cfg := &Config{
+		Addr:   "localhost",
+		Port:   3100,
+		DBPath: "/tmp/test.db",
+		Celestia: CelestiaConfig{
+			Namespace:      "000000000000000000000000000000000000000102030405060708090a",
+			BridgeAddr:     "localhost:26658",
+			CoreGRPCAddr:   "localhost:9090",
+			KeyringPath:    "/tmp/test-keyring",
+			P2PNetwork:     "mocha-4",
+			DefaultKeyName: "test_key",
+		},
+		Batch: BatchConfig{
+			MinBlobs:    1,
+			MaxBlobs:    100,
+			TargetBlobs: 50,
+			MaxSizeKB:   1024,
+			MinSizeKB:   1,
+		},
+		Worker: WorkerConfig{
+			SubmitPeriod:    "30s",
+			SubmitTimeout:   "1m",
+			MaxRetries:      3,
+			MaxBlobWaitTime: "5m",
+			ReconcilePeriod: "1m",
+			ReconcileAge:    "2m",
+			GetTimeout:      "30s",
+			TrustedSigners:  []string{"celestia15m7s9d0ldd9ur9mgh9m6r4kc396dp68szwqmyc"},
+		},
+		Backfill: BackfillConfig{
+			Enabled:       true,
+			StartHeight:   1000,
+			TargetHeight:  2000,
+			BlocksPerScan: 50,
+			Period:        "1s",
+		},
+	}
 
-	// Build path to test config
-	configPath := filepath.Join(wd, "..", "..", "test-data", "config-reader.toml")
-
-	// Load config
-	cfg, err := LoadConfig(configPath)
-	require.NoError(t, err, "Failed to load reader config")
-
-	// Check that read_only is true
-	assert.True(t, cfg.ReadOnly, "Expected read_only=true in reader config")
-
-	// Check that trusted_signers is set
-	assert.NotEmpty(t, cfg.Worker.TrustedSigners, "Expected trusted_signers to be non-empty")
-	assert.Equal(t, "celestia15m7s9d0ldd9ur9mgh9m6r4kc396dp68szwqmyc", cfg.Worker.TrustedSigners[0])
-
-	// Build runtime config directly from TOML (idiomatic Go approach)
 	runtimeCfg, err := BuildConfigFromTOML(cfg)
 	require.NoError(t, err, "Failed to build runtime config from TOML")
 
-	// Check that read_only is set correctly
-	assert.True(t, runtimeCfg.WorkerConfig.ReadOnly, "Expected read_only=true")
-
-	// Check that trusted_signers is set correctly
+	// Check trusted_signers is set correctly
 	assert.NotEmpty(t, runtimeCfg.WorkerConfig.TrustedSigners, "Expected trusted_signers to be non-empty")
 	assert.Equal(t, "celestia15m7s9d0ldd9ur9mgh9m6r4kc396dp68szwqmyc", runtimeCfg.WorkerConfig.TrustedSigners[0])
 
-	t.Logf("✓ Reader config loaded correctly (direct TOML → runtime config)")
-	t.Logf("  ReadOnly: %v", runtimeCfg.WorkerConfig.ReadOnly)
+	// Check backfill config
+	assert.True(t, runtimeCfg.WorkerConfig.BackfillEnabled)
+	assert.Equal(t, uint64(1000), runtimeCfg.WorkerConfig.StartHeight)
+	assert.Equal(t, uint64(2000), runtimeCfg.WorkerConfig.BackfillTargetHeight)
+	assert.Equal(t, 50, runtimeCfg.WorkerConfig.BlocksPerScan)
+
+	t.Logf("✓ Config built correctly from TOML")
 	t.Logf("  TrustedSigners: %v", runtimeCfg.WorkerConfig.TrustedSigners)
-	t.Logf("  DBPath: %s", runtimeCfg.DBPath)
-	t.Logf("  Port: %d", runtimeCfg.Port)
+	t.Logf("  BackfillEnabled: %v", runtimeCfg.WorkerConfig.BackfillEnabled)
+	t.Logf("  BackfillTargetHeight: %d", runtimeCfg.WorkerConfig.BackfillTargetHeight)
 }

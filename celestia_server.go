@@ -104,19 +104,17 @@ func NewCelestiaServer(
 		},
 	}
 
-	// Create workers with metrics
-	if !workerCfg.ReadOnly {
-		server.submissionWorker = worker.NewSubmissionWorker(
-			store,
-			celestiaStore.Client,
-			celestiaStore.Namespace,
-			celestiaStore.SignerAddr, // Real signer address from keyring/RPC
-			batchCfg,
-			workerCfg,
-			celestiaMetrics,
-			log.New("component", "submission_worker"),
-		)
-	}
+	// Create submission worker for batching and submitting blobs to Celestia
+	server.submissionWorker = worker.NewSubmissionWorker(
+		store,
+		celestiaStore.Client,
+		celestiaStore.Namespace,
+		celestiaStore.SignerAddr, // Real signer address from keyring/RPC
+		batchCfg,
+		workerCfg,
+		celestiaMetrics,
+		log.New("component", "submission_worker"),
+	)
 
 	server.eventListener = worker.NewEventListener(
 		store,
@@ -127,12 +125,11 @@ func NewCelestiaServer(
 		log.New("component", "event_listener"),
 	)
 
-	// Create backfill worker if enabled
-	if workerCfg.BackfillEnabled {
+	// Create backfill worker if enabled (for historical data migration)
+	if workerCfg.BackfillEnabled && workerCfg.BackfillTargetHeight > 0 {
 		server.backfillWorker = worker.NewBackfillWorker(
 			store,
 			celestiaStore.Client,
-			celestiaStore.Header,
 			celestiaStore.Namespace,
 			batchCfg,
 			workerCfg,
@@ -176,18 +173,14 @@ func (s *CelestiaServer) Start(ctx context.Context) error {
 		return nil
 	})
 
-	if s.submissionWorker != nil {
-		g.Go(func() error {
-			s.log.Info("Starting submission worker")
-			if err := s.submissionWorker.Run(ctx); err != nil && err != context.Canceled {
-				return fmt.Errorf("submission worker error: %w", err)
-			}
-			s.log.Info("Submission worker stopped")
-			return nil
-		})
-	} else {
-		s.log.Info("Submission worker disabled (read-only mode)")
-	}
+	g.Go(func() error {
+		s.log.Info("Starting submission worker")
+		if err := s.submissionWorker.Run(ctx); err != nil && err != context.Canceled {
+			return fmt.Errorf("submission worker error: %w", err)
+		}
+		s.log.Info("Submission worker stopped")
+		return nil
+	})
 
 	g.Go(func() error {
 		s.log.Info("Starting reconciliation worker")
@@ -273,13 +266,6 @@ func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 			s.celestiaMetrics.RecordHTTPRequest("put", time.Since(startTime))
 		}
 	}()
-
-	// Reject PUT requests in read-only mode
-	if s.workerCfg.ReadOnly {
-		s.log.Warn("PUT request rejected - server is in read-only mode")
-		http.Error(w, "Server is in read-only mode. PUT operations are not allowed.", http.StatusForbidden)
-		return
-	}
 
 	// Limit request body size to prevent DoS attacks
 	// Use max batch size + 10% buffer for overhead
@@ -522,9 +508,11 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 
 	// Only return blob if it's confirmed on DA layer
 	if blob.Status != "confirmed" || blob.CelestiaHeight == nil {
-		// Only warn if blob is NOT in initial pending state (to reduce noise)
-		if blob.Status != "pending_submission" {
-			s.log.Warn("Blob not yet confirmed on DA layer",
+		// Only warn if blob is stuck in unexpected state (not pending or batched)
+		// pending_submission = waiting to be batched
+		// batched = currently being submitted to Celestia (normal intermediate state)
+		if blob.Status != "pending_submission" && blob.Status != "batched" {
+			s.log.Warn("Blob in unexpected state",
 				"blob_id", blob.ID,
 				"status", blob.Status,
 				"has_height", blob.CelestiaHeight != nil)

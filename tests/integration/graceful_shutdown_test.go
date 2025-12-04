@@ -64,7 +64,7 @@ func TestServer_GracefulShutdown(t *testing.T) {
 	store, celestiaStore := setupTestShutdownServer(t)
 
 	workerCfg := worker.DefaultConfig()
-	workerCfg.ReadOnly = false
+	
 
 	server := celestia.NewCelestiaServer(
 		"localhost",
@@ -113,7 +113,7 @@ func TestServer_ShutdownWithInflightRequests(t *testing.T) {
 	store, celestiaStore := setupTestShutdownServer(t)
 
 	workerCfg := worker.DefaultConfig()
-	workerCfg.ReadOnly = false
+	
 
 	server := celestia.NewCelestiaServer(
 		"localhost",
@@ -191,7 +191,7 @@ func TestServer_ShutdownTimeout(t *testing.T) {
 	store, celestiaStore := setupTestShutdownServer(t)
 
 	workerCfg := worker.DefaultConfig()
-	workerCfg.ReadOnly = false
+	
 
 	server := celestia.NewCelestiaServer(
 		"localhost",
@@ -238,7 +238,7 @@ func TestServer_MultipleShutdowns(t *testing.T) {
 	store, celestiaStore := setupTestShutdownServer(t)
 
 	workerCfg := worker.DefaultConfig()
-	workerCfg.ReadOnly = false
+	
 
 	server := celestia.NewCelestiaServer(
 		"localhost",
@@ -286,18 +286,18 @@ func TestServer_WorkersShutdownCleanly(t *testing.T) {
 
 	// Enable all workers
 	workerCfg := &worker.Config{
-		ReadOnly:        false,
-		SubmitPeriod:    1 * time.Second,
-		ReconcilePeriod: 1 * time.Second,
-		BackfillEnabled: true,
-		BackfillPeriod:  1 * time.Second,
-		SubmitTimeout:   5 * time.Second,
-		MaxRetries:      3,
-		MaxBlobWaitTime: 5 * time.Second,
-		ReconcileAge:    10 * time.Second,
-		GetTimeout:      5 * time.Second,
-		StartHeight:     1,
-		TrustedSigners:  []string{},
+		SubmitPeriod:         1 * time.Second,
+		ReconcilePeriod:      1 * time.Second,
+		BackfillEnabled:      true,
+		BackfillTargetHeight: 10,
+		BackfillPeriod:       1 * time.Second,
+		SubmitTimeout:        5 * time.Second,
+		MaxRetries:           3,
+		MaxBlobWaitTime:      5 * time.Second,
+		ReconcileAge:         10 * time.Second,
+		GetTimeout:           5 * time.Second,
+		StartHeight:          1,
+		TrustedSigners:       []string{},
 	}
 
 	server := celestia.NewCelestiaServer(
@@ -339,12 +339,11 @@ func TestServer_WorkersShutdownCleanly(t *testing.T) {
 	}
 }
 
-// TestServer_ReadOnlyMode tests shutdown in read-only mode (no submission worker)
-func TestServer_ReadOnlyModeShutdown(t *testing.T) {
+// TestServer_DefaultConfigShutdown tests shutdown with default config
+func TestServer_DefaultConfigShutdown(t *testing.T) {
 	store, celestiaStore := setupTestShutdownServer(t)
 
 	workerCfg := worker.DefaultConfig()
-	workerCfg.ReadOnly = true // Read-only mode
 
 	server := celestia.NewCelestiaServer(
 		"localhost",
@@ -372,9 +371,9 @@ func TestServer_ReadOnlyModeShutdown(t *testing.T) {
 
 	select {
 	case <-serverDone:
-		// Success - read-only mode should shut down cleanly
+		// Success - server should shut down cleanly
 	case <-time.After(10 * time.Second):
-		t.Fatal("read-only server did not shutdown")
+		t.Fatal("server did not shutdown")
 	}
 }
 
@@ -383,7 +382,7 @@ func TestServer_ShutdownWithMetrics(t *testing.T) {
 	store, celestiaStore := setupTestShutdownServer(t)
 
 	workerCfg := worker.DefaultConfig()
-	workerCfg.ReadOnly = false
+	
 
 	server := celestia.NewCelestiaServer(
 		"localhost",
@@ -439,7 +438,7 @@ func TestServer_RepeatedStartStop(t *testing.T) {
 		t.Logf("Iteration %d", i+1)
 
 		workerCfg := worker.DefaultConfig()
-		workerCfg.ReadOnly = false
+		
 
 		server := celestia.NewCelestiaServer(
 			"localhost",
@@ -479,7 +478,7 @@ func TestServer_ShutdownDuringDatabaseOperation(t *testing.T) {
 	store, celestiaStore := setupTestShutdownServer(t)
 
 	workerCfg := worker.DefaultConfig()
-	workerCfg.ReadOnly = false
+	
 
 	server := celestia.NewCelestiaServer(
 		"localhost",
@@ -539,7 +538,7 @@ func TestServer_ImmediateShutdown(t *testing.T) {
 	store, celestiaStore := setupTestShutdownServer(t)
 
 	workerCfg := worker.DefaultConfig()
-	workerCfg.ReadOnly = false
+	
 
 	server := celestia.NewCelestiaServer(
 		"localhost",

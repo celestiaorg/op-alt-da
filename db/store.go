@@ -421,6 +421,38 @@ func (s *BlobStore) MarkBatchConfirmedByID(ctx context.Context, batchID int64) e
 	return tx.Commit()
 }
 
+// RevertBatchToPending reverts a failed batch - deletes batch record and marks blobs as pending_submission
+func (s *BlobStore) RevertBatchToPending(ctx context.Context, batchID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Mark blobs back to pending_submission
+	_, err = tx.ExecContext(ctx, `
+		UPDATE blobs
+		SET status = 'pending_submission',
+		    batch_id = NULL,
+		    batch_index = NULL
+		WHERE batch_id = ?
+		  AND status = 'batched'
+	`, batchID)
+	if err != nil {
+		return fmt.Errorf("revert blobs: %w", err)
+	}
+
+	// Delete the batch record
+	_, err = tx.ExecContext(ctx, `
+		DELETE FROM batches WHERE batch_id = ?
+	`, batchID)
+	if err != nil {
+		return fmt.Errorf("delete batch: %w", err)
+	}
+
+	return tx.Commit()
+}
+
 // GetUnconfirmedBatches retrieves batches that are submitted but not confirmed
 func (s *BlobStore) GetUnconfirmedBatches(ctx context.Context, olderThan time.Duration) ([]*Batch, error) {
 	rows, err := s.db.QueryContext(ctx, `
@@ -446,6 +478,34 @@ func (s *BlobStore) GetUnconfirmedBatches(ctx context.Context, olderThan time.Du
 		if celestiaHeight.Valid {
 			height := uint64(celestiaHeight.Int64)
 			batch.CelestiaHeight = &height
+		}
+		batches = append(batches, &batch)
+	}
+
+	return batches, rows.Err()
+}
+
+// GetStuckBatches returns batches with no celestia_height that are older than threshold.
+// These batches failed submission and need to be reverted to pending.
+func (s *BlobStore) GetStuckBatches(ctx context.Context, olderThan time.Duration) ([]*Batch, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT batch_id, batch_commitment, submitted_at
+		FROM batches
+		WHERE status = 'submitted'
+		  AND celestia_height IS NULL
+		  AND submitted_at < datetime('now', ?)
+		ORDER BY batch_id ASC
+	`, fmt.Sprintf("-%d seconds", int(olderThan.Seconds())))
+	if err != nil {
+		return nil, fmt.Errorf("query stuck batches: %w", err)
+	}
+	defer rows.Close()
+
+	var batches []*Batch
+	for rows.Next() {
+		var batch Batch
+		if err := rows.Scan(&batch.BatchID, &batch.BatchCommitment, &batch.SubmittedAt); err != nil {
+			return nil, fmt.Errorf("scan batch: %w", err)
 		}
 		batches = append(batches, &batch)
 	}

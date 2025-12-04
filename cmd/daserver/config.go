@@ -18,9 +18,8 @@ type Config struct {
 	DBPath    string `toml:"db_path"`
 	LogLevel  string `toml:"log_level"`
 	LogFormat string `toml:"log_format"`
-	LogColor  bool   `toml:"log_color"`
-	LogPID    bool   `toml:"log_pid"`
-	ReadOnly  bool   `toml:"read_only"`
+	LogColor bool `toml:"log_color"`
+	LogPID   bool `toml:"log_pid"`
 
 	Celestia CelestiaConfig `toml:"celestia"`
 	Batch    BatchConfig    `toml:"batch"`
@@ -81,22 +80,21 @@ type WorkerConfig struct {
 	RetryBackoff           string   `toml:"retry_backoff"`
 	MaxParallelSubmissions int      `toml:"max_parallel_submissions"`
 	MaxBlobWaitTime        string   `toml:"max_blob_wait_time"`
-	ReconcilePeriod string   `toml:"reconcile_period"`
-	ReconcileAge    string   `toml:"reconcile_age"`
-	GetTimeout      string   `toml:"get_timeout"`
-	TrustedSigners  []string `toml:"trusted_signers"`
-	MaxTxSizeKB     int      `toml:"max_tx_size_kb"`    // Maximum Celestia transaction size in KB (default: 1800KB = 1.8MB)
-	MaxBlockSizeKB  int      `toml:"max_block_size_kb"` // Maximum Celestia block size in KB (default: 32768KB = 32MB)
+	ReconcilePeriod        string   `toml:"reconcile_period"`
+	ReconcileAge           string   `toml:"reconcile_age"`
+	GetTimeout             string   `toml:"get_timeout"`
+	TrustedSigners         []string `toml:"trusted_signers"`
+	MaxTxSizeKB            int      `toml:"max_tx_size_kb"`    // Maximum Celestia transaction size in KB (default: 1800KB = 1.8MB)
+	MaxBlockSizeKB         int      `toml:"max_block_size_kb"` // Maximum Celestia block size in KB (default: 32768KB = 32MB)
 }
 
-// BackfillConfig holds backfill settings
+// BackfillConfig holds backfill settings for historical data migration
 type BackfillConfig struct {
-	Enabled           bool   `toml:"enabled"`
-	StartHeight       uint64 `toml:"start_height"`
-	EndHeight         uint64 `toml:"end_height"`
-	BlocksPerScan     int    `toml:"blocks_per_scan"`    // How many blocks to scan per iteration (also concurrency)
-	Period            string `toml:"period"`             // How often to scan for new blocks (e.g., "5s")
-	ConfirmationDepth uint64 `toml:"confirmation_depth"` // Re-scan last N heights to catch late-propagating blobs
+	Enabled       bool   `toml:"enabled"`
+	StartHeight   uint64 `toml:"start_height"`    // Celestia height to start backfilling from
+	TargetHeight  uint64 `toml:"target_height"`   // Celestia height to backfill to (0 = disabled)
+	BlocksPerScan int    `toml:"blocks_per_scan"` // How many blocks to scan per iteration (also concurrency)
+	Period        string `toml:"period"`          // How often to run backfill iterations (e.g., "1s")
 }
 
 // BackupConfig holds backup settings
@@ -158,31 +156,26 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("celestia.namespace must be 58 hex characters (29 bytes)")
 	}
 
-	// Bridge node settings (for reading blobs - required for both read and write modes)
+	// Bridge node settings (for reading blobs)
 	if c.Celestia.BridgeAddr == "" {
 		return fmt.Errorf("celestia.bridge_addr is required for reading blobs")
 	}
 
-	// Read-only mode validation
-	if c.ReadOnly {
-		// Read-only servers only need bridge_addr for reading - no CoreGRPC or keyring needed
-		if len(c.Worker.TrustedSigners) == 0 {
-			return fmt.Errorf("read-only mode requires worker.trusted_signers to be configured for security (prevents Woods attack)")
-		}
-		// Validate trusted signers are valid Bech32 addresses
+	// CoreGRPC and keyring settings required for submitting blobs
+	if c.Celestia.CoreGRPCAddr == "" {
+		return fmt.Errorf("celestia.core_grpc_addr is required for blob submission")
+	}
+	if c.Celestia.KeyringPath == "" {
+		return fmt.Errorf("celestia.keyring_path is required for signing transactions")
+	}
+	if c.Celestia.P2PNetwork == "" {
+		return fmt.Errorf("celestia.p2p_network is required")
+	}
+
+	// Validate trusted signers if provided (used for backfill verification)
+	if len(c.Worker.TrustedSigners) > 0 {
 		if err := validateTrustedSigners(c.Worker.TrustedSigners); err != nil {
 			return fmt.Errorf("invalid worker.trusted_signers: %w", err)
-		}
-	} else {
-		// Write mode: CoreGRPC and keyring settings required for submitting blobs
-		if c.Celestia.CoreGRPCAddr == "" {
-			return fmt.Errorf("celestia.core_grpc_addr is required for blob submission (not needed in read-only mode)")
-		}
-		if c.Celestia.KeyringPath == "" {
-			return fmt.Errorf("celestia.keyring_path is required for signing transactions (not needed in read-only mode)")
-		}
-		if c.Celestia.P2PNetwork == "" {
-			return fmt.Errorf("celestia.p2p_network is required (not needed in read-only mode)")
 		}
 	}
 

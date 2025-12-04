@@ -90,12 +90,6 @@ func BuildConfigFromTOML(tomlCfg *Config) (*RuntimeConfig, error) {
 		retryBackoff = parsed
 	}
 
-	// Confirmation depth: re-scan recent heights to catch late-propagating blobs
-	confirmationDepth := uint64(10) // Default: re-scan last 10 heights
-	if tomlCfg.Backfill.ConfirmationDepth > 0 {
-		confirmationDepth = tomlCfg.Backfill.ConfirmationDepth
-	}
-
 	workerCfg := &worker.Config{
 		SubmitPeriod:           submitPeriod,
 		SubmitTimeout:          submitTimeout,
@@ -106,13 +100,12 @@ func BuildConfigFromTOML(tomlCfg *Config) (*RuntimeConfig, error) {
 		ReconcilePeriod:        reconcilePeriod,
 		ReconcileAge:           reconcileAge,
 		GetTimeout:             getTimeout,
-		ReadOnly:               tomlCfg.ReadOnly,
 		TrustedSigners:         tomlCfg.Worker.TrustedSigners,
 		BackfillEnabled:        tomlCfg.Backfill.Enabled,
 		StartHeight:            tomlCfg.Backfill.StartHeight,
+		BackfillTargetHeight:   tomlCfg.Backfill.TargetHeight,
 		BackfillPeriod:         backfillPeriod,
 		BlocksPerScan:          tomlCfg.Backfill.BlocksPerScan,
-		ConfirmationDepth:      confirmationDepth,
 		MaxTxSizeBytes:         maxTxSizeBytes,
 		MaxBlockSizeBytes:      maxBlockSizeBytes,
 	}
@@ -172,10 +165,10 @@ func BuildConfigFromCLI(cliCtx *cli.Context) (*RuntimeConfig, error) {
 		ReconcilePeriod:        cliCtx.Duration(WorkerReconcilePeriodFlagName),
 		ReconcileAge:           cliCtx.Duration(WorkerReconcileAgeFlagName),
 		GetTimeout:             cliCtx.Duration(WorkerGetTimeoutFlagName),
-		ReadOnly:               cliCtx.Bool(ReadOnlyFlagName),
 		TrustedSigners:         trustedSigners,
 		BackfillEnabled:        cliCtx.Bool(BackfillEnabledFlagName),
 		StartHeight:            cliCtx.Uint64(BackfillStartHeightFlagName),
+		BackfillTargetHeight:   cliCtx.Uint64(BackfillTargetHeightFlagName),
 		BackfillPeriod:         cliCtx.Duration(BackfillPeriodFlagName),
 		BlocksPerScan:          cliCtx.Int(BackfillBlocksPerScanFlagName),
 	}
@@ -228,8 +221,6 @@ func BuildCLIConfigFromTOML(tomlCfg *Config) CLIConfig {
 
 	return CLIConfig{
 		CelestiaConfig: celestia.CelestiaClientConfig{
-			// Read-only mode
-			ReadOnly: tomlCfg.ReadOnly,
 			// Bridge node settings
 			BridgeAddr:       tomlCfg.Celestia.BridgeAddr,
 			BridgeAuthToken:  tomlCfg.Celestia.BridgeAuthToken,

@@ -33,7 +33,7 @@ func TestHandlePut_Success(t *testing.T) {
 		store,
 		celestiaStore,
 		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: false},
+		&worker.Config{},
 		false,
 		0,
 		log.New(),
@@ -68,7 +68,7 @@ func TestHandlePut_Idempotent(t *testing.T) {
 		store,
 		celestiaStore,
 		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: false},
+		&worker.Config{},
 		false,
 		0,
 		log.New(),
@@ -107,7 +107,7 @@ func TestHandlePut_EmptyData(t *testing.T) {
 		store,
 		celestiaStore,
 		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: false},
+		&worker.Config{},
 		false,
 		0,
 		log.New(),
@@ -132,7 +132,7 @@ func TestHandlePut_TooLarge(t *testing.T) {
 		store,
 		celestiaStore,
 		cfg,
-		&worker.Config{ReadOnly: false},
+		&worker.Config{},
 		false,
 		0,
 		log.New(),
@@ -150,31 +150,6 @@ func TestHandlePut_TooLarge(t *testing.T) {
 	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
 }
 
-// TestHandlePut_ReadOnlyMode tests rejection in read-only mode
-func TestHandlePut_ReadOnlyMode(t *testing.T) {
-	store, celestiaStore := setupTestServer(t)
-	server := celestia.NewCelestiaServer(
-		"localhost",
-		0,
-		store,
-		celestiaStore,
-		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: true}, // Read-only mode
-		false,
-		0,
-		log.New(),
-	)
-
-	blobData := []byte("test data")
-	req := httptest.NewRequest(http.MethodPost, "/put", bytes.NewReader(blobData))
-	w := httptest.NewRecorder()
-
-	server.HandlePut(w, req)
-
-	resp := w.Result()
-	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
-}
-
 // TestHandleGet_BlobNotFound tests 404 for non-existent blob
 func TestHandleGet_BlobNotFound(t *testing.T) {
 	store, celestiaStore := setupTestServer(t)
@@ -184,7 +159,7 @@ func TestHandleGet_BlobNotFound(t *testing.T) {
 		store,
 		celestiaStore,
 		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: false},
+		&worker.Config{},
 		false,
 		0,
 		log.New(),
@@ -215,7 +190,7 @@ func TestHandleGet_InvalidCommitment(t *testing.T) {
 		store,
 		celestiaStore,
 		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: false},
+		&worker.Config{},
 		false,
 		0,
 		log.New(),
@@ -252,7 +227,7 @@ func TestHandleGet_UnconfirmedBlob(t *testing.T) {
 		store,
 		celestiaStore,
 		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: false},
+		&worker.Config{},
 		false,
 		0,
 		log.New(),
@@ -294,7 +269,7 @@ func TestHandleHealth(t *testing.T) {
 		store,
 		celestiaStore,
 		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: false},
+		&worker.Config{},
 		false,
 		0,
 		log.New(),
@@ -321,7 +296,7 @@ func TestHandleStats(t *testing.T) {
 		store,
 		celestiaStore,
 		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: false},
+		&worker.Config{},
 		false,
 		0,
 		log.New(),
@@ -350,7 +325,7 @@ func TestHandlePut_ConcurrentRequests(t *testing.T) {
 		store,
 		celestiaStore,
 		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: false},
+		&worker.Config{},
 		false,
 		0,
 		log.New(),
@@ -387,7 +362,7 @@ func TestHandlePut_ContextCancellation(t *testing.T) {
 		store,
 		celestiaStore,
 		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: false},
+		&worker.Config{},
 		false,
 		0,
 		log.New(),
@@ -419,7 +394,7 @@ func TestAPI_PutAndGetRoundTrip(t *testing.T) {
 		store,
 		celestiaStore,
 		batch.DefaultConfig(),
-		&worker.Config{ReadOnly: false},
+		&worker.Config{},
 		false,
 		0,
 		log.New(),

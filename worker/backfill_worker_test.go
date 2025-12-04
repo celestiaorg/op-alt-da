@@ -54,8 +54,9 @@ func TestBackfillWorker_IndexBatch(t *testing.T) {
 	mock := &mockCelestiaAPI{}
 	workerCfg := DefaultConfig()
 	workerCfg.StartHeight = 1
+	workerCfg.BackfillTargetHeight = 100
 	logger := log.NewLogger(log.DiscardHandler())
-	worker := NewBackfillWorker(store, mock, nil, namespace, batchCfg, workerCfg, nil, logger)
+	worker := NewBackfillWorker(store, mock, namespace, batchCfg, workerCfg, nil, logger)
 
 	// Index the batch
 	height := uint64(12345)
@@ -65,18 +66,18 @@ func TestBackfillWorker_IndexBatch(t *testing.T) {
 	}
 
 	// Verify batch was indexed
-	batch, err := store.GetBatchByCommitment(ctx, celestiaBlob.Commitment)
+	batchRecord, err := store.GetBatchByCommitment(ctx, celestiaBlob.Commitment)
 	if err != nil {
 		t.Fatalf("GetBatchByCommitment failed: %v", err)
 	}
-	if batch == nil {
+	if batchRecord == nil {
 		t.Fatal("Batch not found after indexing")
 	}
-	if batch.Status != "confirmed" {
-		t.Errorf("Expected batch status 'confirmed', got '%s'", batch.Status)
+	if batchRecord.Status != "confirmed" {
+		t.Errorf("Expected batch status 'confirmed', got '%s'", batchRecord.Status)
 	}
-	if batch.BlobCount != len(blobs) {
-		t.Errorf("Expected blob count %d, got %d", len(blobs), batch.BlobCount)
+	if batchRecord.BlobCount != len(blobs) {
+		t.Errorf("Expected blob count %d, got %d", len(blobs), batchRecord.BlobCount)
 	}
 }
 
@@ -147,9 +148,10 @@ func TestBackfillWorker_SignerVerification(t *testing.T) {
 			mock := &mockCelestiaAPI{}
 			workerCfg := DefaultConfig()
 			workerCfg.StartHeight = 1
+			workerCfg.BackfillTargetHeight = 100
 			workerCfg.TrustedSigners = tt.trustedSigners
 			logger := log.NewLogger(log.DiscardHandler())
-			worker := NewBackfillWorker(testStore, mock, nil, namespace, batchCfg, workerCfg, nil, logger)
+			worker := NewBackfillWorker(testStore, mock, namespace, batchCfg, workerCfg, nil, logger)
 
 			err := worker.indexBatch(ctx, celestiaBlob, 12345)
 			if tt.expectError && err == nil {
@@ -161,11 +163,11 @@ func TestBackfillWorker_SignerVerification(t *testing.T) {
 
 			// If no error expected, verify batch was indexed
 			if !tt.expectError {
-				batch, err := testStore.GetBatchByCommitment(ctx, celestiaBlob.Commitment)
+				batchRecord, err := testStore.GetBatchByCommitment(ctx, celestiaBlob.Commitment)
 				if err != nil {
 					t.Fatalf("GetBatchByCommitment failed: %v", err)
 				}
-				if batch == nil {
+				if batchRecord == nil {
 					t.Error("Batch not found after successful indexing")
 				}
 			}
@@ -202,10 +204,11 @@ func TestBackfillWorker_RejectUnsignedBlob(t *testing.T) {
 	mock := &mockCelestiaAPI{}
 	workerCfg := DefaultConfig()
 	workerCfg.StartHeight = 1
+	workerCfg.BackfillTargetHeight = 100
 	// Use a Bech32 address
 	workerCfg.TrustedSigners = []string{"celestia15m7s9d0ldd9ur9mgh9m6r4kc396dp68szwqmyc"}
 	logger := log.NewLogger(log.DiscardHandler())
-	worker := NewBackfillWorker(store, mock, nil, namespace, batchCfg, workerCfg, nil, logger)
+	worker := NewBackfillWorker(store, mock, namespace, batchCfg, workerCfg, nil, logger)
 
 	// Index should fail due to untrusted signer
 	err = worker.indexBatch(ctx, celestiaBlob, 12345)
@@ -214,8 +217,8 @@ func TestBackfillWorker_RejectUnsignedBlob(t *testing.T) {
 	}
 
 	// Verify batch was NOT indexed
-	batch, _ := store.GetBatchByCommitment(ctx, celestiaBlob.Commitment)
-	if batch != nil {
+	batchRecord, _ := store.GetBatchByCommitment(ctx, celestiaBlob.Commitment)
+	if batchRecord != nil {
 		t.Error("Batch should not be indexed when signer verification fails")
 	}
 }
@@ -241,9 +244,10 @@ func TestBackfillWorker_RejectMalformedBatch(t *testing.T) {
 	mock := &mockCelestiaAPI{}
 	workerCfg := DefaultConfig()
 	workerCfg.StartHeight = 1
+	workerCfg.BackfillTargetHeight = 100
 	batchCfg := batch.DefaultConfig()
 	logger := log.NewLogger(log.DiscardHandler())
-	worker := NewBackfillWorker(store, mock, nil, namespace, batchCfg, workerCfg, nil, logger)
+	worker := NewBackfillWorker(store, mock, namespace, batchCfg, workerCfg, nil, logger)
 
 	// Index should fail due to malformed data
 	err = worker.indexBatch(ctx, celestiaBlob, 12345)
@@ -252,14 +256,14 @@ func TestBackfillWorker_RejectMalformedBatch(t *testing.T) {
 	}
 
 	// Verify batch was NOT indexed
-	batch, _ := store.GetBatchByCommitment(ctx, celestiaBlob.Commitment)
-	if batch != nil {
+	batchRecord, _ := store.GetBatchByCommitment(ctx, celestiaBlob.Commitment)
+	if batchRecord != nil {
 		t.Error("Batch should not be indexed when data is malformed")
 	}
 }
 
-// TestBackfillWorker_ScanAndIndexBlocks tests the scan logic
-func TestBackfillWorker_ScanAndIndexBlocks(t *testing.T) {
+// TestBackfillWorker_ScanRange tests the scan logic
+func TestBackfillWorker_ScanRange(t *testing.T) {
 	store, namespace, cleanup := setupWorkerTest(t)
 	defer cleanup()
 
@@ -286,40 +290,42 @@ func TestBackfillWorker_ScanAndIndexBlocks(t *testing.T) {
 			if height == 2 {
 				return []*blob.Blob{celestiaBlob}, nil
 			}
-			// Return error for heights beyond 2 (simulating tip)
-			if height > 2 {
+			// Return error for heights beyond 3 (simulating tip)
+			if height > 3 {
 				return nil, fmt.Errorf("height not found")
 			}
 			return []*blob.Blob{}, nil
 		},
 	}
 
-	// Mock header API to return tip at height 3
-	mockHeader := &mockHeaderAPI{tipHeight: 3}
-
 	workerCfg := DefaultConfig()
 	workerCfg.StartHeight = 1
+	workerCfg.BackfillTargetHeight = 3
+	workerCfg.BlocksPerScan = 10
 	logger := log.NewLogger(log.DiscardHandler())
-	worker := NewBackfillWorker(store, mock, mockHeader, namespace, batchCfg, workerCfg, nil, logger)
+	worker := NewBackfillWorker(store, mock, namespace, batchCfg, workerCfg, nil, logger)
 
-	// Run scan using doBackfill
-	worker.doBackfill(ctx)
+	// Run scan using scanRange
+	batchesFound, blocksScanned := worker.scanRange(ctx, 1, 4)
+
+	// Verify results
+	if blocksScanned != 3 {
+		t.Errorf("Expected 3 blocks scanned, got %d", blocksScanned)
+	}
+	if batchesFound != 1 {
+		t.Errorf("Expected 1 batch found, got %d", batchesFound)
+	}
 
 	// Verify the blob was discovered and indexed
-	batch, err := store.GetBatchByCommitment(ctx, celestiaBlob.Commitment)
+	batchRecord, err := store.GetBatchByCommitment(ctx, celestiaBlob.Commitment)
 	if err != nil {
 		t.Fatalf("GetBatchByCommitment failed: %v", err)
 	}
-	if batch == nil {
+	if batchRecord == nil {
 		t.Fatal("Batch not found after scan")
 	}
-	if batch.Status != "confirmed" {
-		t.Errorf("Expected batch status 'confirmed', got '%s'", batch.Status)
-	}
-
-	// Verify height was updated
-	if worker.backfillHeight != 3 {
-		t.Errorf("Expected backfill height 3, got %d", worker.backfillHeight)
+	if batchRecord.Status != "confirmed" {
+		t.Errorf("Expected batch status 'confirmed', got '%s'", batchRecord.Status)
 	}
 }
 
@@ -348,8 +354,9 @@ func TestBackfillWorker_DuplicateBatch(t *testing.T) {
 	mock := &mockCelestiaAPI{}
 	workerCfg := DefaultConfig()
 	workerCfg.StartHeight = 1
+	workerCfg.BackfillTargetHeight = 100
 	logger := log.NewLogger(log.DiscardHandler())
-	worker := NewBackfillWorker(store, mock, nil, namespace, batchCfg, workerCfg, nil, logger)
+	worker := NewBackfillWorker(store, mock, namespace, batchCfg, workerCfg, nil, logger)
 
 	// Index the batch first time
 	height := uint64(12345)
@@ -365,11 +372,11 @@ func TestBackfillWorker_DuplicateBatch(t *testing.T) {
 	}
 
 	// Verify only one batch exists
-	batch, err := store.GetBatchByCommitment(ctx, celestiaBlob.Commitment)
+	batchRecord, err := store.GetBatchByCommitment(ctx, celestiaBlob.Commitment)
 	if err != nil {
 		t.Fatalf("GetBatchByCommitment failed: %v", err)
 	}
-	if batch == nil {
+	if batchRecord == nil {
 		t.Fatal("Batch not found")
 	}
 
@@ -399,10 +406,11 @@ func TestBackfillWorker_ContextCancellation(t *testing.T) {
 
 	workerCfg := DefaultConfig()
 	workerCfg.StartHeight = 1
+	workerCfg.BackfillTargetHeight = 1000000 // High target so it doesn't complete
 	workerCfg.BackfillPeriod = 10 * time.Millisecond
 	batchCfg := batch.DefaultConfig()
 	logger := log.NewLogger(log.DiscardHandler())
-	worker := NewBackfillWorker(store, mock, nil, namespace, batchCfg, workerCfg, nil, logger)
+	worker := NewBackfillWorker(store, mock, namespace, batchCfg, workerCfg, nil, logger)
 
 	// Create context with cancel
 	ctx, cancel := context.WithCancel(context.Background())
@@ -425,5 +433,44 @@ func TestBackfillWorker_ContextCancellation(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Worker did not stop after context cancellation")
+	}
+}
+
+// TestBackfillWorker_CompletesAtTargetHeight tests worker stops at target height
+func TestBackfillWorker_CompletesAtTargetHeight(t *testing.T) {
+	store, namespace, cleanup := setupWorkerTest(t)
+	defer cleanup()
+
+	mock := &mockCelestiaAPI{
+		getAllFunc: func(ctx context.Context, height uint64, namespaces []libshare.Namespace) ([]*blob.Blob, error) {
+			return []*blob.Blob{}, nil
+		},
+	}
+
+	workerCfg := DefaultConfig()
+	workerCfg.StartHeight = 1
+	workerCfg.BackfillTargetHeight = 5
+	workerCfg.BackfillPeriod = 10 * time.Millisecond
+	workerCfg.BlocksPerScan = 10
+	batchCfg := batch.DefaultConfig()
+	logger := log.NewLogger(log.DiscardHandler())
+	worker := NewBackfillWorker(store, mock, namespace, batchCfg, workerCfg, nil, logger)
+
+	ctx := context.Background()
+
+	// Start worker - should complete quickly
+	done := make(chan error, 1)
+	go func() {
+		done <- worker.Run(ctx)
+	}()
+
+	// Should complete within reasonable time (not hang)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Expected nil error on completion, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Worker did not complete at target height")
 	}
 }
