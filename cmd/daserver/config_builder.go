@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -72,22 +73,28 @@ func BuildConfigFromTOML(tomlCfg *Config) (*RuntimeConfig, error) {
 	}
 
 	// Build worker config
+	maxParallelSubmissions := 1
+	if tomlCfg.Worker.MaxParallelSubmissions > 0 {
+		maxParallelSubmissions = tomlCfg.Worker.MaxParallelSubmissions
+	}
+
 	workerCfg := &worker.Config{
-		SubmitPeriod:    submitPeriod,
-		SubmitTimeout:   submitTimeout,
-		MaxRetries:      tomlCfg.Worker.MaxRetries,
-		MaxBlobWaitTime: maxBlobWaitTime,
-		ReconcilePeriod: reconcilePeriod,
-		ReconcileAge:    reconcileAge,
-		GetTimeout:      getTimeout,
-		ReadOnly:        tomlCfg.ReadOnly,
-		TrustedSigners:  tomlCfg.Worker.TrustedSigners,
-		BackfillEnabled: tomlCfg.Backfill.Enabled,
-		StartHeight:     tomlCfg.Backfill.StartHeight,
-		BackfillPeriod:    backfillPeriod,
-		BlocksPerScan:     tomlCfg.Backfill.BlocksPerScan,
-		MaxTxSizeBytes:    maxTxSizeBytes,
-		MaxBlockSizeBytes: maxBlockSizeBytes,
+		SubmitPeriod:           submitPeriod,
+		SubmitTimeout:          submitTimeout,
+		MaxRetries:             tomlCfg.Worker.MaxRetries,
+		MaxParallelSubmissions: maxParallelSubmissions,
+		MaxBlobWaitTime:        maxBlobWaitTime,
+		ReconcilePeriod:        reconcilePeriod,
+		ReconcileAge:           reconcileAge,
+		GetTimeout:             getTimeout,
+		ReadOnly:               tomlCfg.ReadOnly,
+		TrustedSigners:         tomlCfg.Worker.TrustedSigners,
+		BackfillEnabled:        tomlCfg.Backfill.Enabled,
+		StartHeight:            tomlCfg.Backfill.StartHeight,
+		BackfillPeriod:         backfillPeriod,
+		BlocksPerScan:          tomlCfg.Backfill.BlocksPerScan,
+		MaxTxSizeBytes:         maxTxSizeBytes,
+		MaxBlockSizeBytes:      maxBlockSizeBytes,
 	}
 
 	if err := validateWorkerConfig(workerCfg); err != nil {
@@ -137,19 +144,20 @@ func BuildConfigFromCLI(cliCtx *cli.Context) (*RuntimeConfig, error) {
 
 	// Build worker config
 	workerCfg := &worker.Config{
-		SubmitPeriod:    cliCtx.Duration(WorkerSubmitPeriodFlagName),
-		SubmitTimeout:   cliCtx.Duration(WorkerSubmitTimeoutFlagName),
-		MaxRetries:      cliCtx.Int(WorkerMaxRetriesFlagName),
-		MaxBlobWaitTime: cliCtx.Duration(WorkerMaxBlobWaitTimeFlagName),
-		ReconcilePeriod: cliCtx.Duration(WorkerReconcilePeriodFlagName),
-		ReconcileAge:    cliCtx.Duration(WorkerReconcileAgeFlagName),
-		GetTimeout:      cliCtx.Duration(WorkerGetTimeoutFlagName),
-		ReadOnly:        cliCtx.Bool(ReadOnlyFlagName),
-		TrustedSigners:  trustedSigners,
-		BackfillEnabled: cliCtx.Bool(BackfillEnabledFlagName),
-		StartHeight:     cliCtx.Uint64(BackfillStartHeightFlagName),
-		BackfillPeriod:  cliCtx.Duration(BackfillPeriodFlagName),
-		BlocksPerScan:   cliCtx.Int(BackfillBlocksPerScanFlagName),
+		SubmitPeriod:           cliCtx.Duration(WorkerSubmitPeriodFlagName),
+		SubmitTimeout:          cliCtx.Duration(WorkerSubmitTimeoutFlagName),
+		MaxRetries:             cliCtx.Int(WorkerMaxRetriesFlagName),
+		MaxParallelSubmissions: cliCtx.Int(WorkerMaxParallelSubmissionsFlagName),
+		MaxBlobWaitTime:        cliCtx.Duration(WorkerMaxBlobWaitTimeFlagName),
+		ReconcilePeriod:        cliCtx.Duration(WorkerReconcilePeriodFlagName),
+		ReconcileAge:           cliCtx.Duration(WorkerReconcileAgeFlagName),
+		GetTimeout:             cliCtx.Duration(WorkerGetTimeoutFlagName),
+		ReadOnly:               cliCtx.Bool(ReadOnlyFlagName),
+		TrustedSigners:         trustedSigners,
+		BackfillEnabled:        cliCtx.Bool(BackfillEnabledFlagName),
+		StartHeight:            cliCtx.Uint64(BackfillStartHeightFlagName),
+		BackfillPeriod:         cliCtx.Duration(BackfillPeriodFlagName),
+		BlocksPerScan:          cliCtx.Int(BackfillBlocksPerScanFlagName),
 	}
 
 	if err := validateWorkerConfig(workerCfg); err != nil {
@@ -171,18 +179,18 @@ func BuildConfigFromCLI(cliCtx *cli.Context) (*RuntimeConfig, error) {
 
 // RuntimeConfig holds the actual runtime configuration used by the server
 type RuntimeConfig struct {
-	Addr          string
-	Port          int
-	DBPath        string
-	BatchConfig   *batch.Config
-	WorkerConfig  *worker.Config
+	Addr           string
+	Port           int
+	DBPath         string
+	BatchConfig    *batch.Config
+	WorkerConfig   *worker.Config
 	CelestiaConfig CLIConfig
-	BackupEnabled bool
+	BackupEnabled  bool
 	BackupInterval string
-	TOMLConfig    *Config // Optional: original TOML if loaded
+	TOMLConfig     *Config // Optional: original TOML if loaded
 }
 
-// BuildCLIConfigFromTOML builds the Celestia CLI config from TOML
+// BuildCLIConfigFromTOML builds the CLI config from TOML
 func BuildCLIConfigFromTOML(tomlCfg *Config) CLIConfig {
 	// Parse S3 timeout if provided
 	var s3Timeout time.Duration
@@ -195,19 +203,28 @@ func BuildCLIConfigFromTOML(tomlCfg *Config) CLIConfig {
 		}
 	}
 
+	// Decode namespace from hex string
+	ns, _ := hex.DecodeString(tomlCfg.Celestia.Namespace)
+
 	return CLIConfig{
-		CelestiaEndpoint:      tomlCfg.Celestia.DARPCServer,
-		CelestiaTLSEnabled:    tomlCfg.Celestia.TLSEnabled,
-		CelestiaAuthToken:     tomlCfg.Celestia.AuthToken,
-		CelestiaNamespace:     tomlCfg.Celestia.Namespace,
-		CelestiaCompactBlobID: tomlCfg.Celestia.BlobIDCompact,
-		TxClientConfig: celestia.TxClientConfig{
-			DefaultKeyName:     tomlCfg.Celestia.TxClient.DefaultKeyName,
-			KeyringPath:        tomlCfg.Celestia.TxClient.KeyringPath,
-			CoreGRPCAddr:       tomlCfg.Celestia.TxClient.CoreGRPCAddr,
-			CoreGRPCTLSEnabled: tomlCfg.Celestia.TxClient.CoreGRPCTLSEnabled,
-			CoreGRPCAuthToken:  tomlCfg.Celestia.TxClient.CoreGRPCAuthToken,
-			P2PNetwork:         tomlCfg.Celestia.TxClient.P2PNetwork,
+		CelestiaConfig: celestia.CelestiaClientConfig{
+			// Bridge node settings
+			BridgeAddr:       tomlCfg.Celestia.BridgeAddr,
+			BridgeAuthToken:  tomlCfg.Celestia.BridgeAuthToken,
+			BridgeTLSEnabled: tomlCfg.Celestia.BridgeTLSEnabled,
+			// CoreGRPC settings
+			CoreGRPCAddr:       tomlCfg.Celestia.CoreGRPCAddr,
+			CoreGRPCAuthToken:  tomlCfg.Celestia.CoreGRPCAuthToken,
+			CoreGRPCTLSEnabled: tomlCfg.Celestia.CoreGRPCTLSEnabled,
+			// Keyring settings
+			KeyringPath:    tomlCfg.Celestia.KeyringPath,
+			DefaultKeyName: tomlCfg.Celestia.DefaultKeyName,
+			P2PNetwork:     tomlCfg.Celestia.P2PNetwork,
+			// Parallel submission settings
+			TxWorkerAccounts: tomlCfg.Celestia.TxWorkerAccounts,
+			// Blob settings
+			Namespace:     ns,
+			CompactBlobID: tomlCfg.Celestia.BlobIDCompact,
 		},
 		S3Config: s3.S3Config{
 			S3CredentialType: toS3CredentialType(tomlCfg.S3.CredentialType),

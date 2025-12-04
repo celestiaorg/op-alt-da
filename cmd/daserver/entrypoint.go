@@ -34,10 +34,11 @@ const (
 	BatchMinSizeFlagName     = "batch.min-size-kb"
 
 	// Worker configuration
-	WorkerSubmitPeriodFlagName    = "worker.submit-period"
-	WorkerSubmitTimeoutFlagName   = "worker.submit-timeout"
-	WorkerMaxRetriesFlagName      = "worker.max-retries"
-	WorkerMaxBlobWaitTimeFlagName = "worker.max-blob-wait-time"
+	WorkerSubmitPeriodFlagName           = "worker.submit-period"
+	WorkerSubmitTimeoutFlagName          = "worker.submit-timeout"
+	WorkerMaxRetriesFlagName             = "worker.max-retries"
+	WorkerMaxParallelSubmissionsFlagName = "worker.max-parallel-submissions"
+	WorkerMaxBlobWaitTimeFlagName        = "worker.max-blob-wait-time"
 	WorkerReconcilePeriodFlagName = "worker.reconcile-period"
 	WorkerReconcileAgeFlagName    = "worker.reconcile-age"
 	WorkerGetTimeoutFlagName      = "worker.get-timeout"
@@ -47,9 +48,9 @@ const (
 	TrustedSignersFlagName = "trusted-signers"
 
 	// Backfill configuration
-	BackfillEnabledFlagName      = "backfill.enabled"
-	BackfillStartHeightFlagName  = "backfill.start-height"
-	BackfillPeriodFlagName       = "backfill.period"
+	BackfillEnabledFlagName       = "backfill.enabled"
+	BackfillStartHeightFlagName   = "backfill.start-height"
+	BackfillPeriodFlagName        = "backfill.period"
 	BackfillBlocksPerScanFlagName = "backfill.blocks-per-scan"
 )
 
@@ -125,6 +126,12 @@ var (
 		Usage:   "maximum retries for failed submissions",
 		Value:   10,
 		EnvVars: prefixEnvVars("WORKER_MAX_RETRIES"),
+	}
+	WorkerMaxParallelSubmissionsFlag = &cli.IntFlag{
+		Name:    WorkerMaxParallelSubmissionsFlagName,
+		Usage:   "number of parallel Submit() calls to Celestia (should match TxWorkerAccounts on node)",
+		Value:   1,
+		EnvVars: prefixEnvVars("WORKER_MAX_PARALLEL_SUBMISSIONS"),
 	}
 	WorkerMaxBlobWaitTimeFlag = &cli.DurationFlag{
 		Name:    WorkerMaxBlobWaitTimeFlagName,
@@ -237,7 +244,9 @@ func StartDAServer(cliCtx *cli.Context) error {
 		cfg = runtimeCfg.CelestiaConfig
 	}
 
-	if err := cfg.Check(); err != nil {
+	// Check CLI config with read-only mode awareness
+	readOnly := runtimeCfg.WorkerConfig != nil && runtimeCfg.WorkerConfig.ReadOnly
+	if err := cfg.Check(readOnly); err != nil {
 		return err
 	}
 
@@ -275,8 +284,8 @@ func StartDAServer(cliCtx *cli.Context) error {
 	}
 
 	// Initialize Celestia store (for client access)
-	l.Info("Connecting to Celestia", "url", cfg.CelestiaConfig().URL)
-	celestiaStore, err := celestia.NewCelestiaStore(cliCtx.Context, cfg.CelestiaConfig())
+	l.Info("Connecting to Celestia", "bridge_addr", cfg.CelestiaConfig.BridgeAddr, "grpc_addr", cfg.CelestiaConfig.CoreGRPCAddr)
+	celestiaStore, err := celestia.NewCelestiaStore(cliCtx.Context, cfg.CelestiaConfig)
 	if err != nil {
 		return fmt.Errorf("failed to connect to Celestia: %w", err)
 	}

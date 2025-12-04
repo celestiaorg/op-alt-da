@@ -39,6 +39,7 @@ func main() {
 		WorkerSubmitPeriodFlag,
 		WorkerSubmitTimeoutFlag,
 		WorkerMaxRetriesFlag,
+		WorkerMaxParallelSubmissionsFlag,
 		WorkerMaxBlobWaitTimeFlag,
 		WorkerReconcilePeriodFlag,
 		WorkerReconcileAgeFlag,
@@ -52,8 +53,11 @@ func main() {
 	app.Version = opservice.FormatVersion(Version, "", "", "")
 	app.Name = "da-server"
 	app.Usage = "Alt-DA Storage Service"
-	app.Description = "Service for storing alt-da inputs to Celestia with async batching"
+	app.Description = "Service for storing alt-da inputs to Celestia with async batching and parallel submission"
 	app.Action = StartDAServer
+	app.Commands = []*cli.Command{
+		InitCommand(),
+	}
 
 	ctx := ctxinterrupt.WithSignalWaiterMain(context.Background())
 	err := app.RunContext(ctx, os.Args)

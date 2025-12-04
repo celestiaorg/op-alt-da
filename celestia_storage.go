@@ -8,15 +8,12 @@ import (
 	"time"
 
 	txClient "github.com/celestiaorg/celestia-node/api/client"
-	"github.com/celestiaorg/celestia-node/api/rpc/client"
-	"github.com/celestiaorg/celestia-node/blob"
 	blobAPI "github.com/celestiaorg/celestia-node/nodebuilder/blob"
 	"github.com/celestiaorg/celestia-node/nodebuilder/p2p"
-	"github.com/celestiaorg/celestia-node/state"
 	libshare "github.com/celestiaorg/go-square/v3/share"
+	"github.com/cosmos/cosmos-sdk/crypto/hd"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	altda "github.com/ethereum-optimism/optimism/op-alt-da"
 	"github.com/ethereum/go-ethereum/log"
 )
 
@@ -87,22 +84,40 @@ func (c *CelestiaBlobID) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
-type TxClientConfig struct {
-	DefaultKeyName     string
-	KeyringPath        string
-	CoreGRPCAddr       string
-	CoreGRPCTLSEnabled bool
-	CoreGRPCAuthToken  string
-	P2PNetwork         string
-}
+// CelestiaClientConfig holds configuration for connecting to Celestia.
+// Uses a dual-endpoint architecture:
+//   - Bridge node (JSON-RPC) for reading blobs
+//   - CoreGRPC for submitting blobs to consensus (not needed in read-only mode)
+type CelestiaClientConfig struct {
+	// Read-only mode: only reads blobs from bridge node, doesn't submit
+	ReadOnly bool
 
-type RPCClientConfig struct {
-	URL            string
-	TLSEnabled     bool
-	AuthToken      string
-	Namespace      []byte
-	CompactBlobID  bool
-	TxClientConfig *TxClientConfig
+	// Bridge node settings (for reading blobs via JSON-RPC)
+	BridgeAddr       string // Bridge node JSON-RPC endpoint (e.g., http://localhost:26658)
+	BridgeAuthToken  string // Auth token for bridge node (optional, some providers require it)
+	BridgeTLSEnabled bool   // Enable TLS for bridge node connection
+
+	// CoreGRPC settings (for submitting blobs) - not needed in read-only mode
+	CoreGRPCAddr       string // Consensus node gRPC endpoint (e.g., consensus-full-mocha-4.celestia-mocha.com:9090)
+	CoreGRPCAuthToken  string // Auth token for gRPC (optional, some providers like QuickNode require it)
+	CoreGRPCTLSEnabled bool   // Enable TLS for gRPC connection
+
+	// Keyring settings (for signing transactions)
+	KeyringPath    string // Path to keyring directory (e.g., ~/.celestia-light-mocha-4/keys)
+	DefaultKeyName string // Key name to use for signing (e.g., "my_celes_key")
+	P2PNetwork     string // Celestia network (e.g., mocha-4, arabica-11, mainnet)
+
+	// Parallel submission settings
+	// TxWorkerAccounts controls parallel transaction submission:
+	//   - 0: Immediate submission (no queue, default)
+	//   - 1: Synchronous submission (queued, single signer)
+	//   - >1: Parallel submission (queued, multiple worker accounts)
+	// When >1, ordering is NOT guaranteed. Worker addresses must be added to reader's trusted_signers.
+	TxWorkerAccounts int
+
+	// Blob settings
+	Namespace     []byte // Celestia namespace for blobs
+	CompactBlobID bool   // Use compact blob IDs (recommended)
 }
 
 // CelestiaStore implements DAStorage with celestia backend
@@ -116,28 +131,55 @@ type CelestiaStore struct {
 }
 
 // NewCelestiaStore returns a celestia store.
-func NewCelestiaStore(ctx context.Context, cfg RPCClientConfig) (*CelestiaStore, error) {
+// Architecture:
+//   - Reading blobs: Uses bridge node JSON-RPC (BridgeAddr + optional BridgeAuthToken)
+//   - Writing blobs: Uses CoreGRPC for direct submission to consensus (not in read-only mode)
+func NewCelestiaStore(ctx context.Context, cfg CelestiaClientConfig) (*CelestiaStore, error) {
 	logger := log.New()
-	var blobClient blobAPI.Module
-	var signerAddr []byte
-	var err error
-	if cfg.TxClientConfig != nil {
-		logger.Info("Initializing Celestia client in TxClient mode (OPTION B: service provider)",
-			"rpc_url", cfg.URL,
-			"grpc_addr", cfg.TxClientConfig.CoreGRPCAddr)
-		blobClient, signerAddr, err = initTxClient(ctx, cfg)
-	} else {
-		logger.Info("Initializing Celestia client in RPC-only mode (OPTION A: self-hosted node)",
-			"rpc_url", cfg.URL,
-			"auth_token_set", cfg.AuthToken != "")
-		blobClient, signerAddr, err = initRPCClient(ctx, cfg)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize celestia client: %w", err)
-	}
+
 	namespace, err := libshare.NewNamespaceFromBytes(cfg.Namespace)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse namespace: %w", err)
+	}
+
+	// Read-only mode: only initialize read client (no keyring or CoreGRPC needed)
+	if cfg.ReadOnly {
+		logger.Info("Initializing Celestia client (READ-ONLY mode)",
+			"bridge_addr", cfg.BridgeAddr,
+			"bridge_auth_token_set", cfg.BridgeAuthToken != "")
+
+		readClient, err := initReadOnlyClient(ctx, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize read-only celestia client: %w", err)
+		}
+
+		return &CelestiaStore{
+			Log:           logger,
+			Client:        readClient,
+			GetTimeout:    time.Minute,
+			Namespace:     namespace,
+			CompactBlobID: cfg.CompactBlobID,
+			SignerAddr:    nil, // No signer in read-only mode
+		}, nil
+	}
+
+	// Write mode: validate required fields
+	if cfg.CoreGRPCAddr == "" {
+		return nil, fmt.Errorf("CoreGRPCAddr is required for blob submission")
+	}
+	if cfg.KeyringPath == "" {
+		return nil, fmt.Errorf("KeyringPath is required for signing transactions")
+	}
+
+	logger.Info("Initializing Celestia client (WRITE mode)",
+		"bridge_addr", cfg.BridgeAddr,
+		"grpc_addr", cfg.CoreGRPCAddr,
+		"bridge_auth_token_set", cfg.BridgeAuthToken != "",
+		"grpc_auth_token_set", cfg.CoreGRPCAuthToken != "")
+
+	blobClient, signerAddr, err := initCelestiaClient(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize celestia client: %w", err)
 	}
 
 	// Log signer address for verification
@@ -168,16 +210,127 @@ func isZeroAddress(addr []byte) bool {
 	return true
 }
 
-// initTxClient initializes a transaction client for Celestia and extracts the signer address.
-func initTxClient(ctx context.Context, cfg RPCClientConfig) (blobAPI.Module, []byte, error) {
-	keyname := cfg.TxClientConfig.DefaultKeyName
+// SignerAddresses represents all signer addresses that will be used for blob submission.
+// When TxWorkerAccounts > 1 is configured on the Celestia node, it creates additional worker accounts.
+// All these addresses must be added to the reader's trusted_signers for security.
+type SignerAddresses struct {
+	Primary string   // Primary signer address (from DefaultKeyName)
+	Workers []string // Worker signer addresses (created by Celestia node when TxWorkerAccounts > 1)
+}
+
+// InitializeSignerAddresses initializes the keyring and returns all signer addresses.
+// This should be called before starting the server to get the addresses needed for reader's trusted_signers.
+//
+// For parallel submission (TxWorkerAccounts > 1), worker accounts are created by the Celestia client
+// when the server starts. This function creates/lists the worker keys to show their addresses.
+//
+// Worker keys follow the celestia-app convention: parallel-worker-{i} (e.g., parallel-worker-1)
+func InitializeSignerAddresses(cfg CelestiaClientConfig) (*SignerAddresses, error) {
+	keyname := cfg.DefaultKeyName
+	if keyname == "" {
+		keyname = "my_celes_key"
+	}
+
+	// Initialize keyring with the primary key
+	kr, err := txClient.KeyringWithNewKey(txClient.KeyringConfig{
+		KeyName:     keyname,
+		BackendName: keyring.BackendTest,
+	}, cfg.KeyringPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create keyring: %w", err)
+	}
+
+	// Get primary signer address
+	record, err := kr.Key(keyname)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key from keyring: %w", err)
+	}
+	primaryAddr, err := record.GetAddress()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get address from key: %w", err)
+	}
+
+	addresses := &SignerAddresses{
+		Primary: primaryAddr.String(),
+		Workers: make([]string, 0),
+	}
+
+	// Generate worker addresses based on TxWorkerAccounts config
+	// Worker accounts follow celestia-app convention: parallel-worker-{i}
+	// Worker index starts at 1 (index 0 is the primary account)
+	if cfg.TxWorkerAccounts > 1 {
+		for i := 1; i < cfg.TxWorkerAccounts; i++ {
+			workerName := fmt.Sprintf("parallel-worker-%d", i)
+
+			// Try to get existing worker key, or create it
+			workerKey, err := kr.Key(workerName)
+			if err != nil {
+				// Key doesn't exist, create it
+				workerKey, _, err = kr.NewMnemonic(
+					workerName,
+					keyring.English,
+					sdk.GetConfig().GetFullBIP44Path(),
+					keyring.DefaultBIP39Passphrase,
+					hd.Secp256k1,
+				)
+				if err != nil {
+					return nil, fmt.Errorf("failed to create worker key %s: %w", workerName, err)
+				}
+			}
+
+			workerAddr, err := workerKey.GetAddress()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get address for worker %s: %w", workerName, err)
+			}
+			addresses.Workers = append(addresses.Workers, workerAddr.String())
+		}
+	}
+
+	return addresses, nil
+}
+
+// AllAddresses returns all signer addresses (primary + workers) as a slice.
+// This is useful for generating the trusted_signers list for readers.
+func (s *SignerAddresses) AllAddresses() []string {
+	all := make([]string, 0, 1+len(s.Workers))
+	all = append(all, s.Primary)
+	all = append(all, s.Workers...)
+	return all
+}
+
+// initReadOnlyClient initializes a read-only Celestia client for blob retrieval.
+// Uses only the bridge node (no keyring or CoreGRPC needed).
+func initReadOnlyClient(ctx context.Context, cfg CelestiaClientConfig) (blobAPI.Module, error) {
+	config := txClient.Config{
+		ReadConfig: txClient.ReadConfig{
+			BridgeDAAddr: cfg.BridgeAddr,
+			DAAuthToken:  cfg.BridgeAuthToken,
+			EnableDATLS:  cfg.BridgeTLSEnabled,
+		},
+		// No SubmitConfig needed for read-only mode
+	}
+
+	client, err := txClient.New(ctx, config, nil) // No keyring needed
+	if err != nil {
+		return nil, fmt.Errorf("failed to create read-only celestia client: %w", err)
+	}
+
+	return client.Blob, nil
+}
+
+// initCelestiaClient initializes a Celestia client and extracts the signer address.
+// Uses dual-endpoint architecture:
+//   - ReadConfig: Bridge node JSON-RPC for reading blobs
+//   - SubmitConfig: CoreGRPC for submitting blobs to consensus
+func initCelestiaClient(ctx context.Context, cfg CelestiaClientConfig) (blobAPI.Module, []byte, error) {
+	keyname := cfg.DefaultKeyName
 	if keyname == "" {
 		keyname = "my_celes_key"
 	}
 	kr, err := txClient.KeyringWithNewKey(txClient.KeyringConfig{
 		KeyName:     keyname,
 		BackendName: keyring.BackendTest,
-	}, cfg.TxClientConfig.KeyringPath)
+	}, cfg.KeyringPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create keyring: %w", err)
 	}
@@ -193,197 +346,46 @@ func initTxClient(ctx context.Context, cfg RPCClientConfig) (blobAPI.Module, []b
 	}
 	signerAddr := signerAccAddr.Bytes() // Convert to raw 20-byte address
 
-	// Configure client
+	// Configure client with dual-endpoint architecture
+	// TxWorkerAccounts controls parallel transaction submission:
+	//   - 0: Immediate submission (no queue, default)
+	//   - 1: Synchronous submission (queued, single signer)
+	//   - >1: Parallel submission (queued, multiple worker accounts)
+	// When >1, the client creates worker subaccounts for parallel TX submission.
+	// These subaccount addresses must be added to readers' trusted_signers.
 	config := txClient.Config{
 		ReadConfig: txClient.ReadConfig{
-			BridgeDAAddr: cfg.URL,
-			DAAuthToken:  cfg.AuthToken,
-			EnableDATLS:  cfg.TLSEnabled,
+			BridgeDAAddr: cfg.BridgeAddr,
+			DAAuthToken:  cfg.BridgeAuthToken,
+			EnableDATLS:  cfg.BridgeTLSEnabled,
 		},
 		SubmitConfig: txClient.SubmitConfig{
-			DefaultKeyName: cfg.TxClientConfig.DefaultKeyName,
-			Network:        p2p.Network(cfg.TxClientConfig.P2PNetwork),
+			DefaultKeyName:   cfg.DefaultKeyName,
+			Network:          p2p.Network(cfg.P2PNetwork),
+			TxWorkerAccounts: cfg.TxWorkerAccounts,
 			CoreGRPCConfig: txClient.CoreGRPCConfig{
-				Addr:       cfg.TxClientConfig.CoreGRPCAddr,
-				TLSEnabled: cfg.TxClientConfig.CoreGRPCTLSEnabled,
-				AuthToken:  cfg.TxClientConfig.CoreGRPCAuthToken,
+				Addr:       cfg.CoreGRPCAddr,
+				TLSEnabled: cfg.CoreGRPCTLSEnabled,
+				AuthToken:  cfg.CoreGRPCAuthToken,
 			},
 		},
 	}
+
+	// Log submission mode
+	switch {
+	case cfg.TxWorkerAccounts > 1:
+		log.Info("Parallel submission mode enabled",
+			"tx_worker_accounts", cfg.TxWorkerAccounts,
+			"note", "Worker addresses must be in reader's trusted_signers")
+	case cfg.TxWorkerAccounts == 1:
+		log.Info("Synchronous submission mode enabled (queued, single signer)")
+	default:
+		log.Info("Immediate submission mode (default, no queue)")
+	}
+
 	celestiaClient, err := txClient.New(ctx, config, kr)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create tx client: %w", err)
+		return nil, nil, fmt.Errorf("failed to create celestia client: %w", err)
 	}
 	return celestiaClient.Blob, signerAddr, nil
-}
-
-// initRPCClient initializes an RPC client for Celestia and extracts the signer address.
-func initRPCClient(ctx context.Context, cfg RPCClientConfig) (blobAPI.Module, []byte, error) {
-	logger := log.New()
-
-	// Log auth token status with first/last 4 chars for verification
-	tokenPreview := "not set"
-	if cfg.AuthToken != "" {
-		tokenLen := len(cfg.AuthToken)
-		if tokenLen > 8 {
-			tokenPreview = fmt.Sprintf("%s...%s (length: %d)",
-				cfg.AuthToken[:4],
-				cfg.AuthToken[tokenLen-4:],
-				tokenLen)
-		} else if tokenLen > 0 {
-			tokenPreview = fmt.Sprintf("****** (length: %d)", tokenLen)
-		}
-	}
-
-	logger.Info("Initializing RPC client for blob operations (Get, Subscribe, and Submit if not in read-only mode)",
-		"url", cfg.URL,
-		"auth_token", tokenPreview,
-		"tls_enabled", cfg.TLSEnabled)
-
-	celestiaClient, err := client.NewClient(ctx, cfg.URL, cfg.AuthToken)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create rpc client: %w", err)
-	}
-
-	logger.Info("RPC client initialized successfully - auth token will be used for all operations")
-
-	// Extract signer address from the node's account
-	// Even in RPC-only mode, the node has a keyring and can provide its signer address
-	addr, err := celestiaClient.State.AccountAddress(ctx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get account address from RPC node: %w", err)
-	}
-
-	// Convert state.Address to raw 20-byte address
-	signerAddr := addr.Bytes()
-	if len(signerAddr) != 20 {
-		return nil, nil, fmt.Errorf("invalid signer address length from RPC node: expected 20 bytes, got %d", len(signerAddr))
-	}
-
-	return &celestiaClient.Blob, signerAddr, nil
-}
-
-func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
-	d.Log.Info("celestia: blob request", "id", hex.EncodeToString(key))
-	// Use passed context instead of Background() to respect caller's cancellation
-	ctx, cancel := context.WithTimeout(ctx, d.GetTimeout)
-	defer cancel()
-
-	// Validate key format: [alt-da_type_byte][celestia_version_byte][blob_id]
-	//
-	// The key follows Optimism's Alt-DA specification format:
-	// - Byte 0: Commitment type byte (added by altda.GenericCommitment.Encode())
-	//           Identifies the DA provider (Celestia, EigenDA, Avail, etc.)
-	// - Byte 1: Celestia-specific version byte (VersionByte = 0x0c)
-	//           Versions the Celestia blob ID format for forward compatibility
-	// - Bytes 2+: Celestia blob ID (height + commitment + optional share info)
-	if len(key) < 2 {
-		return nil, fmt.Errorf("invalid commitment format: expected at least 2 bytes [alt-da_type][celestia_version], got %d bytes. "+
-			"Commitment must be obtained from Put() response or constructed via altda.NewGenericCommitment(append([]byte{VersionByte}, blobID...)).Encode()",
-			len(key))
-	}
-
-	var blobID CelestiaBlobID
-	if err := blobID.UnmarshalBinary(key[2:]); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal blob ID: %w", err)
-	}
-	log.Debug("Retrieving blob with commitment", "blobID.Commitment", hex.EncodeToString(blobID.Commitment), "blobID.Height", blobID.Height)
-	blob, err := d.Client.Get(ctx, blobID.Height, d.Namespace, blobID.Commitment)
-	if err != nil {
-		return nil, fmt.Errorf("celestia: failed to resolve frame: %w", err)
-	}
-	if blob == nil {
-		return nil, fmt.Errorf("celestia: failed to resolve frame: nil blob")
-	}
-	return blob.Data(), nil
-}
-
-func (d *CelestiaStore) Put(ctx context.Context, data []byte) ([]byte, []byte, error) {
-	var submitFunc = func(ctx context.Context, client blobAPI.Module, b []*blob.Blob) (uint64, error) {
-		return d.Client.Submit(ctx, b, state.NewTxConfig())
-	}
-	id, blobData, err := submitAndCreateBlobID(ctx, d.Client, submitFunc, d.Namespace, data, d.CompactBlobID, d.SignerAddr)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	d.Log.Info("celestia: blob successfully submitted", "id", hex.EncodeToString(id))
-	commitment := altda.NewGenericCommitment(append([]byte{VersionByte}, id...))
-	return commitment.Encode(), blobData, nil
-}
-
-func (d *CelestiaStore) CreateCommitment(data []byte) ([]byte, error) {
-	// Use BlobV1 for signed blobs (CIP-21)
-	// BlobV1 requires 20-byte signer address
-	// IMPORTANT: Use the same signer as Put() to ensure commitment matches
-	if len(d.SignerAddr) != 20 {
-		return nil, fmt.Errorf("invalid signer address: expected 20 bytes, got %d", len(d.SignerAddr))
-	}
-	b, err := blob.NewBlobV1(d.Namespace, data, d.SignerAddr)
-	if err != nil {
-		return nil, err
-	}
-	return b.Commitment, nil
-}
-
-// submitAndCreateBlobID submits a blob to Celestia and creates a marshaled blob ID.
-// If compactBlobID is true, it re-fetches the blob to get its index and length.
-func submitAndCreateBlobID(
-	ctx context.Context,
-	client blobAPI.Module,
-	submitFunc func(context.Context, blobAPI.Module, []*blob.Blob) (uint64, error),
-	namespace libshare.Namespace,
-	data []byte,
-	compactBlobID bool,
-	signerAddr []byte,
-) ([]byte, []byte, error) {
-	// Use BlobV1 for signed blobs (CIP-21)
-	// BlobV1 requires 20-byte signer address
-	if len(signerAddr) != 20 {
-		return nil, nil, fmt.Errorf("invalid signer address: expected 20 bytes, got %d", len(signerAddr))
-	}
-	b, err := blob.NewBlobV1(namespace, data, signerAddr)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	height, err := submitFunc(ctx, client, []*blob.Blob{b})
-	if err != nil {
-		return nil, nil, err
-	}
-
-	var blobID CelestiaBlobID
-	if compactBlobID {
-		// Re-fetch the blob to get its index and length
-		b, err = client.Get(ctx, height, namespace, b.Commitment)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		size, err := b.Length()
-		if err != nil {
-			return nil, nil, err
-		}
-
-		blobID = CelestiaBlobID{
-			Height:      height,
-			Commitment:  b.Commitment,
-			ShareOffset: uint32(b.Index()),
-			ShareSize:   uint32(size),
-			isCompact:   compactBlobID,
-		}
-	} else {
-		blobID = CelestiaBlobID{
-			Height:     height,
-			Commitment: b.Commitment,
-			isCompact:  compactBlobID,
-		}
-	}
-
-	id, err := blobID.MarshalBinary()
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to marshal blob ID: %w", err)
-	}
-
-	return id, b.Data(), nil
 }

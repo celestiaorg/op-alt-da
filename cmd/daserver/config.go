@@ -22,33 +22,46 @@ type Config struct {
 	LogPID    bool   `toml:"log_pid"`
 	ReadOnly  bool   `toml:"read_only"`
 
-	Celestia CelestiaConfig  `toml:"celestia"`
-	Batch    BatchConfig     `toml:"batch"`
-	Worker   WorkerConfig    `toml:"worker"`
-	Backfill BackfillConfig  `toml:"backfill"`
-	Backup   BackupConfig    `toml:"backup"`
-	S3       S3Config        `toml:"s3"`
-	Metrics  MetricsConfig   `toml:"metrics"`
+	Celestia CelestiaConfig `toml:"celestia"`
+	Batch    BatchConfig    `toml:"batch"`
+	Worker   WorkerConfig   `toml:"worker"`
+	Backfill BackfillConfig `toml:"backfill"`
+	Backup   BackupConfig   `toml:"backup"`
+	S3       S3Config       `toml:"s3"`
+	Metrics  MetricsConfig  `toml:"metrics"`
 }
 
-// CelestiaConfig holds Celestia connection settings
+// CelestiaConfig holds Celestia connection settings.
+// Uses dual-endpoint architecture:
+//   - Bridge node (JSON-RPC) for reading blobs
+//   - CoreGRPC for submitting blobs to consensus
 type CelestiaConfig struct {
-	Namespace     string         `toml:"namespace"`
-	DARPCServer   string         `toml:"da_rpc_server"`
-	AuthToken     string         `toml:"auth_token"`
-	TLSEnabled    bool           `toml:"tls_enabled"`
-	BlobIDCompact bool           `toml:"blobid_compact"`
-	TxClient      TxClientConfig `toml:"tx_client"`
-}
+	// Blob settings
+	Namespace     string `toml:"namespace"`
+	BlobIDCompact bool   `toml:"blobid_compact"`
 
-// TxClientConfig holds transaction client settings (Option B: Service Provider)
-type TxClientConfig struct {
+	// Bridge node settings (for reading blobs via JSON-RPC)
+	BridgeAddr       string `toml:"bridge_addr"`
+	BridgeAuthToken  string `toml:"bridge_auth_token"`
+	BridgeTLSEnabled bool   `toml:"bridge_tls_enabled"`
+
+	// CoreGRPC settings (for submitting blobs)
 	CoreGRPCAddr       string `toml:"core_grpc_addr"`
 	CoreGRPCAuthToken  string `toml:"core_grpc_auth_token"`
 	CoreGRPCTLSEnabled bool   `toml:"core_grpc_tls_enabled"`
-	DefaultKeyName     string `toml:"default_key_name"`
-	KeyringPath        string `toml:"keyring_path"`
-	P2PNetwork         string `toml:"p2p_network"`
+
+	// Keyring settings (for signing transactions)
+	KeyringPath    string `toml:"keyring_path"`
+	DefaultKeyName string `toml:"default_key_name"`
+	P2PNetwork     string `toml:"p2p_network"`
+
+	// Parallel submission settings
+	// TxWorkerAccounts controls parallel transaction submission:
+	//   - 0: Immediate submission (no queue, default)
+	//   - 1: Synchronous submission (queued, single signer)
+	//   - >1: Parallel submission (queued, multiple worker accounts)
+	// When >1, ordering is NOT guaranteed. Run `da-server init` to get worker addresses for trusted_signers.
+	TxWorkerAccounts int `toml:"tx_worker_accounts"`
 }
 
 // BatchConfig holds batch processing settings
@@ -56,30 +69,31 @@ type BatchConfig struct {
 	MinBlobs    int `toml:"min_blobs"`
 	MaxBlobs    int `toml:"max_blobs"`
 	TargetBlobs int `toml:"target_blobs"`
-	MaxSizeKB   int `toml:"max_size_kb"`  // Changed from MB to KB for precision
+	MaxSizeKB   int `toml:"max_size_kb"` // Changed from MB to KB for precision
 	MinSizeKB   int `toml:"min_size_kb"`
 }
 
 // WorkerConfig holds worker timing and retry settings
 type WorkerConfig struct {
-	SubmitPeriod     string   `toml:"submit_period"`
-	SubmitTimeout    string   `toml:"submit_timeout"`
-	MaxRetries       int      `toml:"max_retries"`
-	MaxBlobWaitTime  string   `toml:"max_blob_wait_time"`
-	ReconcilePeriod  string   `toml:"reconcile_period"`
-	ReconcileAge     string   `toml:"reconcile_age"`
-	GetTimeout        string   `toml:"get_timeout"`
-	TrustedSigners    []string `toml:"trusted_signers"`
-	MaxTxSizeKB       int      `toml:"max_tx_size_kb"`    // Maximum Celestia transaction size in KB (default: 1800KB = 1.8MB)
-	MaxBlockSizeKB    int      `toml:"max_block_size_kb"` // Maximum Celestia block size in KB (default: 32768KB = 32MB)
+	SubmitPeriod           string   `toml:"submit_period"`
+	SubmitTimeout          string   `toml:"submit_timeout"`
+	MaxRetries             int      `toml:"max_retries"`
+	MaxParallelSubmissions int      `toml:"max_parallel_submissions"`
+	MaxBlobWaitTime        string   `toml:"max_blob_wait_time"`
+	ReconcilePeriod string   `toml:"reconcile_period"`
+	ReconcileAge    string   `toml:"reconcile_age"`
+	GetTimeout      string   `toml:"get_timeout"`
+	TrustedSigners  []string `toml:"trusted_signers"`
+	MaxTxSizeKB     int      `toml:"max_tx_size_kb"`    // Maximum Celestia transaction size in KB (default: 1800KB = 1.8MB)
+	MaxBlockSizeKB  int      `toml:"max_block_size_kb"` // Maximum Celestia block size in KB (default: 32768KB = 32MB)
 }
 
 // BackfillConfig holds backfill settings
 type BackfillConfig struct {
-	Enabled          bool   `toml:"enabled"`
-	StartHeight      uint64 `toml:"start_height"`
-	EndHeight        uint64 `toml:"end_height"`
-	BlocksPerScan    int    `toml:"blocks_per_scan"`    // How many blocks to scan per iteration
+	Enabled       bool   `toml:"enabled"`
+	StartHeight   uint64 `toml:"start_height"`
+	EndHeight     uint64 `toml:"end_height"`
+	BlocksPerScan int    `toml:"blocks_per_scan"` // How many blocks to scan per iteration
 }
 
 // BackupConfig holds backup settings
@@ -140,36 +154,32 @@ func (c *Config) Validate() error {
 	if len(c.Celestia.Namespace) != 58 { // 29 bytes = 58 hex chars
 		return fmt.Errorf("celestia.namespace must be 58 hex characters (29 bytes)")
 	}
-	if c.Celestia.DARPCServer == "" {
-		return fmt.Errorf("celestia.da_rpc_server is required")
-	}
 
-	// Validate deployment mode
-	hasTxClient := c.Celestia.TxClient.CoreGRPCAddr != ""
-	hasAuthToken := c.Celestia.AuthToken != ""
-
-	if hasTxClient && hasAuthToken {
-		return fmt.Errorf("cannot configure both tx_client (Option B) and auth_token (Option A) - choose one deployment mode")
-	}
-
-	// Option B validation (Service Provider with TxClient)
-	if hasTxClient {
-		if c.Celestia.TxClient.KeyringPath == "" {
-			return fmt.Errorf("celestia.tx_client.keyring_path is required for Option B")
-		}
-		if c.Celestia.TxClient.P2PNetwork == "" {
-			return fmt.Errorf("celestia.tx_client.p2p_network is required for Option B")
-		}
+	// Bridge node settings (for reading blobs - required for both read and write modes)
+	if c.Celestia.BridgeAddr == "" {
+		return fmt.Errorf("celestia.bridge_addr is required for reading blobs")
 	}
 
 	// Read-only mode validation
 	if c.ReadOnly {
+		// Read-only servers only need bridge_addr for reading - no CoreGRPC or keyring needed
 		if len(c.Worker.TrustedSigners) == 0 {
 			return fmt.Errorf("read-only mode requires worker.trusted_signers to be configured for security (prevents Woods attack)")
 		}
 		// Validate trusted signers are valid Bech32 addresses
 		if err := validateTrustedSigners(c.Worker.TrustedSigners); err != nil {
 			return fmt.Errorf("invalid worker.trusted_signers: %w", err)
+		}
+	} else {
+		// Write mode: CoreGRPC and keyring settings required for submitting blobs
+		if c.Celestia.CoreGRPCAddr == "" {
+			return fmt.Errorf("celestia.core_grpc_addr is required for blob submission (not needed in read-only mode)")
+		}
+		if c.Celestia.KeyringPath == "" {
+			return fmt.Errorf("celestia.keyring_path is required for signing transactions (not needed in read-only mode)")
+		}
+		if c.Celestia.P2PNetwork == "" {
+			return fmt.Errorf("celestia.p2p_network is required (not needed in read-only mode)")
 		}
 	}
 

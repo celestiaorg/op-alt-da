@@ -16,22 +16,30 @@ import (
 )
 
 const (
-	ListenAddrFlagName         = "addr"
-	PortFlagName               = "port"
-	CelestiaServerFlagName     = "celestia.server"
-	CelestiaTLSEnabledFlagName = "celestia.tls-enabled"
-	CelestiaAuthTokenFlagName  = "celestia.auth-token"
-	CelestiaNamespaceFlagName  = "celestia.namespace"
+	ListenAddrFlagName = "addr"
+	PortFlagName       = "port"
 
-	// tx client config flags
-	CelestiaDefaultKeyNameFlagName     = "celestia.tx-client.key-name"
-	CelestiaKeyringPathFlagName        = "celestia.tx-client.keyring-path"
-	CelestiaCoreGRPCAddrFlagName       = "celestia.tx-client.core-grpc.addr"
-	CelestiaCoreGRPCTLSEnabledFlagName = "celestia.tx-client.core-grpc.tls-enabled"
-	CelestiaCoreGRPCAuthTokenFlagName  = "celestia.tx-client.core-grpc.auth-token"
-	CelestiaP2PNetworkFlagName         = "celestia.tx-client.p2p-network"
+	// Bridge node settings (for reading blobs via JSON-RPC)
+	CelestiaBridgeAddrFlagName       = "celestia.bridge-addr"
+	CelestiaBridgeTLSEnabledFlagName = "celestia.bridge-tls-enabled"
+	CelestiaBridgeAuthTokenFlagName  = "celestia.bridge-auth-token"
 
+	// CoreGRPC settings (for submitting blobs)
+	CelestiaCoreGRPCAddrFlagName       = "celestia.core-grpc-addr"
+	CelestiaCoreGRPCTLSEnabledFlagName = "celestia.core-grpc-tls-enabled"
+	CelestiaCoreGRPCAuthTokenFlagName  = "celestia.core-grpc-auth-token"
+
+	// Keyring settings (for signing transactions)
+	CelestiaKeyringPathFlagName    = "celestia.keyring-path"
+	CelestiaDefaultKeyNameFlagName = "celestia.key-name"
+	CelestiaP2PNetworkFlagName     = "celestia.p2p-network"
+
+	// Blob settings
+	CelestiaNamespaceFlagName     = "celestia.namespace"
 	CelestiaCompactBlobIDFlagName = "celestia.compact-blobid"
+
+	// Parallel submission settings
+	CelestiaTxWorkerAccountsFlagName = "celestia.tx-worker-accounts"
 
 	//s3
 	S3CredentialTypeFlagName  = "s3.credential-type" // #nosec G101
@@ -66,24 +74,64 @@ var (
 		Value:   3100,
 		EnvVars: prefixEnvVars("PORT"),
 	}
-	CelestiaServerFlag = &cli.StringFlag{
-		Name:    CelestiaServerFlagName,
-		Usage:   "celestia rpc endpoint",
+	// Bridge node flags (for reading blobs)
+	CelestiaBridgeAddrFlag = &cli.StringFlag{
+		Name:    CelestiaBridgeAddrFlagName,
+		Usage:   "celestia bridge node JSON-RPC endpoint for reading blobs",
 		Value:   "http://localhost:26658",
-		EnvVars: prefixEnvVars("CELESTIA_SERVER"),
+		EnvVars: prefixEnvVars("CELESTIA_BRIDGE_ADDR"),
 	}
-	CelestiaTLSEnabledFlag = &cli.BoolFlag{
-		Name:    CelestiaTLSEnabledFlagName,
-		Usage:   "celestia rpc TLS (set to true only if using https://)",
-		EnvVars: prefixEnvVars("CELESTIA_TLS_ENABLED"),
-		Value:   false, // Default to false - most setups use plain HTTP
+	CelestiaBridgeTLSEnabledFlag = &cli.BoolFlag{
+		Name:    CelestiaBridgeTLSEnabledFlagName,
+		Usage:   "enable TLS for bridge node connection",
+		EnvVars: prefixEnvVars("CELESTIA_BRIDGE_TLS_ENABLED"),
+		Value:   false,
 	}
-	CelestiaAuthTokenFlag = &cli.StringFlag{
-		Name:    CelestiaAuthTokenFlagName,
-		Usage:   "celestia rpc auth token",
+	CelestiaBridgeAuthTokenFlag = &cli.StringFlag{
+		Name:    CelestiaBridgeAuthTokenFlagName,
+		Usage:   "auth token for bridge node JSON-RPC (optional, some providers require it)",
 		Value:   "",
-		EnvVars: prefixEnvVars("CELESTIA_AUTH_TOKEN"),
+		EnvVars: prefixEnvVars("CELESTIA_BRIDGE_AUTH_TOKEN"),
 	}
+	// CoreGRPC flags (for submitting blobs)
+	CelestiaCoreGRPCAddrFlag = &cli.StringFlag{
+		Name:    CelestiaCoreGRPCAddrFlagName,
+		Usage:   "celestia consensus node gRPC endpoint for submitting blobs",
+		Value:   "",
+		EnvVars: prefixEnvVars("CELESTIA_CORE_GRPC_ADDR"),
+	}
+	CelestiaCoreGRPCTLSEnabledFlag = &cli.BoolFlag{
+		Name:    CelestiaCoreGRPCTLSEnabledFlagName,
+		Usage:   "enable TLS for gRPC connection",
+		EnvVars: prefixEnvVars("CELESTIA_CORE_GRPC_TLS_ENABLED"),
+		Value:   true,
+	}
+	CelestiaCoreGRPCAuthTokenFlag = &cli.StringFlag{
+		Name:    CelestiaCoreGRPCAuthTokenFlagName,
+		Usage:   "auth token for gRPC (optional, some providers like QuickNode require it)",
+		Value:   "",
+		EnvVars: prefixEnvVars("CELESTIA_CORE_GRPC_AUTH_TOKEN"),
+	}
+	// Keyring flags (for signing)
+	CelestiaKeyringPathFlag = &cli.StringFlag{
+		Name:    CelestiaKeyringPathFlagName,
+		Usage:   "path to keyring directory (e.g., ~/.celestia-light-mocha-4/keys)",
+		Value:   "",
+		EnvVars: prefixEnvVars("CELESTIA_KEYRING_PATH"),
+	}
+	CelestiaDefaultKeyNameFlag = &cli.StringFlag{
+		Name:    CelestiaDefaultKeyNameFlagName,
+		Usage:   "key name to use for signing transactions",
+		Value:   "my_celes_key",
+		EnvVars: prefixEnvVars("CELESTIA_KEY_NAME"),
+	}
+	CelestiaP2PNetworkFlag = &cli.StringFlag{
+		Name:    CelestiaP2PNetworkFlagName,
+		Usage:   "celestia p2p network (mocha-4, arabica-11, mainnet)",
+		Value:   "mocha-4",
+		EnvVars: prefixEnvVars("CELESTIA_P2P_NETWORK"),
+	}
+	// Blob settings
 	CelestiaNamespaceFlag = &cli.StringFlag{
 		Name:    CelestiaNamespaceFlagName,
 		Usage:   "celestia namespace",
@@ -92,45 +140,16 @@ var (
 	}
 	CelestiaBlobIDCompactFlag = &cli.BoolFlag{
 		Name:    CelestiaCompactBlobIDFlagName,
-		Usage:   "enable compact celestia blob IDs. false indicates share offset and size will be included in the blob ID",
+		Usage:   "enable compact celestia blob IDs",
 		Value:   true,
 		EnvVars: prefixEnvVars("CELESTIA_BLOBID_COMPACT"),
 	}
-	CelestiaDefaultKeyNameFlag = &cli.StringFlag{
-		Name:    CelestiaDefaultKeyNameFlagName,
-		Usage:   "celestia tx client key name",
-		Value:   "my_celes_key",
-		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_KEY_NAME"),
-	}
-	CelestiaKeyringPathFlag = &cli.StringFlag{
-		Name:    CelestiaKeyringPathFlagName,
-		Usage:   "celestia tx client keyring path e.g. ~/.celestia-light-mocha-4/keys",
-		Value:   "",
-		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_KEYRING_PATH"),
-	}
-	CelestiaCoreGRPCAddrFlag = &cli.StringFlag{
-		Name:    CelestiaCoreGRPCAddrFlagName,
-		Usage:   "celestia tx client core grpc addr",
-		Value:   "http://localhost:9090",
-		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_CORE_GRPC_ADDR"),
-	}
-	CelestiaCoreGRPCTLSEnabledFlag = &cli.BoolFlag{
-		Name:    CelestiaCoreGRPCTLSEnabledFlagName,
-		Usage:   "celestia tx client core grpc TLS",
-		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_CORE_GRPC_TLS_ENABLED"),
-		Value:   true,
-	}
-	CelestiaCoreGRPCAuthTokenFlag = &cli.StringFlag{
-		Name:    CelestiaCoreGRPCAuthTokenFlagName,
-		Usage:   "celestia tx client core grpc auth token",
-		Value:   "",
-		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_CORE_GRPC_AUTH_TOKEN"),
-	}
-	CelestiaP2PNetworkFlag = &cli.StringFlag{
-		Name:    CelestiaP2PNetworkFlagName,
-		Usage:   "celestia tx client p2p network",
-		Value:   "mocha-4",
-		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_P2P_NETWORK"),
+	// Parallel submission flag
+	CelestiaTxWorkerAccountsFlag = &cli.IntFlag{
+		Name:    CelestiaTxWorkerAccountsFlagName,
+		Usage:   "number of worker accounts for parallel transaction submission (0=immediate, 1=synchronous, >1=parallel). Run 'da-server init' first to see worker addresses for trusted_signers",
+		Value:   0,
+		EnvVars: prefixEnvVars("CELESTIA_TX_WORKER_ACCOUNTS"),
 	}
 	S3CredentialTypeFlag = &cli.StringFlag{
 		Name:    S3CredentialTypeFlagName,
@@ -192,16 +211,22 @@ var optionalFlags = []cli.Flag{
 	ConfigFileFlag,
 	ListenAddrFlag,
 	PortFlag,
-	CelestiaServerFlag,
-	CelestiaTLSEnabledFlag,
-	CelestiaAuthTokenFlag,
-	CelestiaBlobIDCompactFlag,
-	CelestiaDefaultKeyNameFlag,
-	CelestiaKeyringPathFlag,
+	// Bridge node flags
+	CelestiaBridgeAddrFlag,
+	CelestiaBridgeTLSEnabledFlag,
+	CelestiaBridgeAuthTokenFlag,
+	// CoreGRPC flags
 	CelestiaCoreGRPCAddrFlag,
 	CelestiaCoreGRPCTLSEnabledFlag,
 	CelestiaCoreGRPCAuthTokenFlag,
+	// Keyring flags
+	CelestiaKeyringPathFlag,
+	CelestiaDefaultKeyNameFlag,
 	CelestiaP2PNetworkFlag,
+	// Blob settings (CelestiaNamespaceFlag is in requiredFlags)
+	CelestiaBlobIDCompactFlag,
+	// Parallel submission
+	CelestiaTxWorkerAccountsFlag,
 	S3CredentialTypeFlag,
 	S3BucketFlag,
 	S3PathFlag,
@@ -221,32 +246,36 @@ func init() {
 	Flags = append(requiredFlags, optionalFlags...)
 }
 
+// CLIConfig holds the CLI configuration for the DA server.
+// Uses the unified CelestiaClientConfig which combines bridge node and CoreGRPC settings.
 type CLIConfig struct {
-	CelestiaEndpoint      string
-	CelestiaTLSEnabled    bool
-	CelestiaAuthToken     string
-	CelestiaNamespace     string
-	CelestiaCompactBlobID bool
-	TxClientConfig        celestia.TxClientConfig
-	S3Config              s3.S3Config
-	MetricsEnabled        bool
-	MetricsPort           int
+	CelestiaConfig celestia.CelestiaClientConfig
+	S3Config       s3.S3Config
+	MetricsEnabled bool
+	MetricsPort    int
 }
 
 func ReadCLIConfig(ctx *cli.Context) CLIConfig {
+	ns, _ := hex.DecodeString(ctx.String(CelestiaNamespaceFlagName))
 	return CLIConfig{
-		CelestiaEndpoint:      ctx.String(CelestiaServerFlagName),
-		CelestiaTLSEnabled:    ctx.Bool(CelestiaTLSEnabledFlagName),
-		CelestiaAuthToken:     ctx.String(CelestiaAuthTokenFlagName),
-		CelestiaNamespace:     ctx.String(CelestiaNamespaceFlagName),
-		CelestiaCompactBlobID: ctx.Bool(CelestiaCompactBlobIDFlagName),
-		TxClientConfig: celestia.TxClientConfig{
-			DefaultKeyName:     ctx.String(CelestiaDefaultKeyNameFlagName),
-			KeyringPath:        ctx.String(CelestiaKeyringPathFlagName),
+		CelestiaConfig: celestia.CelestiaClientConfig{
+			// Bridge node settings
+			BridgeAddr:       ctx.String(CelestiaBridgeAddrFlagName),
+			BridgeAuthToken:  ctx.String(CelestiaBridgeAuthTokenFlagName),
+			BridgeTLSEnabled: ctx.Bool(CelestiaBridgeTLSEnabledFlagName),
+			// CoreGRPC settings
 			CoreGRPCAddr:       ctx.String(CelestiaCoreGRPCAddrFlagName),
-			CoreGRPCTLSEnabled: ctx.Bool(CelestiaCoreGRPCTLSEnabledFlagName),
 			CoreGRPCAuthToken:  ctx.String(CelestiaCoreGRPCAuthTokenFlagName),
-			P2PNetwork:         ctx.String(CelestiaP2PNetworkFlagName),
+			CoreGRPCTLSEnabled: ctx.Bool(CelestiaCoreGRPCTLSEnabledFlagName),
+			// Keyring settings
+			KeyringPath:    ctx.String(CelestiaKeyringPathFlagName),
+			DefaultKeyName: ctx.String(CelestiaDefaultKeyNameFlagName),
+			P2PNetwork:     ctx.String(CelestiaP2PNetworkFlagName),
+			// Parallel submission settings
+			TxWorkerAccounts: ctx.Int(CelestiaTxWorkerAccountsFlagName),
+			// Blob settings
+			Namespace:     ns,
+			CompactBlobID: ctx.Bool(CelestiaCompactBlobIDFlagName),
 		},
 		S3Config: s3.S3Config{
 			S3CredentialType: toS3CredentialType(ctx.String(S3CredentialTypeFlagName)),
@@ -262,118 +291,40 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 	}
 }
 
-func (c CLIConfig) TxClientEnabled() bool {
-	// If auth token is set, we're in OPTION A (RPC-only mode)
-	// Don't use TxClient even if keyring/grpc settings are present
-	if c.CelestiaAuthToken != "" {
-		return false
-	}
+func (c CLIConfig) Check(readOnly bool) error {
+	cfg := c.CelestiaConfig
 
-	// OPTION B: Use TxClient if keyring path is set
-	// (CoreGRPCAuthToken check removed - it's not a reliable indicator)
-	return c.TxClientConfig.KeyringPath != ""
-}
-
-// validateURLTLS checks that URL scheme matches TLS setting
-func validateURLTLS(url string, tlsEnabled bool) error {
-	isHTTPS := len(url) >= 8 && url[:8] == "https://"
-	isHTTP := len(url) >= 7 && url[:7] == "http://"
-
-	if !isHTTPS && !isHTTP {
-		return fmt.Errorf("celestia.server URL must start with http:// or https://, got: %s", url)
-	}
-
-	if tlsEnabled && isHTTP {
-		return errors.New("celestia.tls-enabled is true but URL uses http:// (not https://). Either:\n" +
-			"  1. Change URL to https:// if your node supports TLS\n" +
-			"  2. Set --celestia.tls-enabled=false for plain HTTP")
-	}
-
-	if !tlsEnabled && isHTTPS {
-		return errors.New("celestia.tls-enabled is false but URL uses https://. Either:\n" +
-			"  1. Set --celestia.tls-enabled to use HTTPS\n" +
-			"  2. Change URL to http:// for plain HTTP")
-	}
-
-	return nil
-}
-
-func (c CLIConfig) Check() error {
 	// Validate namespace
-	if _, err := hex.DecodeString(c.CelestiaNamespace); err != nil {
-		return fmt.Errorf("celestia namespace: %w", err)
+	if len(cfg.Namespace) == 0 {
+		return errors.New("--celestia.namespace is required")
 	}
 
-	// Detect which mode is being used
-	// Priority: If auth token is set, use OPTION A (ignore tx-client settings)
-	hasAuthToken := c.CelestiaAuthToken != ""
-	hasKeyringPath := c.TxClientConfig.KeyringPath != ""
+	// Validate bridge node endpoint (required for reading blobs in all modes)
+	if cfg.BridgeAddr == "" {
+		return errors.New("--celestia.bridge-addr is required for reading blobs")
+	}
 
-	// Determine mode and validate
-	if hasAuthToken {
-		// OPTION A: Self-hosted Celestia Node
-		// Requires: RPC endpoint + auth token
-		// The auth token gives full access (read + write) to the local node
-
-		if c.CelestiaEndpoint == "" {
-			return errors.New("OPTION A (self-hosted node): --celestia.server (RPC endpoint) is required")
+	// Write mode requires CoreGRPC and keyring for submitting blobs
+	if !readOnly {
+		if cfg.CoreGRPCAddr == "" {
+			return errors.New("--celestia.core-grpc-addr is required for submitting blobs (not needed with --read-only)")
 		}
-
-		// Validate URL/TLS consistency
-		if err := validateURLTLS(c.CelestiaEndpoint, c.CelestiaTLSEnabled); err != nil {
-			return err
+		if cfg.KeyringPath == "" {
+			return errors.New("--celestia.keyring-path is required for signing transactions (not needed with --read-only)")
 		}
-
-		// Option A validated successfully - continue to S3 validation below
-
-	} else if hasKeyringPath {
-		// OPTION B: Service Provider (client-tx mode)
-		// Requires: RPC endpoint (reads) + gRPC endpoint (writes) + keyring (signing)
-		// Uses RPC for Get/Subscribe, gRPC for Submit
-
-		if c.CelestiaEndpoint == "" {
-			return errors.New("OPTION B (service provider): --celestia.server (RPC endpoint) is required for reads (Get, GetAll, Subscribe)")
+		if cfg.P2PNetwork == "" {
+			return errors.New("--celestia.p2p-network must be set (not needed with --read-only)")
 		}
-
-		// Validate URL/TLS consistency
-		if err := validateURLTLS(c.CelestiaEndpoint, c.CelestiaTLSEnabled); err != nil {
-			return err
+		if cfg.DefaultKeyName == "" {
+			return errors.New("--celestia.key-name must be set (not needed with --read-only)")
 		}
-
-		if c.TxClientConfig.CoreGRPCAddr == "" {
-			return errors.New("OPTION B (service provider): --celestia.tx-client.core-grpc.addr (gRPC endpoint) is required for writes (Submit)")
-		}
-
-		if c.TxClientConfig.P2PNetwork == "" {
-			return errors.New("OPTION B (service provider): --celestia.tx-client.p2p-network must be set (e.g., mocha-4, arabica-11, mainnet)")
-		}
-
-		if c.TxClientConfig.DefaultKeyName == "" {
-			return errors.New("OPTION B (service provider): --celestia.tx-client.key-name must be set")
-		}
-
-		// Option B validated successfully - continue to S3 validation below
-
-	} else {
-		// Neither mode configured properly
-		return errors.New(`celestia connection not configured. Choose ONE mode:
-
-OPTION A (Self-hosted Node): Set --celestia.auth-token
-  Example: --celestia.server http://localhost:26658 --celestia.auth-token <token>
-
-OPTION B (Service Provider): Set --celestia.tx-client.keyring-path
-  Example: --celestia.server https://rpc.endpoint --celestia.tx-client.core-grpc.addr grpc.endpoint:9090 --celestia.tx-client.keyring-path ~/.celestia-light-mocha-4/keys --celestia.tx-client.p2p-network mocha-4
-
-See .env.example for detailed configuration examples`)
 	}
 
 	// S3 config validation - only validate if bucket is set (S3 is being used)
 	if c.S3Config.Bucket != "" {
-		// If bucket is set, validate credential type
 		if c.S3Config.S3CredentialType == s3.S3CredentialUnknown {
 			return errors.New("s3: credential_type must be set to 'iam' or 'static' when bucket is configured")
 		}
-		// If using static credentials, validate they are provided
 		if c.S3Config.S3CredentialType == s3.S3CredentialStatic {
 			if c.S3Config.AccessKeyID == "" || c.S3Config.AccessKeySecret == "" {
 				return errors.New("s3 static credentials: access_key_id and access_key_secret must be set")
@@ -384,66 +335,41 @@ See .env.example for detailed configuration examples`)
 	return nil
 }
 
-// GetCelestiaMode returns a human-readable description of the detected Celestia connection mode
+// GetCelestiaMode returns a human-readable description of the Celestia connection mode
 func (c CLIConfig) GetCelestiaMode() string {
-	// Priority: If auth token is set, use OPTION A (ignore tx-client settings)
-	hasAuthToken := c.CelestiaAuthToken != ""
-	hasKeyringPath := c.TxClientConfig.KeyringPath != ""
-
-	if hasAuthToken {
-		return "OPTION A: Self-hosted Node (RPC with auth token)"
-	} else if hasKeyringPath {
-		return "OPTION B: Service Provider (client-tx mode with keyring + gRPC)"
-	}
-	return "UNKNOWN (not configured)"
+	return "Dual-endpoint mode (reads via bridge node JSON-RPC, writes via CoreGRPC)"
 }
 
-// GetCelestiaModeDetails returns detailed configuration for the detected mode
+// GetCelestiaModeDetails returns detailed configuration for Celestia connection
 func (c CLIConfig) GetCelestiaModeDetails() map[string]string {
+	cfg := c.CelestiaConfig
 	details := make(map[string]string)
 
-	// Priority: If auth token is set, use OPTION A (ignore tx-client settings)
-	hasAuthToken := c.CelestiaAuthToken != ""
-	hasKeyringPath := c.TxClientConfig.KeyringPath != ""
-
-	if hasAuthToken {
-		// OPTION A: Self-hosted Node
-		details["mode"] = "OPTION A"
-		details["description"] = "Self-hosted Node"
-		details["rpc_endpoint"] = c.CelestiaEndpoint
-		details["auth_token"] = "<redacted>"
-	} else if hasKeyringPath {
-		// OPTION B: Service Provider
-		details["mode"] = "OPTION B"
-		details["description"] = "Service Provider (client-tx)"
-		details["rpc_endpoint"] = c.CelestiaEndpoint
-		details["grpc_endpoint"] = c.TxClientConfig.CoreGRPCAddr
-		details["keyring_path"] = c.TxClientConfig.KeyringPath
-		details["key_name"] = c.TxClientConfig.DefaultKeyName
-		details["p2p_network"] = c.TxClientConfig.P2PNetwork
+	details["mode"] = "Dual-endpoint"
+	details["description"] = "Reads via bridge node, writes via CoreGRPC"
+	details["bridge_addr"] = cfg.BridgeAddr
+	details["grpc_addr"] = cfg.CoreGRPCAddr
+	details["keyring_path"] = cfg.KeyringPath
+	details["key_name"] = cfg.DefaultKeyName
+	details["p2p_network"] = cfg.P2PNetwork
+	if cfg.BridgeAuthToken != "" {
+		details["bridge_auth_token"] = "<redacted>"
+	}
+	if cfg.CoreGRPCAuthToken != "" {
+		details["grpc_auth_token"] = "<redacted>"
 	}
 
 	return details
 }
 
-func (c CLIConfig) CelestiaConfig() celestia.RPCClientConfig {
-	ns, _ := hex.DecodeString(c.CelestiaNamespace)
-	var cfg *celestia.TxClientConfig
-	if c.TxClientEnabled() {
-		cfg = &c.TxClientConfig
-	}
-	return celestia.RPCClientConfig{
-		URL:            c.CelestiaEndpoint,
-		TLSEnabled:     c.CelestiaTLSEnabled,
-		AuthToken:      c.CelestiaAuthToken,
-		Namespace:      ns,
-		CompactBlobID:  c.CelestiaCompactBlobID,
-		TxClientConfig: cfg,
-	}
+// GetCelestiaClientConfig returns the Celestia client configuration
+func (c CLIConfig) GetCelestiaClientConfig() celestia.CelestiaClientConfig {
+	return c.CelestiaConfig
 }
 
-func (c CLIConfig) CelestiaRPCClientEnabled() bool {
-	return !(c.CelestiaEndpoint == "" && c.CelestiaAuthToken == "" && c.CelestiaNamespace == "")
+func (c CLIConfig) CelestiaClientEnabled() bool {
+	cfg := c.CelestiaConfig
+	return cfg.BridgeAddr != "" && len(cfg.Namespace) > 0 && cfg.KeyringPath != "" && cfg.CoreGRPCAddr != ""
 }
 
 func toS3CredentialType(s string) s3.S3CredentialType {
