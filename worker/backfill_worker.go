@@ -31,6 +31,10 @@ type BackfillWorker struct {
 
 	// Track the current sync height
 	currentHeight uint64
+
+	// All trusted signer addresses (decoded from bech32)
+	// Used to compute ALL possible commitments for each blob
+	trustedSignerAddrs [][]byte
 }
 
 func NewBackfillWorker(
@@ -42,15 +46,38 @@ func NewBackfillWorker(
 	metrics *metrics.CelestiaMetrics,
 	log log.Logger,
 ) *BackfillWorker {
+	// Decode all trusted signers to raw addresses
+	// We'll compute commitments for ALL of them so any client can find their blob
+	var trustedSignerAddrs [][]byte
+	for _, signer := range workerCfg.TrustedSigners {
+		addr, err := sdk.AccAddressFromBech32(signer)
+		if err != nil {
+			log.Error("Failed to decode trusted signer",
+				"signer", signer,
+				"error", err)
+			continue
+		}
+		trustedSignerAddrs = append(trustedSignerAddrs, addr.Bytes())
+	}
+
+	if len(trustedSignerAddrs) > 0 {
+		log.Info("Loaded trusted signers for commitment computation",
+			"count", len(trustedSignerAddrs),
+			"signers", workerCfg.TrustedSigners)
+	} else {
+		log.Warn("No trusted signers configured - will use on-chain signer only")
+	}
+
 	return &BackfillWorker{
-		store:         store,
-		celestia:      celestia,
-		namespace:     namespace,
-		batchCfg:      batchCfg,
-		workerCfg:     workerCfg,
-		metrics:       metrics,
-		log:           log,
-		currentHeight: workerCfg.StartHeight,
+		store:              store,
+		celestia:           celestia,
+		namespace:          namespace,
+		batchCfg:           batchCfg,
+		workerCfg:          workerCfg,
+		metrics:            metrics,
+		log:                log,
+		currentHeight:      workerCfg.StartHeight,
+		trustedSignerAddrs: trustedSignerAddrs,
 	}
 }
 
@@ -336,47 +363,70 @@ func (w *BackfillWorker) persistBatch(ctx context.Context, batchCommitment, batc
 }
 
 func (w *BackfillWorker) persistBlob(ctx context.Context, tx *sql.Tx, blobData []byte, signerAddr []byte, batchID int64, batchIndex int, height uint64, now time.Time) error {
-	// Compute commitment using the same signer that was used when the blob was submitted to Celestia
-	blobCommitment, err := commitment.ComputeCommitment(blobData, w.namespace, signerAddr)
-	if err != nil {
-		w.log.Error("Failed to compute commitment for blob",
-			"batch_index", batchIndex,
-			"error", err)
-		return fmt.Errorf("compute commitment for blob %d: %w", batchIndex, err)
+	// Compute commitments for ALL trusted signers so any client can find this blob
+	// This is stateless - we don't care which signer the writer used, we store all possibilities
+	signersToUse := w.trustedSignerAddrs
+	if len(signersToUse) == 0 {
+		// Fallback to on-chain signer if no trusted signers configured
+		signersToUse = [][]byte{signerAddr}
 	}
 
-	existing, err := w.store.GetBlobByCommitment(ctx, blobCommitment)
-	if err == nil && existing != nil {
-		w.log.Debug("Blob already exists, skipping",
+	// Check if blob already exists (by any commitment)
+	for _, signer := range signersToUse {
+		comm, err := commitment.ComputeCommitment(blobData, w.namespace, signer)
+		if err != nil {
+			continue
+		}
+		existing, err := w.store.GetBlobByCommitment(ctx, comm)
+		if err == nil && existing != nil {
+			w.log.Debug("Blob already exists, skipping",
+				"commitment", fmt.Sprintf("%x", comm))
+			return nil
+		}
+	}
+
+	// Insert blob record for EACH trusted signer's commitment
+	// This allows lookup by any commitment the writer might have used
+	for i, signer := range signersToUse {
+		blobCommitment, err := commitment.ComputeCommitment(blobData, w.namespace, signer)
+		if err != nil {
+			w.log.Error("Failed to compute commitment for blob",
+				"batch_index", batchIndex,
+				"signer_index", i,
+				"error", err)
+			continue
+		}
+
+		idx := batchIndex
+		blobRecord := &db.Blob{
+			Commitment:     blobCommitment,
+			Namespace:      w.namespace.Bytes(),
+			Data:           blobData,
+			Size:           len(blobData),
+			Status:         "confirmed",
+			CelestiaHeight: &height,
+			BatchID:        &batchID,
+			BatchIndex:     &idx,
+			CreatedAt:      now,
+			SubmittedAt:    &now,
+			ConfirmedAt:    &now,
+		}
+
+		if err := w.store.InsertBlobTx(ctx, tx, blobRecord); err != nil {
+			// Ignore duplicate key errors - another signer's commitment might already exist
+			w.log.Debug("Insert blob (may be duplicate)",
+				"batch_index", batchIndex,
+				"signer_index", i,
+				"commitment", fmt.Sprintf("%x", blobCommitment),
+				"error", err)
+			continue
+		}
+
+		w.log.Debug("Indexed blob",
+			"batch_index", batchIndex,
+			"signer_index", i,
 			"commitment", fmt.Sprintf("%x", blobCommitment))
-		return nil
 	}
 
-	idx := batchIndex
-	blobRecord := &db.Blob{
-		Commitment:     blobCommitment,
-		Namespace:      w.namespace.Bytes(),
-		Data:           blobData,
-		Size:           len(blobData),
-		Status:         "confirmed",
-		CelestiaHeight: &height,
-		BatchID:        &batchID,
-		BatchIndex:     &idx,
-		CreatedAt:      now,
-		SubmittedAt:    &now,
-		ConfirmedAt:    &now,
-	}
-
-	if err := w.store.InsertBlobTx(ctx, tx, blobRecord); err != nil {
-		w.log.Error("Failed to insert blob - failing entire batch to maintain consistency",
-			"batch_index", batchIndex,
-			"commitment", fmt.Sprintf("%x", blobCommitment),
-			"error", err)
-		return fmt.Errorf("insert blob %d: %w", batchIndex, err)
-	}
-
-	w.log.Debug("Indexed blob",
-		"batch_index", batchIndex,
-		"commitment", fmt.Sprintf("%x", blobCommitment))
 	return nil
 }

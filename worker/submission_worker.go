@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/celestiaorg/celestia-node/blob"
@@ -11,6 +12,7 @@ import (
 	"github.com/celestiaorg/celestia-node/state"
 	libshare "github.com/celestiaorg/go-square/v3/share"
 	"github.com/ethereum/go-ethereum/log"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/celestiaorg/op-alt-da/batch"
 	"github.com/celestiaorg/op-alt-da/commitment"
@@ -52,7 +54,6 @@ func NewSubmissionWorker(
 }
 
 func (w *SubmissionWorker) Run(ctx context.Context) error {
-	// Validate configuration to prevent runtime panics
 	if w.workerCfg.SubmitPeriod <= 0 {
 		return fmt.Errorf("invalid submit period: %v (must be positive)", w.workerCfg.SubmitPeriod)
 	}
@@ -64,8 +65,8 @@ func (w *SubmissionWorker) Run(ctx context.Context) error {
 	defer ticker.Stop()
 
 	w.log.Info("Submission worker started",
-		"target_blobs", w.batchCfg.TargetBlobs,
-		"max_blobs", w.batchCfg.MaxBlobs,
+		"max_blobs_per_batch", w.batchCfg.MaxBlobs,
+		"max_batch_size_kb", w.batchCfg.MaxBatchSizeBytes/1024,
 		"period", w.workerCfg.SubmitPeriod,
 		"submit_timeout", w.workerCfg.SubmitTimeout)
 
@@ -75,250 +76,333 @@ func (w *SubmissionWorker) Run(ctx context.Context) error {
 			w.log.Info("Submission worker stopping")
 			return ctx.Err()
 		case <-ticker.C:
-			if err := w.processBatch(ctx); err != nil {
-				w.log.Error("Process batch failed", "error", err)
+			if err := w.submitPendingBlobs(ctx); err != nil {
+				w.log.Error("Submit pending blobs failed", "error", err)
 			}
 		}
 	}
 }
 
-func (w *SubmissionWorker) processBatch(ctx context.Context) error {
-	// Get pending blobs (FIFO order) - fetch up to MaxBlobs to have more options
-	blobs, err := w.store.GetPendingBlobs(ctx, w.batchCfg.MaxBlobs)
+// batchInfo holds metadata about a prepared batch
+type batchInfo struct {
+	blobIDs         []int64
+	batchCommitment []byte
+	packedData      []byte
+	celestiaBlob    *blob.Blob
+	dbBatchID       int64
+	blobs           []*db.Blob // Original blobs for metrics
+}
+
+// submitPendingBlobs fetches all pending blobs, packs them into batches,
+// and submits ALL batches to Celestia in a single Submit() call.
+func (w *SubmissionWorker) submitPendingBlobs(ctx context.Context) error {
+	// Fetch pending blobs - get enough for multiple batches
+	maxFetch := w.batchCfg.MaxBlobs * 10 // Fetch enough for ~10 batches
+	if maxFetch < 500 {
+		maxFetch = 500
+	}
+
+	pendingBlobs, err := w.store.GetPendingBlobs(ctx, maxFetch)
 	if err != nil {
 		return fmt.Errorf("get pending blobs: %w", err)
 	}
 
-	if len(blobs) == 0 {
-		w.log.Debug("No pending blobs found, waiting for new submissions")
-		return nil // No work to do
+	if len(pendingBlobs) == 0 {
+		w.log.Debug("No pending blobs")
+		return nil
 	}
 
-	// Select blobs that fit within batch size limit
-	// Account for packing overhead: 4 bytes for count + 4 bytes per blob for size
-	selectedBlobs := w.selectBlobsForBatch(blobs)
+	w.log.Info("Found pending blobs", "count", len(pendingBlobs))
 
-	if len(selectedBlobs) == 0 {
-		// First blob alone is too large
-		w.log.Error("First pending blob exceeds max batch size - blob too large to submit",
-			"blob_size_bytes", len(blobs[0].Data),
-			"max_batch_size_bytes", w.batchCfg.MaxBatchSizeBytes)
-		return fmt.Errorf("blob too large: %d bytes > %d bytes limit", len(blobs[0].Data), w.batchCfg.MaxBatchSizeBytes)
+	// Split into batches and prepare Celestia blobs
+	batches, err := w.prepareBatches(ctx, pendingBlobs)
+	if err != nil {
+		return fmt.Errorf("prepare batches: %w", err)
 	}
 
-	// Calculate total size of selected blobs
-	totalSize := 0
-	for _, b := range selectedBlobs {
-		totalSize += len(b.Data)
+	if len(batches) == 0 {
+		return nil
 	}
 
-	// Check if oldest blob has exceeded max wait time (time-based submission)
-	oldestBlobAge := time.Since(selectedBlobs[0].CreatedAt)
-	forceSubmit := oldestBlobAge >= w.workerCfg.MaxBlobWaitTime
+	// Determine max concurrent submissions (semaphore)
+	maxConcurrent := w.workerCfg.MaxParallelSubmissions
+	if maxConcurrent <= 0 {
+		maxConcurrent = 1
+	}
+	if maxConcurrent > len(batches) {
+		maxConcurrent = len(batches)
+	}
 
-	if forceSubmit {
-		w.log.Info("Force submitting batch due to max wait time exceeded",
-			"oldest_blob_age", oldestBlobAge,
-			"max_wait_time", w.workerCfg.MaxBlobWaitTime,
-			"blob_count", len(selectedBlobs),
-			"total_size_kb", totalSize/1024)
-	} else {
-		// Only batch if we meet minimum requirements (normal batching)
-		if !w.batchCfg.ShouldBatch(len(selectedBlobs), totalSize) {
-			// Not enough blobs yet, wait for more
-			w.log.Debug("Waiting for more blobs before batching",
-				"current_blobs", len(selectedBlobs),
-				"min_required", w.batchCfg.MinBlobs,
-				"current_size_kb", totalSize/1024,
-				"min_size_kb", w.batchCfg.MinBatchSizeBytes/1024,
-				"oldest_blob_age", oldestBlobAge)
+	w.log.Info("Submitting batches to Celestia",
+		"batch_count", len(batches),
+		"max_concurrent", maxConcurrent,
+		"total_blobs", len(pendingBlobs))
+
+	// Use errgroup with context for graceful shutdown
+	// Each batch gets its own Submit() call with ONE blob (to stay under 8MB tx limit)
+	// The semaphore limits how many concurrent submissions
+	g, gCtx := errgroup.WithContext(ctx)
+	semaphore := make(chan struct{}, maxConcurrent)
+
+	// Track results with mutex for thread-safe access
+	type submitResult struct {
+		batchIdx int
+		height   uint64
+		batch    *batchInfo
+	}
+	var (
+		resultsMu sync.Mutex
+		results   []submitResult
+	)
+	successCount := 0
+
+	for batchIdx, b := range batches {
+		// Capture loop variables
+		idx := batchIdx
+		batch := b
+
+		g.Go(func() error {
+			// Acquire semaphore slot
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-gCtx.Done():
+				w.log.Warn("Submission cancelled before start", "batch_id", batch.dbBatchID)
+				return gCtx.Err()
+			}
+
+			// Submit ONE blob per Submit() call (to stay under 8MB tx limit)
+			height, err := w.submitToCelestia(gCtx, []*blob.Blob{batch.celestiaBlob})
+			if err != nil {
+				w.log.Error("Batch submission failed",
+					"batch_id", batch.dbBatchID,
+					"size_bytes", len(batch.packedData),
+					"error", err)
+				return nil // Don't fail the whole group
+			}
+
+			// Store result thread-safely
+			resultsMu.Lock()
+			results = append(results, submitResult{
+				batchIdx: idx,
+				height:   height,
+				batch:    batch,
+			})
+			resultsMu.Unlock()
+
 			return nil
+		})
+	}
+
+	// Wait for all goroutines to complete or context cancellation
+	if err := g.Wait(); err != nil {
+		w.log.Warn("Parallel submission interrupted", "error", err)
+	}
+
+	// Process results
+	for _, result := range results {
+		successCount++
+
+		if err := w.store.UpdateBatchHeight(ctx, result.batch.dbBatchID, result.height); err != nil {
+			w.log.Error("Failed to update batch height",
+				"batch_id", result.batch.dbBatchID,
+				"height", result.height,
+				"error", err)
 		}
+
+		w.log.Info("✅ Batch submitted",
+			"batch_id", result.batch.dbBatchID,
+			"height", result.height,
+			"blob_count", len(result.batch.blobIDs),
+			"size_bytes", len(result.batch.packedData),
+			"celenium_block", fmt.Sprintf("https://mocha.celenium.io/block/%d", result.height))
 	}
 
-	w.log.Info("Processing batch", "blob_count", len(selectedBlobs), "total_size_kb", totalSize/1024)
-
-	// Pack blobs into one batch
-	packedData, err := batch.PackBlobs(selectedBlobs, w.batchCfg)
-	if err != nil {
-		return fmt.Errorf("pack blobs: %w", err)
-	}
-
-	// Compute batch commitment using the same signer as submission
-	batchCommitment, err := commitment.ComputeCommitment(packedData, w.namespace, w.signerAddr)
-	if err != nil {
-		return fmt.Errorf("compute batch commitment: %w", err)
-	}
-
-	w.log.Debug("Computed batch commitment",
-		"length", len(batchCommitment),
-		"full_hex", hex.EncodeToString(batchCommitment),
-		"truncated", hex.EncodeToString(batchCommitment[:min(8, len(batchCommitment))]))
-
-	// Extract blob IDs for database update
-	blobIDs := make([]int64, len(selectedBlobs))
-	for i, b := range selectedBlobs {
-		blobIDs[i] = b.ID
-	}
-
-	// Create batch in database
-	batchID, err := w.store.CreateBatch(ctx, blobIDs, batchCommitment, packedData)
-	if err != nil {
-		return fmt.Errorf("create batch: %w", err)
-	}
-
-	w.log.Info("Created batch", "batch_id", batchID, "blob_count", len(selectedBlobs))
-
-	// Record time-to-batch metrics for each blob
+	// Record metrics
 	if w.metrics != nil {
 		now := time.Now()
-		for _, b := range selectedBlobs {
-			timeToBatch := now.Sub(b.CreatedAt)
-			w.metrics.RecordTimeToBatch(timeToBatch)
+		for _, b := range batches {
+			for _, blob := range b.blobs {
+				w.metrics.RecordTimeToBatch(now.Sub(blob.CreatedAt))
+			}
 		}
 	}
 
-	// Submit to Celestia
-	height, err := w.submitBatch(ctx, batchCommitment, packedData)
-	if err != nil {
-		w.log.Error("Submit batch failed", "batch_id", batchID, "error", err)
-		return err
-	}
+	w.log.Info("✅ Submission complete",
+		"batch_count", len(batches),
+		"successful", successCount,
+		"max_concurrent", maxConcurrent)
 
-	// Update batch with Celestia height
-	if err := w.store.UpdateBatchHeight(ctx, batchID, height); err != nil {
-		w.log.Error("Failed to update batch height", "batch_id", batchID, "height", height, "error", err)
-		// Don't fail the whole operation - the batch was submitted successfully
-		// The confirmation worker will still be able to confirm it
+	// Return context error if we were interrupted
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
-
-	w.log.Info("Batch submitted to Celestia", "batch_id", batchID, "height", height)
 	return nil
 }
 
-// selectBlobsForBatch selects blobs that fit within the MaxBatchSizeBytes limit
-// Returns blobs in FIFO order that will fit in the batch
+// prepareBatches splits pending blobs into batches and creates DB records
+func (w *SubmissionWorker) prepareBatches(ctx context.Context, pendingBlobs []*db.Blob) ([]*batchInfo, error) {
+	var batches []*batchInfo
+	remaining := pendingBlobs
+
+	for len(remaining) > 0 {
+		// Select blobs that fit in one batch
+		selected := w.selectBlobsForBatch(remaining)
+		if len(selected) == 0 {
+			// First blob too large - skip it
+			if len(remaining) > 0 {
+				w.log.Error("Blob too large, skipping",
+					"blob_id", remaining[0].ID,
+					"size", len(remaining[0].Data),
+					"max", w.batchCfg.MaxBatchSizeBytes)
+				remaining = remaining[1:]
+			}
+			continue
+		}
+
+		// Pack blobs
+		packedData, err := batch.PackBlobs(selected, w.batchCfg)
+		if err != nil {
+			return nil, fmt.Errorf("pack blobs: %w", err)
+		}
+
+		// Compute batch commitment
+		batchCommitment, err := commitment.ComputeCommitment(packedData, w.namespace, w.signerAddr)
+		if err != nil {
+			return nil, fmt.Errorf("compute commitment: %w", err)
+		}
+
+		// Extract blob IDs
+		blobIDs := make([]int64, len(selected))
+		for i, b := range selected {
+			blobIDs[i] = b.ID
+		}
+
+		// Create batch in DB
+		dbBatchID, err := w.store.CreateBatch(ctx, blobIDs, batchCommitment, packedData)
+		if err != nil {
+			return nil, fmt.Errorf("create batch in db: %w", err)
+		}
+
+		// Create Celestia blob
+		celestiaBlob, err := blob.NewBlobV1(w.namespace, packedData, w.signerAddr)
+		if err != nil {
+			return nil, fmt.Errorf("create celestia blob: %w", err)
+		}
+
+		batches = append(batches, &batchInfo{
+			blobIDs:         blobIDs,
+			batchCommitment: batchCommitment,
+			packedData:      packedData,
+			celestiaBlob:    celestiaBlob,
+			dbBatchID:       dbBatchID,
+			blobs:           selected,
+		})
+
+		w.log.Debug("Prepared batch",
+			"batch_id", dbBatchID,
+			"blob_count", len(selected),
+			"size_bytes", len(packedData),
+			"commitment", hex.EncodeToString(batchCommitment[:8]))
+
+		remaining = remaining[len(selected):]
+	}
+
+	return batches, nil
+}
+
+// selectBlobsForBatch selects blobs that fit within MaxBatchSizeBytes
 func (w *SubmissionWorker) selectBlobsForBatch(blobs []*db.Blob) []*db.Blob {
 	if len(blobs) == 0 {
 		return nil
 	}
 
-	// Calculate packing overhead: 4 bytes for count + 4 bytes per blob for size
 	const countOverhead = 4
 	const sizeOverhead = 4
 
 	selected := make([]*db.Blob, 0, len(blobs))
-	currentSize := countOverhead // Start with count overhead
+	currentSize := countOverhead
 
 	for i, blob := range blobs {
-		// Calculate size if we add this blob
 		blobPackedSize := sizeOverhead + len(blob.Data)
 		newSize := currentSize + blobPackedSize
 
-		// Check if adding this blob would exceed limits
 		if newSize > w.batchCfg.MaxBatchSizeBytes {
-			// Can't fit this blob
 			if i == 0 {
-				// First blob alone is too large - return empty to signal error
-				w.log.Warn("Blob too large for batch",
-					"blob_id", blob.ID,
-					"blob_size", len(blob.Data),
-					"packed_size", blobPackedSize,
-					"max_batch_size", w.batchCfg.MaxBatchSizeBytes)
-				return nil
+				return nil // First blob too large
 			}
-			// Stop adding more blobs
 			break
 		}
 
-		// Check if we've hit max blob count
 		if len(selected) >= w.batchCfg.MaxBlobs {
 			break
 		}
 
-		// Add this blob
 		selected = append(selected, blob)
 		currentSize = newSize
-	}
-
-	if len(selected) > 0 {
-		w.log.Debug("Selected blobs for batch",
-			"selected_count", len(selected),
-			"total_count", len(blobs),
-			"estimated_packed_size", currentSize)
 	}
 
 	return selected
 }
 
-func (w *SubmissionWorker) submitBatch(ctx context.Context, batchCommitment, packedData []byte) (uint64, error) {
-	// Create Celestia blob with V1 (signed) for CIP-21 signer verification
-	// BlobV1 requires 20-byte signer address for proper signature
+// submitToCelestia submits all blobs in a single call with retry logic
+func (w *SubmissionWorker) submitToCelestia(ctx context.Context, blobs []*blob.Blob) (uint64, error) {
 	if len(w.signerAddr) != 20 {
 		return 0, fmt.Errorf("invalid signer address: expected 20 bytes, got %d", len(w.signerAddr))
 	}
-	celestiaBlob, err := blob.NewBlobV1(w.namespace, packedData, w.signerAddr)
-	if err != nil {
-		return 0, fmt.Errorf("create celestia blob: %w", err)
-	}
 
-	// Implement retry logic with exponential backoff
 	var height uint64
 	var lastErr error
 	backoff := 1 * time.Second
 
 	for attempt := 0; attempt <= w.workerCfg.MaxRetries; attempt++ {
 		if attempt > 0 {
-			// Wait with exponential backoff before retry
 			select {
 			case <-ctx.Done():
 				return 0, ctx.Err()
 			case <-time.After(backoff):
-				// Double backoff for next attempt, cap at 60s
 				backoff *= 2
 				if backoff > 60*time.Second {
 					backoff = 60 * time.Second
 				}
 			}
 
-			w.log.Info("Retrying batch submission",
+			w.log.Info("Retrying submission",
 				"attempt", attempt+1,
 				"max_retries", w.workerCfg.MaxRetries,
-				"backoff", backoff)
+				"blob_count", len(blobs))
 		}
 
-		// Submit to Celestia with configurable timeout
 		submitCtx, cancel := context.WithTimeout(ctx, w.workerCfg.SubmitTimeout)
-
-		// Record submission metrics (time + size)
 		startTime := time.Now()
-		height, lastErr = w.celestia.Submit(submitCtx, []*blob.Blob{celestiaBlob}, state.NewTxConfig())
+
+		// Submit ALL blobs in one call - Celestia puts them in same block
+		height, lastErr = w.celestia.Submit(submitCtx, blobs, state.NewTxConfig())
 		duration := time.Since(startTime)
-		cancel() // Clean up context
+		cancel()
 
 		if lastErr == nil {
-			// Success! Record metrics and return height
 			if w.metrics != nil {
-				w.metrics.RecordSubmission(duration, len(packedData))
+				totalSize := 0
+				for _, b := range blobs {
+					totalSize += len(b.Data())
+				}
+				w.metrics.RecordSubmission(duration, totalSize)
 			}
 
-			w.log.Info("Batch submitted to Celestia",
+			w.log.Debug("Celestia submission successful",
 				"height", height,
-				"commitment", fmt.Sprintf("%x", batchCommitment),
-				"size_bytes", len(packedData),
-				"duration_ms", duration.Milliseconds(),
-				"attempts", attempt+1)
+				"blob_count", len(blobs),
+				"duration_ms", duration.Milliseconds())
 
 			return height, nil
 		}
 
-		// Failed - log and potentially retry
-		w.log.Warn("Batch submission attempt failed",
+		w.log.Warn("Submission attempt failed",
 			"attempt", attempt+1,
 			"error", lastErr)
 	}
 
-	// All retries exhausted
 	if w.metrics != nil {
 		w.metrics.RecordSubmissionError()
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,7 +14,13 @@ import (
 
 	"github.com/celestiaorg/op-alt-da/batch"
 	"github.com/celestiaorg/op-alt-da/db"
+	"github.com/celestiaorg/op-alt-da/sdkconfig"
 )
+
+func init() {
+	// Initialize Celestia SDK prefix for Bech32 address parsing in tests
+	sdkconfig.InitCelestiaPrefix()
+}
 
 // Mock Celestia API - implements blob.Module interface
 type mockCelestiaAPI struct {
@@ -103,14 +110,14 @@ func setupWorkerTest(t *testing.T) (*db.BlobStore, libshare.Namespace, func()) {
 	return store, namespace, cleanup
 }
 
-// TestSubmissionWorker_ProcessBatch tests the submission worker's batch processing
-func TestSubmissionWorker_ProcessBatch(t *testing.T) {
+// TestSubmissionWorker_SubmitPendingBlobs tests the submission worker submits all pending blobs
+func TestSubmissionWorker_SubmitPendingBlobs(t *testing.T) {
 	store, namespace, cleanup := setupWorkerTest(t)
 	defer cleanup()
 
 	ctx := context.Background()
 
-	// Insert 15 pending blobs (enough to trigger batch)
+	// Insert 15 pending blobs
 	for i := 0; i < 15; i++ {
 		testBlob := &db.Blob{
 			Commitment: []byte{byte(i), 0x00, 0x00, 0x00},
@@ -142,10 +149,10 @@ func TestSubmissionWorker_ProcessBatch(t *testing.T) {
 	signerAddr := make([]byte, 20) // Test signer
 	worker := NewSubmissionWorker(store, mock, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
 
-	// Process one batch
-	err := worker.processBatch(ctx)
+	// Submit pending blobs
+	err := worker.submitPendingBlobs(ctx)
 	if err != nil {
-		t.Fatalf("processBatch failed: %v", err)
+		t.Fatalf("submitPendingBlobs failed: %v", err)
 	}
 
 	// Verify batch was submitted
@@ -165,15 +172,51 @@ func TestSubmissionWorker_ProcessBatch(t *testing.T) {
 	}
 }
 
-// TestSubmissionWorker_InsufficientBlobs tests that worker doesn't batch if not enough blobs
-func TestSubmissionWorker_InsufficientBlobs(t *testing.T) {
+// TestSubmissionWorker_NoBlobs tests that worker handles empty queue gracefully
+func TestSubmissionWorker_NoBlobs(t *testing.T) {
 	store, namespace, cleanup := setupWorkerTest(t)
 	defer cleanup()
 
 	ctx := context.Background()
 
-	// Insert only 5 blobs (not enough to trigger batch)
-	for i := 0; i < 5; i++ {
+	// No blobs inserted
+
+	// Create mock API that tracks submissions
+	submitted := false
+	mock := &mockCelestiaAPI{
+		submitFunc: func(ctx context.Context, blobs []*blob.Blob) (uint64, error) {
+			submitted = true
+			return 12345, nil
+		},
+	}
+
+	logger := log.NewLogger(log.DiscardHandler())
+	batchCfg := batch.DefaultConfig()
+	workerCfg := DefaultConfig()
+	signerAddr := make([]byte, 20) // Test signer
+	worker := NewSubmissionWorker(store, mock, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
+
+	// Submit pending blobs (there are none)
+	err := worker.submitPendingBlobs(ctx)
+	if err != nil {
+		t.Fatalf("submitPendingBlobs failed: %v", err)
+	}
+
+	// Should NOT have submitted (no blobs)
+	if submitted {
+		t.Error("Batch was submitted despite no blobs")
+	}
+}
+
+// TestSubmissionWorker_FewBlobs tests that we submit even with few blobs
+func TestSubmissionWorker_FewBlobs(t *testing.T) {
+	store, namespace, cleanup := setupWorkerTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Insert only 3 blobs
+	for i := 0; i < 3; i++ {
 		testBlob := &db.Blob{
 			Commitment: []byte{byte(i), 0x00, 0x00, 0x00},
 			Namespace:  namespace.Bytes(),
@@ -189,9 +232,11 @@ func TestSubmissionWorker_InsufficientBlobs(t *testing.T) {
 
 	// Create mock API that tracks submissions
 	submitted := false
+	var submittedBlobCount int
 	mock := &mockCelestiaAPI{
 		submitFunc: func(ctx context.Context, blobs []*blob.Blob) (uint64, error) {
 			submitted = true
+			submittedBlobCount = len(blobs)
 			return 12345, nil
 		},
 	}
@@ -199,33 +244,37 @@ func TestSubmissionWorker_InsufficientBlobs(t *testing.T) {
 	logger := log.NewLogger(log.DiscardHandler())
 	batchCfg := batch.DefaultConfig()
 	workerCfg := DefaultConfig()
-	workerCfg.MaxBlobWaitTime = 1 * time.Hour // Disable time-based submission for this test
 	signerAddr := make([]byte, 20) // Test signer
 	worker := NewSubmissionWorker(store, mock, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
 
-	// Process batch
-	err := worker.processBatch(ctx)
+	// Submit pending blobs
+	err := worker.submitPendingBlobs(ctx)
 	if err != nil {
-		t.Fatalf("processBatch failed: %v", err)
+		t.Fatalf("submitPendingBlobs failed: %v", err)
 	}
 
-	// Should NOT have submitted (not enough blobs)
-	if submitted {
-		t.Error("Batch was submitted despite insufficient blobs")
+	// Should have submitted (we always submit pending blobs)
+	if !submitted {
+		t.Error("Batch was not submitted")
 	}
 
-	// Blobs should still be pending
+	// Should have 1 batch with all 3 blobs packed
+	if submittedBlobCount != 1 {
+		t.Errorf("Expected 1 batch (Celestia blob), got %d", submittedBlobCount)
+	}
+
+	// Blobs should no longer be pending
 	pending, err := store.GetPendingBlobs(ctx, 20)
 	if err != nil {
 		t.Fatalf("GetPendingBlobs failed: %v", err)
 	}
 
-	if len(pending) != 5 {
-		t.Errorf("Expected 5 pending blobs, got %d", len(pending))
+	if len(pending) != 0 {
+		t.Errorf("Expected 0 pending blobs, got %d", len(pending))
 	}
 }
 
-// TestSubmissionWorker_LargeSize tests batching triggers on size even with few blobs
+// TestSubmissionWorker_LargeSize tests batching handles large blobs correctly
 func TestSubmissionWorker_LargeSize(t *testing.T) {
 	store, namespace, cleanup := setupWorkerTest(t)
 	defer cleanup()
@@ -262,20 +311,20 @@ func TestSubmissionWorker_LargeSize(t *testing.T) {
 	signerAddr := make([]byte, 20) // Test signer
 	worker := NewSubmissionWorker(store, mock, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
 
-	// Process batch
-	err := worker.processBatch(ctx)
+	// Submit pending blobs
+	err := worker.submitPendingBlobs(ctx)
 	if err != nil {
-		t.Fatalf("processBatch failed: %v", err)
+		t.Fatalf("submitPendingBlobs failed: %v", err)
 	}
 
-	// Should have submitted (size threshold met)
+	// Should have submitted
 	if !submitted {
-		t.Error("Batch was not submitted despite large size")
+		t.Error("Batch was not submitted")
 	}
 }
 
 // TestSubmissionWorker_ManyLargeBlobs tests that batching correctly handles many large blobs
-// by selecting only those that fit within the MaxBatchSizeBytes limit
+// by creating multiple batches that each fit within the MaxBatchSizeBytes limit
 func TestSubmissionWorker_ManyLargeBlobs(t *testing.T) {
 	store, namespace, cleanup := setupWorkerTest(t)
 	defer cleanup()
@@ -283,8 +332,12 @@ func TestSubmissionWorker_ManyLargeBlobs(t *testing.T) {
 	ctx := context.Background()
 
 	// Insert 20 blobs of 800KB each (16MB total - way over 1MB limit)
-	largeData := make([]byte, 800*1024) // 800KB each
+	// Each blob has unique data to avoid duplicate batch commitments
 	for i := 0; i < 20; i++ {
+		largeData := make([]byte, 800*1024) // 800KB each
+		// Make data unique by setting first bytes to index
+		largeData[0] = byte(i)
+		largeData[1] = byte(i >> 8)
 		testBlob := &db.Blob{
 			Commitment: []byte{byte(i), 0x00, 0x00, 0x00},
 			Namespace:  namespace.Bytes(),
@@ -298,15 +351,20 @@ func TestSubmissionWorker_ManyLargeBlobs(t *testing.T) {
 		}
 	}
 
-	submitted := false
-	var submittedBlobCount int
+	var submitCallCount int
+	var totalBlobsSubmitted int
+	var mu sync.Mutex
 	mock := &mockCelestiaAPI{
 		submitFunc: func(ctx context.Context, blobs []*blob.Blob) (uint64, error) {
-			submitted = true
-			submittedBlobCount = len(blobs)
-			// Verify the packed data doesn't exceed 1MB
-			if len(blobs) > 0 && len(blobs[0].Data()) > 1*1024*1024 {
-				return 0, fmt.Errorf("batch size %d exceeds 1MB limit", len(blobs[0].Data()))
+			mu.Lock()
+			submitCallCount++
+			totalBlobsSubmitted += len(blobs)
+			mu.Unlock()
+			// Verify each packed batch doesn't exceed 1MB
+			for _, b := range blobs {
+				if len(b.Data()) > 1*1024*1024 {
+					return 0, fmt.Errorf("batch size %d exceeds 1MB limit", len(b.Data()))
+				}
 			}
 			return 12345, nil
 		},
@@ -318,31 +376,31 @@ func TestSubmissionWorker_ManyLargeBlobs(t *testing.T) {
 	signerAddr := make([]byte, 20) // Test signer
 	worker := NewSubmissionWorker(store, mock, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
 
-	// Process batch
-	err := worker.processBatch(ctx)
+	// Submit pending blobs
+	err := worker.submitPendingBlobs(ctx)
 	if err != nil {
-		t.Fatalf("processBatch failed: %v", err)
+		t.Fatalf("submitPendingBlobs failed: %v", err)
 	}
 
-	// Should have submitted
-	if !submitted {
-		t.Error("Batch was not submitted")
+	// Should have submitted (at least one call)
+	if submitCallCount == 0 {
+		t.Error("No batches were submitted")
 	}
 
-	// Should have selected only 1 blob (800KB < 1MB, but 2*800KB > 1MB)
-	if submittedBlobCount != 1 {
-		t.Errorf("Expected 1 blob in batch, got %d", submittedBlobCount)
+	// Should have created 20 batches total (each 800KB blob = 1 batch since 2*800KB > 1MB)
+	// With one-blob-per-Submit, we get 20 Submit() calls
+	if totalBlobsSubmitted != 20 {
+		t.Errorf("Expected 20 batches total (one per 800KB blob), got %d", totalBlobsSubmitted)
 	}
 
-	// Verify remaining blobs are still pending
+	// Verify all blobs are now batched (none pending)
 	pending, err := store.GetPendingBlobs(ctx, 30)
 	if err != nil {
 		t.Fatalf("GetPendingBlobs failed: %v", err)
 	}
 
-	// Should have 19 blobs still pending
-	if len(pending) != 19 {
-		t.Errorf("Expected 19 pending blobs remaining, got %d", len(pending))
+	if len(pending) != 0 {
+		t.Errorf("Expected 0 pending blobs remaining, got %d", len(pending))
 	}
 }
 
@@ -410,19 +468,21 @@ func TestEventListener_Reconciliation(t *testing.T) {
 	// Manually set submitted_at to 5 minutes ago
 	store.GetDB().Exec("UPDATE batches SET submitted_at = datetime('now', '-5 minutes'), celestia_height = 12345 WHERE batch_id = ?", batchID)
 
-	// Create mock that returns blob on Get
+	// Create mock that returns blob on Get (we now try Get with each trusted signer's commitment)
 	mock := &mockCelestiaAPI{
 		getFunc: func(ctx context.Context, height uint64, ns libshare.Namespace, commitment blob.Commitment) (*blob.Blob, error) {
-			// Return blob to simulate successful Get
+			// Return blob to simulate successful Get with matching commitment
 			dummySigner := make([]byte, 20)
-			b, _ := blob.NewBlobV1(namespace, []byte("data"), dummySigner)
+			b, _ := blob.NewBlobV1(namespace, batchData, dummySigner)
 			return b, nil
 		},
 	}
 
 	logger := log.NewLogger(log.DiscardHandler())
 	workerCfg := DefaultConfig()
-	listener := NewEventListener(store, mock, namespace, workerCfg, nil,  logger)
+	// Add a trusted signer - use a valid bech32 address format for celestia
+	workerCfg.TrustedSigners = []string{"celestia1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqzf30as"}
+	listener := NewEventListener(store, mock, namespace, workerCfg, nil, logger)
 
 	// Run reconciliation
 	err = listener.reconcileUnconfirmed(ctx)

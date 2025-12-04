@@ -1,14 +1,19 @@
 package worker
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"time"
 
+	"github.com/celestiaorg/celestia-node/blob"
 	blobAPI "github.com/celestiaorg/celestia-node/nodebuilder/blob"
 	libshare "github.com/celestiaorg/go-square/v3/share"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/ethereum/go-ethereum/log"
 
+	"github.com/celestiaorg/op-alt-da/commitment"
 	"github.com/celestiaorg/op-alt-da/db"
 	"github.com/celestiaorg/op-alt-da/metrics"
 )
@@ -120,49 +125,102 @@ func (l *EventListener) reconcileBatch(ctx context.Context, batch *db.Batch) err
 		return nil
 	}
 
-	l.log.Info("Reconciling batch via Get",
+	l.log.Info("Reconciling batch",
 		"batch_id", batch.BatchID,
-		"height", *batch.CelestiaHeight)
+		"height", *batch.CelestiaHeight,
+		"trusted_signers", len(l.workerCfg.TrustedSigners))
 
-	// Try to get blob from Celestia using Get with configurable timeout
-	getCtx, cancel := context.WithTimeout(ctx, l.workerCfg.GetTimeout)
-	defer cancel()
-
-	// Record retrieval metrics (time + size)
+	// Try to find the blob by computing commitment with each trusted signer
+	// This is more efficient than GetAll + data matching
+	var matchedBlob *blob.Blob
+	var matchedSigner string
 	startTime := time.Now()
-	celestiaBlob, err := l.celestia.Get(getCtx, *batch.CelestiaHeight, l.namespace, batch.BatchCommitment)
+
+	for _, signerBech32 := range l.workerCfg.TrustedSigners {
+		// Parse signer address
+		signerAddr, err := sdk.AccAddressFromBech32(signerBech32)
+		if err != nil {
+			l.log.Warn("Invalid trusted signer address", "signer", signerBech32, "error", err)
+			continue
+		}
+
+		// Compute commitment with this signer
+		commitmentBytes, err := commitment.ComputeCommitment(batch.BatchData, l.namespace, signerAddr.Bytes())
+		if err != nil {
+			l.log.Warn("Failed to compute commitment", "signer", signerBech32, "error", err)
+			continue
+		}
+
+		// Try to Get with this commitment
+		getCtx, cancel := context.WithTimeout(ctx, l.workerCfg.GetTimeout)
+		celestiaBlob, err := l.celestia.Get(getCtx, *batch.CelestiaHeight, l.namespace, commitmentBytes)
+		cancel()
+
+		if err != nil {
+			// Not found with this signer, try next
+			l.log.Debug("Blob not found with signer commitment",
+				"batch_id", batch.BatchID,
+				"signer", signerBech32,
+				"commitment", hex.EncodeToString(commitmentBytes))
+			continue
+		}
+
+		// Found it!
+		matchedBlob = celestiaBlob
+		matchedSigner = signerBech32
+		l.log.Debug("Found blob with trusted signer",
+			"batch_id", batch.BatchID,
+			"signer", signerBech32,
+			"commitment", hex.EncodeToString(commitmentBytes))
+		break
+	}
+
 	duration := time.Since(startTime)
 
-	if err != nil {
-		// Record error metric
+	if matchedBlob == nil {
 		if l.metrics != nil {
 			l.metrics.RecordRetrievalError()
 		}
-		l.log.Warn("Get blob failed during reconciliation",
+		l.log.Warn("Batch not found with any trusted signer",
 			"batch_id", batch.BatchID,
 			"height", *batch.CelestiaHeight,
-			"error", err)
-		return fmt.Errorf("get blob: %w", err)
+			"signers_tried", len(l.workerCfg.TrustedSigners))
+		return fmt.Errorf("batch not found at height %d with any trusted signer", *batch.CelestiaHeight)
 	}
 
-	blobSize := len(celestiaBlob.Data())
+	blobSize := len(matchedBlob.Data())
+	onChainCommitment := matchedBlob.Commitment
 
 	// Record successful retrieval metrics
 	if l.metrics != nil {
 		l.metrics.RecordRetrieval(duration, blobSize)
 	}
 
-	// Blob exists! Mark as confirmed
-	err = l.store.MarkBatchConfirmed(ctx, batch.BatchCommitment, *batch.CelestiaHeight)
+	// Update batch with actual on-chain commitment (may differ from ours)
+	if !bytes.Equal(onChainCommitment, batch.BatchCommitment) {
+		l.log.Info("Updating batch with on-chain commitment",
+			"batch_id", batch.BatchID,
+			"matched_signer", matchedSigner,
+			"our_commitment", hex.EncodeToString(batch.BatchCommitment),
+			"onchain_commitment", hex.EncodeToString(onChainCommitment))
+		if err := l.store.UpdateBatchCommitment(ctx, batch.BatchID, onChainCommitment); err != nil {
+			l.log.Error("Failed to update batch commitment", "batch_id", batch.BatchID, "error", err)
+		}
+	}
+
+	// Mark as confirmed using the batch ID
+	err := l.store.MarkBatchConfirmedByID(ctx, batch.BatchID)
 	if err != nil {
 		return fmt.Errorf("mark batch confirmed: %w", err)
 	}
 
-	l.log.Info("Batch confirmed via reconciliation",
+	l.log.Info("✅ Batch confirmed via reconciliation",
 		"batch_id", batch.BatchID,
 		"height", *batch.CelestiaHeight,
 		"size", blobSize,
-		"duration_ms", duration.Milliseconds())
+		"matched_signer", matchedSigner,
+		"duration_ms", duration.Milliseconds(),
+		"onchain_commitment", hex.EncodeToString(onChainCommitment))
 
 	// Record time-to-confirmation metrics for each blob in the batch
 	if l.metrics != nil {
