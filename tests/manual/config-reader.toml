@@ -29,10 +29,19 @@ log_color = false
 log_pid = false
 
 # ==============================================================================
-# READ-ONLY MODE CONFIGURATION
+# READ-ONLY MODE (enabled for this reader server)
 # ==============================================================================
-
-# READER: read_only = true (rejects PUT requests)
+# When enabled:
+#   - PUT requests are rejected (server only serves GET requests)
+#   - Submission worker is disabled
+#   - Backfill worker syncs data from Celestia
+#
+# Requirements for read-only mode:
+#   - [backfill] enabled = true (to sync from Celestia)
+#   - [worker] trusted_signers must list writer's Celestia addresses
+#
+# CLI equivalent: --read-only
+# Env var: OP_ALTDA_READ_ONLY=true
 read_only = true
 
 # ==============================================================================
@@ -48,6 +57,7 @@ blobid_compact = true
 
 bridge_addr = "https://young-weathered-scion.celestia-mocha.quiknode.pro/2ae91d0d78ef0a253990449d0bb7e9f054f024c0/"
 # bridge_auth_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJBbGxvdyI6WyJwdWJsaWMiLCJyZWFkIiwid3JpdGUiLCJhZG1pbiJdLCJOb25jZSI6IlhJakVKNXV4UjJXOG1ERnErbzh5NkdtRHFhTUV3ZDRmejM3RC92MzdMWTg9IiwiRXhwaXJlc0F0IjoiMDAwMS0wMS0wMVQwMDowMDowMFoifQ.Bokj6b5p2AXz-QjcSSG2qAyA3Lrnc5uleczXd106jN8"
+bridge_addr_wss = "wss://young-weathered-scion.celestia-mocha.quiknode.pro/2ae91d0d78ef0a253990449d0bb7e9f054f024c0/"
 bridge_auth_token = ""
 bridge_tls_enabled = true
 
@@ -102,7 +112,10 @@ submit_period = "6s"
 submit_timeout = "60s"
 
 # Maximum retries for failed submissions
-max_retries = 10
+max_retries = 3
+
+# Wait time between retries (linear backoff)
+retry_backoff = "1s"
 
 # Max time a blob waits before forced submission
 max_blob_wait_time = "12s"
@@ -127,6 +140,10 @@ trusted_signers = [
     "celestia1qxdkn22x62d5h8pxaceghylwal7q0r352hndmr",
     "celestia1yq37dq6sz0yvgxk8gpkfppypyqxptze9thyp48",
     "celestia1rw6x3v8le8lmxf7ena8gexhm4lyfgj9hy23fuw",
+    "celestia1qhfvv7a6tpdv3pphrmenv3r20acrgvqrptx5pw",
+    "celestia19z2k2yxa06a8hf4l9wqt0s4kkyy4fyph84sefs",
+    "celestia1rwjv6gawl7adj6tu8v3hyj2q8zme23y7w6zupk",
+    "celestia1fmmjrkxt6mvl0zkeretz60rhucyffqd7vxqd0n",
 ]
 
 # ==============================================================================
@@ -140,21 +157,22 @@ enabled = true
 # Starting Celestia block height for backfill
 # Set to 0 to start from latest (recommended for new deployments)
 # Set to specific height only if you need historical data
-start_height = 9082750
+start_height = 9088102
 
 # Ending Celestia block height for backfill (0 = current chain tip)
 end_height = 0
 
-# How many blocks to scan per iteration
-# PRODUCTION SETTINGS for 400KB/s throughput:
-# Celestia Mocha-4: ~10 blocks/minute (1 block every ~6s)
-# With reconcile_period = 1s, scan capacity = 5 blocks × 60 = 300 blocks/min
-# This provides 30x safety margin over Celestia's 10 blocks/min production rate
-#
-# For high-throughput production, use lower values for efficiency:
-# - 5 blocks per scan: Optimal for real-time indexing
-# - Scan capacity: 5 × 60 = 300 blocks/min (30x safety margin)
-blocks_per_scan = 5
+# How often to scan for new Celestia blocks
+# Lower = faster catch-up but more CPU
+period = "500ms"
+
+# How many blocks to scan per iteration (also = parallel GetAll concurrency)
+# Higher = faster scanning but more load on Celestia node
+# For aggressive catch-up: 50-100
+blocks_per_scan = 50
+
+# Re-scan last N heights to catch late-propagating blobs
+confirmation_depth = 15
 
 # ==============================================================================
 # S3 BACKUP CONFIGURATION (Optional)

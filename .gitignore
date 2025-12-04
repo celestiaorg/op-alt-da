@@ -5,3 +5,4 @@ config.toml
 data/
 test-data/
 tests/manual/*.db*
+daserver

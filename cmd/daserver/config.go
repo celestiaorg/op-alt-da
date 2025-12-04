@@ -78,6 +78,7 @@ type WorkerConfig struct {
 	SubmitPeriod           string   `toml:"submit_period"`
 	SubmitTimeout          string   `toml:"submit_timeout"`
 	MaxRetries             int      `toml:"max_retries"`
+	RetryBackoff           string   `toml:"retry_backoff"`
 	MaxParallelSubmissions int      `toml:"max_parallel_submissions"`
 	MaxBlobWaitTime        string   `toml:"max_blob_wait_time"`
 	ReconcilePeriod string   `toml:"reconcile_period"`
@@ -90,10 +91,12 @@ type WorkerConfig struct {
 
 // BackfillConfig holds backfill settings
 type BackfillConfig struct {
-	Enabled       bool   `toml:"enabled"`
-	StartHeight   uint64 `toml:"start_height"`
-	EndHeight     uint64 `toml:"end_height"`
-	BlocksPerScan int    `toml:"blocks_per_scan"` // How many blocks to scan per iteration
+	Enabled           bool   `toml:"enabled"`
+	StartHeight       uint64 `toml:"start_height"`
+	EndHeight         uint64 `toml:"end_height"`
+	BlocksPerScan     int    `toml:"blocks_per_scan"`    // How many blocks to scan per iteration (also concurrency)
+	Period            string `toml:"period"`             // How often to scan for new blocks (e.g., "5s")
+	ConfirmationDepth uint64 `toml:"confirmation_depth"` // Re-scan last N heights to catch late-propagating blobs
 }
 
 // BackupConfig holds backup settings

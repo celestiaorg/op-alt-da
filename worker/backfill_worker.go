@@ -4,13 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/celestiaorg/celestia-node/blob"
 	blobAPI "github.com/celestiaorg/celestia-node/nodebuilder/blob"
+	headerAPI "github.com/celestiaorg/celestia-node/nodebuilder/header"
 	libshare "github.com/celestiaorg/go-square/v3/share"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/ethereum/go-ethereum/log"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/celestiaorg/op-alt-da/batch"
 	"github.com/celestiaorg/op-alt-da/commitment"
@@ -18,28 +23,42 @@ import (
 	"github.com/celestiaorg/op-alt-da/metrics"
 )
 
-// BackfillWorker continuously scans Celestia blocks to discover and index batches
-// for read-only servers that don't submit blobs themselves
+// contains is a helper to check if a string contains a substring
+func contains(s, substr string) bool {
+	return strings.Contains(s, substr)
+}
+
+// BackfillWorker uses a dual-mode approach for reliable blob discovery:
+// 1. Subscribe: Real-time notifications for new blocks at chain tip (via WebSocket)
+// 2. GetAll: Historical backfill for catching up and filling gaps
+//
+// This ensures no blocks are missed while maintaining low latency for new data.
 type BackfillWorker struct {
 	store     *db.BlobStore
 	celestia  blobAPI.Module
+	header    headerAPI.Module
 	namespace libshare.Namespace
 	batchCfg  *batch.Config
 	workerCfg *Config
 	metrics   *metrics.CelestiaMetrics
 	log       log.Logger
 
-	// Track the current sync height
-	currentHeight uint64
+	// Sync state tracking
+	backfillHeight uint64     // Current height being backfilled (GetAll)
+	subscriberTip  uint64     // Latest height seen by subscriber
+	mu             sync.Mutex // Protects height tracking
+
+	// Subscriber state
+	subscriptionActive atomic.Bool
 
 	// All trusted signer addresses (decoded from bech32)
-	// Used to compute ALL possible commitments for each blob
 	trustedSignerAddrs [][]byte
 }
 
 func NewBackfillWorker(
 	store *db.BlobStore,
 	celestia blobAPI.Module,
+	header headerAPI.Module,
 	namespace libshare.Namespace,
 	batchCfg *batch.Config,
 	workerCfg *Config,
@@ -47,7 +66,6 @@ func NewBackfillWorker(
 	log log.Logger,
 ) *BackfillWorker {
 	// Decode all trusted signers to raw addresses
-	// We'll compute commitments for ALL of them so any client can find their blob
 	var trustedSignerAddrs [][]byte
 	for _, signer := range workerCfg.TrustedSigners {
 		addr, err := sdk.AccAddressFromBech32(signer)
@@ -71,28 +89,23 @@ func NewBackfillWorker(
 	return &BackfillWorker{
 		store:              store,
 		celestia:           celestia,
+		header:             header,
 		namespace:          namespace,
 		batchCfg:           batchCfg,
 		workerCfg:          workerCfg,
 		metrics:            metrics,
 		log:                log,
-		currentHeight:      workerCfg.StartHeight,
+		backfillHeight:     workerCfg.StartHeight,
 		trustedSignerAddrs: trustedSignerAddrs,
 	}
 }
 
 func (w *BackfillWorker) Run(ctx context.Context) error {
-	// Validate configuration to prevent runtime panics
 	if w.workerCfg.BackfillPeriod <= 0 {
 		return fmt.Errorf("invalid backfill period: %v (must be positive)", w.workerCfg.BackfillPeriod)
 	}
 
-	w.log.Info("Backfill worker starting",
-		"start_height", w.workerCfg.StartHeight,
-		"backfill_period", w.workerCfg.BackfillPeriod,
-		"namespace", w.namespace.String())
-
-	// Load persisted sync state from database
+	// Load persisted sync state
 	lastSyncedHeight, err := w.store.GetSyncState(ctx, "backfill_worker")
 	if err != nil {
 		return fmt.Errorf("failed to load sync state: %w", err)
@@ -100,123 +113,341 @@ func (w *BackfillWorker) Run(ctx context.Context) error {
 
 	// Determine starting height
 	if lastSyncedHeight > 0 {
-		// Resume from where we left off
-		w.currentHeight = lastSyncedHeight + 1
-		w.log.Info("Resuming backfill from persisted state", "last_synced_height", lastSyncedHeight, "resuming_from", w.currentHeight)
+		w.backfillHeight = lastSyncedHeight + 1
+		w.log.Info("Resuming backfill from persisted state",
+			"last_synced", lastSyncedHeight,
+			"resuming_from", w.backfillHeight)
 	} else if w.workerCfg.StartHeight > 0 {
-		// Use configured start height
-		w.currentHeight = w.workerCfg.StartHeight
-		w.log.Info("Starting backfill from configured height", "start_height", w.currentHeight)
+		w.backfillHeight = w.workerCfg.StartHeight
+		w.log.Info("Starting backfill from configured height",
+			"start_height", w.backfillHeight)
 	} else {
-		// Start from height 1
-		w.currentHeight = 1
-		w.log.Info("Starting backfill from genesis", "start_height", 1)
+		w.backfillHeight = 1
+		w.log.Info("Starting backfill from genesis")
 	}
 
-	ticker := time.NewTicker(w.workerCfg.BackfillPeriod)
-	defer ticker.Stop()
+	// Run subscriber and backfiller in parallel
+	g, gCtx := errgroup.WithContext(ctx)
 
-	// Run initial backfill immediately
-	if err := w.scanAndIndexBlocks(ctx); err != nil {
-		w.log.Error("Initial backfill failed", "error", err)
-	}
+	// Start subscriber for real-time tip tracking
+	g.Go(func() error {
+		return w.runSubscriber(gCtx)
+	})
+
+	// Start backfiller for historical data
+	g.Go(func() error {
+		return w.runBackfiller(gCtx)
+	})
+
+	return g.Wait()
+}
+
+// runSubscriber maintains a subscription to new blocks and processes them in real-time
+func (w *BackfillWorker) runSubscriber(ctx context.Context) error {
+	w.log.Info("📡 Starting blob subscriber",
+		"namespace", w.namespace.String())
+
+	// Track consecutive failures to detect unsupported subscriptions
+	consecutiveFailures := 0
+	const maxFailuresBeforeGiveUp = 3
 
 	for {
 		select {
 		case <-ctx.Done():
-			w.log.Info("Backfill worker stopping")
+			w.log.Info("Subscriber stopping")
 			return ctx.Err()
+		default:
+		}
 
-		case <-ticker.C:
-			if err := w.scanAndIndexBlocks(ctx); err != nil {
-				w.log.Error("Backfill iteration failed", "error", err)
+		// Start subscription
+		subCh, err := w.celestia.Subscribe(ctx, w.namespace)
+		if err != nil {
+			consecutiveFailures++
+
+			// Check if this is a "not supported" error from hosted providers
+			errStr := err.Error()
+			isUnsupported := contains(errStr, "not supported") ||
+				contains(errStr, "no out channel") ||
+				contains(errStr, "-32601")
+
+			if isUnsupported && consecutiveFailures >= maxFailuresBeforeGiveUp {
+				w.log.Info("📡 Subscription not supported by this node provider - using backfill-only mode",
+					"hint", "This is normal for hosted providers like QuikNode. Run your own Celestia node to enable subscriptions.")
+				// Exit subscriber goroutine - backfiller will handle everything
+				return nil
+			}
+
+			w.log.Warn("Failed to subscribe, will retry",
+				"error", err,
+				"attempt", consecutiveFailures,
+				"retry_in", "5s")
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(5 * time.Second):
+			}
+			continue
+		}
+
+		// Reset failure counter on successful connection
+		consecutiveFailures = 0
+		w.subscriptionActive.Store(true)
+		w.log.Info("✅ Subscription established")
+
+		// Process incoming blocks
+		for {
+			select {
+			case <-ctx.Done():
+				w.subscriptionActive.Store(false)
+				return ctx.Err()
+
+			case resp, ok := <-subCh:
+				if !ok {
+					// Channel closed - subscription lost
+					w.subscriptionActive.Store(false)
+					w.log.Warn("Subscription channel closed, reconnecting...")
+					break
+				}
+
+				w.processSubscriptionResponse(ctx, resp)
+			}
+
+			// If we got here due to break (channel closed), restart outer loop
+			if !w.subscriptionActive.Load() {
+				break
 			}
 		}
 	}
 }
 
-// scanAndIndexBlocks scans a range of Celestia blocks and indexes discovered batches
-func (w *BackfillWorker) scanAndIndexBlocks(ctx context.Context) error {
-	// Determine blocks to scan per iteration
-	maxBlocksPerScan := w.workerCfg.BlocksPerScan
-	if maxBlocksPerScan <= 0 {
-		maxBlocksPerScan = 10 // Default fallback
+// processSubscriptionResponse handles a block received via subscription
+func (w *BackfillWorker) processSubscriptionResponse(ctx context.Context, resp *blob.SubscriptionResponse) {
+	height := resp.Height
+	blobs := resp.Blobs
+
+	// Update subscriber tip
+	w.mu.Lock()
+	if height > w.subscriberTip {
+		w.subscriberTip = height
+	}
+	w.mu.Unlock()
+
+	// Process blobs if any
+	if len(blobs) == 0 {
+		w.log.Debug("📡 Block (no blobs in namespace)",
+			"height", height)
+		return
 	}
 
-	startHeight := w.currentHeight
+	batchesIndexed := 0
+	for i, celestiaBlob := range blobs {
+		if err := w.indexBatch(ctx, celestiaBlob, height); err != nil {
+			w.log.Error("❌ Failed to index from subscription",
+				"height", height,
+				"blob", i,
+				"error", err)
+			continue
+		}
+		batchesIndexed++
+	}
+
+	w.log.Info("📡 Subscription block",
+		"height", height,
+		"blobs", len(blobs),
+		"indexed", batchesIndexed)
+}
+
+// runBackfiller catches up historical blocks using GetAll
+func (w *BackfillWorker) runBackfiller(ctx context.Context) error {
+	w.log.Info("🔄 Starting historical backfiller",
+		"start_height", w.backfillHeight)
+
+	ticker := time.NewTicker(w.workerCfg.BackfillPeriod)
+	defer ticker.Stop()
+
+	// Initial backfill
+	w.doBackfill(ctx)
+
+	for {
+		select {
+		case <-ctx.Done():
+			w.log.Info("Backfiller stopping")
+			return ctx.Err()
+
+		case <-ticker.C:
+			w.doBackfill(ctx)
+		}
+	}
+}
+
+// doBackfill performs one iteration of historical backfilling
+func (w *BackfillWorker) doBackfill(ctx context.Context) {
+	maxBlocksPerScan := w.workerCfg.BlocksPerScan
+	if maxBlocksPerScan <= 0 {
+		maxBlocksPerScan = 10
+	}
+
+	// Get network tip to know our target
+	tipHeight, err := w.getNetworkTipHeight(ctx)
+	if err != nil {
+		w.log.Debug("Could not get tip height", "error", err)
+		return
+	}
+
+	w.mu.Lock()
+	startHeight := w.backfillHeight
+	w.mu.Unlock()
+
+	// If subscription is active and we've caught up, skip backfilling
+	if w.subscriptionActive.Load() {
+		w.mu.Lock()
+		subscriberTip := w.subscriberTip
+		w.mu.Unlock()
+
+		// If subscriber has seen data and backfill caught up, we're done
+		if subscriberTip > 0 && startHeight >= subscriberTip {
+			return
+		}
+	}
+
+	// Calculate range to scan
 	endHeight := startHeight + uint64(maxBlocksPerScan)
+	if endHeight > tipHeight+1 {
+		endHeight = tipHeight + 1
+	}
 
-	w.log.Debug("Scanning Celestia blocks",
-		"start_height", startHeight,
-		"end_height", endHeight)
+	if startHeight >= endHeight {
+		return
+	}
 
-	blocksScanned := 0
-	batchesFound := 0
+	// Scan the range
+	batchesFound, blocksScanned := w.parallelScan(ctx, startHeight, endHeight)
 
-	for height := startHeight; height < endHeight; height++ {
-		if err := ctx.Err(); err != nil {
-			return err
+	// Update backfill progress
+	w.mu.Lock()
+	newHeight := w.backfillHeight
+	w.mu.Unlock()
+
+	// Persist sync progress
+	if blocksScanned > 0 {
+		if err := w.store.UpdateSyncState(ctx, "backfill_worker", newHeight-1); err != nil {
+			w.log.Error("Failed to persist sync state", "error", err)
+		}
+	}
+
+	// Log progress
+	if blocksScanned > 0 {
+		w.log.Info("🔄 Backfill",
+			"range", fmt.Sprintf("%d→%d", startHeight, newHeight-1),
+			"scanned", blocksScanned,
+			"indexed", batchesFound,
+			"tip", tipHeight,
+			"subscription", w.subscriptionActive.Load())
+	}
+}
+
+// getNetworkTipHeight queries Celestia for the current network head height
+func (w *BackfillWorker) getNetworkTipHeight(ctx context.Context) (uint64, error) {
+	if w.header == nil {
+		return 0, fmt.Errorf("header module not available")
+	}
+
+	head, err := w.header.NetworkHead(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get network head: %w", err)
+	}
+
+	return head.Height(), nil
+}
+
+// scanResult holds the result of scanning a single height
+type scanResult struct {
+	height uint64
+	blobs  []*blob.Blob
+	err    error
+}
+
+// fetchHeightsParallel fetches blobs from multiple heights concurrently
+func (w *BackfillWorker) fetchHeightsParallel(ctx context.Context, heights []uint64) map[uint64]scanResult {
+	maxConcurrent := w.workerCfg.BlocksPerScan
+	if maxConcurrent <= 0 {
+		maxConcurrent = 10
+	}
+
+	var (
+		mu        sync.Mutex
+		resultMap = make(map[uint64]scanResult)
+	)
+
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrent)
+
+	for _, h := range heights {
+		height := h
+		g.Go(func() error {
+			if gCtx.Err() != nil {
+				return gCtx.Err()
+			}
+			blobs, err := w.celestia.GetAll(gCtx, height, []libshare.Namespace{w.namespace})
+			mu.Lock()
+			resultMap[height] = scanResult{height: height, blobs: blobs, err: err}
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		w.log.Debug("Parallel fetch interrupted", "error", err)
+	}
+
+	return resultMap
+}
+
+// parallelScan scans multiple heights concurrently for faster discovery
+func (w *BackfillWorker) parallelScan(ctx context.Context, startHeight, endHeight uint64) (batchesFound, blocksScanned int) {
+	heights := make([]uint64, 0, endHeight-startHeight)
+	for h := startHeight; h < endHeight; h++ {
+		heights = append(heights, h)
+	}
+
+	resultMap := w.fetchHeightsParallel(ctx, heights)
+
+	// Process results IN ORDER (important for height tracking)
+	for _, h := range heights {
+		r, ok := resultMap[h]
+		if !ok {
+			break
 		}
 
-		// Get all blobs at this height for our namespace
-		blobs, err := w.celestia.GetAll(ctx, height, []libshare.Namespace{w.namespace})
-		if err != nil {
-			// If we get an error (e.g., height doesn't exist yet), stop scanning
-			w.log.Debug("Reached current tip or error scanning block",
-				"height", height,
-				"error", err)
+		if r.err != nil {
+			// Reached chain tip or error - stop here
 			break
 		}
 
 		blocksScanned++
-		w.currentHeight = height + 1
 
-		if len(blobs) == 0 {
-			w.log.Debug("No blobs found at height", "height", height)
+		// Update backfill height
+		w.mu.Lock()
+		w.backfillHeight = h + 1
+		w.mu.Unlock()
+
+		if len(r.blobs) == 0 {
 			continue
 		}
 
-		w.log.Info("Found blobs at height",
-			"height", height,
-			"blob_count", len(blobs))
-
-		// Index each blob (which is a batch in our system)
-		for _, celestiaBlob := range blobs {
-			if err := w.indexBatch(ctx, celestiaBlob, height); err != nil {
-				w.log.Error("Failed to index batch",
-					"height", height,
-					"error", err)
+		for i, celestiaBlob := range r.blobs {
+			if err := w.indexBatch(ctx, celestiaBlob, h); err != nil {
+				w.log.Error("❌ Failed to index", "height", h, "blob", i, "error", err)
 				continue
 			}
 			batchesFound++
 		}
 	}
 
-	// Persist sync progress after successful scan
-	if blocksScanned > 0 {
-		// Save the last successfully scanned height (currentHeight - 1)
-		lastScannedHeight := w.currentHeight - 1
-		if err := w.store.UpdateSyncState(ctx, "backfill_worker", lastScannedHeight); err != nil {
-			w.log.Error("Failed to persist sync state", "error", err, "height", lastScannedHeight)
-			// Don't fail the whole scan, just log the error
-		} else {
-			w.log.Debug("Persisted sync state", "last_synced_height", lastScannedHeight)
-		}
-	}
-
-	if blocksScanned > 0 || batchesFound > 0 {
-		w.log.Info("Backfill scan complete",
-			"blocks_scanned", blocksScanned,
-			"batches_indexed", batchesFound,
-			"current_height", w.currentHeight)
-	}
-
-	return nil
+	return
 }
 
 // indexBatch verifies, unpacks, and indexes a discovered batch from Celestia.
-// It verifies the signer, checks for duplicate batches, unpacks individual blobs,
-// and persists everything to the database.
 func (w *BackfillWorker) indexBatch(ctx context.Context, celestiaBlob *blob.Blob, height uint64) error {
 	batchData := celestiaBlob.Data()
 	batchCommitment := celestiaBlob.Commitment
@@ -277,7 +508,6 @@ func (w *BackfillWorker) verifySigner(celestiaBlob *blob.Blob, height uint64) er
 		return fmt.Errorf("blob has no signer, rejecting for security")
 	}
 
-	// Convert blob signer (raw bytes) to Bech32 address for comparison
 	blobSignerAddr := sdk.AccAddress(blobSigner)
 	blobSignerBech32 := blobSignerAddr.String()
 
@@ -291,12 +521,13 @@ func (w *BackfillWorker) verifySigner(celestiaBlob *blob.Blob, height uint64) er
 		}
 	}
 
-	w.log.Warn("Rejecting blob from untrusted signer (potential attack)",
+	w.log.Error("🚨 REJECTING BLOB - signer not in trusted_signers list!",
 		"height", height,
-		"commitment", fmt.Sprintf("%x", celestiaBlob.Commitment),
+		"commitment", fmt.Sprintf("%x", celestiaBlob.Commitment[:8]),
 		"blob_signer", blobSignerBech32,
-		"trusted_signers", fmt.Sprintf("%v", w.workerCfg.TrustedSigners))
-	return fmt.Errorf("blob signer does not match any trusted signer, rejecting")
+		"num_trusted_signers", len(w.workerCfg.TrustedSigners),
+		"hint", "Add this signer to your trusted_signers config")
+	return fmt.Errorf("blob signer %s not in trusted_signers", blobSignerBech32)
 }
 
 func (w *BackfillWorker) unpackBatch(batchData []byte, height uint64, commitment []byte) ([][]byte, error) {
@@ -363,15 +594,12 @@ func (w *BackfillWorker) persistBatch(ctx context.Context, batchCommitment, batc
 }
 
 func (w *BackfillWorker) persistBlob(ctx context.Context, tx *sql.Tx, blobData []byte, signerAddr []byte, batchID int64, batchIndex int, height uint64, now time.Time) error {
-	// Compute commitments for ALL trusted signers so any client can find this blob
-	// This is stateless - we don't care which signer the writer used, we store all possibilities
 	signersToUse := w.trustedSignerAddrs
 	if len(signersToUse) == 0 {
-		// Fallback to on-chain signer if no trusted signers configured
 		signersToUse = [][]byte{signerAddr}
 	}
 
-	// Check if blob already exists (by any commitment)
+	// Check if blob already exists
 	for _, signer := range signersToUse {
 		comm, err := commitment.ComputeCommitment(blobData, w.namespace, signer)
 		if err != nil {
@@ -386,7 +614,6 @@ func (w *BackfillWorker) persistBlob(ctx context.Context, tx *sql.Tx, blobData [
 	}
 
 	// Insert blob record for EACH trusted signer's commitment
-	// This allows lookup by any commitment the writer might have used
 	for i, signer := range signersToUse {
 		blobCommitment, err := commitment.ComputeCommitment(blobData, w.namespace, signer)
 		if err != nil {
@@ -413,7 +640,6 @@ func (w *BackfillWorker) persistBlob(ctx context.Context, tx *sql.Tx, blobData [
 		}
 
 		if err := w.store.InsertBlobTx(ctx, tx, blobRecord); err != nil {
-			// Ignore duplicate key errors - another signer's commitment might already exist
 			w.log.Debug("Insert blob (may be duplicate)",
 				"batch_index", batchIndex,
 				"signer_index", i,

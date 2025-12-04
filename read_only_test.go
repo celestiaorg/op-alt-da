@@ -2,11 +2,13 @@ package celestia
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
 
+	"github.com/celestiaorg/celestia-node/blob"
 	libshare "github.com/celestiaorg/go-square/v3/share"
 	"github.com/ethereum/go-ethereum/log"
 
@@ -14,6 +16,31 @@ import (
 	"github.com/celestiaorg/op-alt-da/db"
 	"github.com/celestiaorg/op-alt-da/worker"
 )
+
+// mockReadOnlyTestClient implements blobAPI.Module for read-only tests
+type mockReadOnlyTestClient struct{}
+
+func (m *mockReadOnlyTestClient) Submit(ctx context.Context, blobs []*blob.Blob, opts *blob.SubmitOptions) (uint64, error) {
+	return 12345, nil
+}
+func (m *mockReadOnlyTestClient) Get(ctx context.Context, height uint64, ns libshare.Namespace, commitment blob.Commitment) (*blob.Blob, error) {
+	return nil, nil
+}
+func (m *mockReadOnlyTestClient) GetAll(ctx context.Context, height uint64, namespaces []libshare.Namespace) ([]*blob.Blob, error) {
+	return nil, nil
+}
+func (m *mockReadOnlyTestClient) Subscribe(ctx context.Context, ns libshare.Namespace) (<-chan *blob.SubscriptionResponse, error) {
+	return nil, nil
+}
+func (m *mockReadOnlyTestClient) GetProof(ctx context.Context, height uint64, ns libshare.Namespace, commitment blob.Commitment) (*blob.Proof, error) {
+	return nil, nil
+}
+func (m *mockReadOnlyTestClient) Included(ctx context.Context, height uint64, ns libshare.Namespace, proof *blob.Proof, commitment blob.Commitment) (bool, error) {
+	return false, nil
+}
+func (m *mockReadOnlyTestClient) GetCommitmentProof(ctx context.Context, height uint64, namespace libshare.Namespace, shareCommitment []byte) (*blob.CommitmentProof, error) {
+	return nil, nil
+}
 
 func TestReadOnlyMode_BlocksPUT(t *testing.T) {
 	// Setup server in read-only mode
@@ -49,7 +76,9 @@ func TestReadOnlyMode_BlocksPUT(t *testing.T) {
 
 	// Create mock celestia store with test signer
 	testSignerAddr := make([]byte, 20)
-	for i := range testSignerAddr { testSignerAddr[i] = byte(i + 1) }
+	for i := range testSignerAddr {
+		testSignerAddr[i] = byte(i + 1)
+	}
 	celestiaStore := &CelestiaStore{Log: logger, Namespace: namespace, SignerAddr: testSignerAddr}
 
 	server := &CelestiaServer{
@@ -111,7 +140,9 @@ func TestReadOnlyMode_AllowsGET(t *testing.T) {
 
 	// Create mock celestia store with test signer
 	testSignerAddr := make([]byte, 20)
-	for i := range testSignerAddr { testSignerAddr[i] = byte(i + 1) }
+	for i := range testSignerAddr {
+		testSignerAddr[i] = byte(i + 1)
+	}
 	celestiaStore := &CelestiaStore{Log: logger, Namespace: namespace, SignerAddr: testSignerAddr}
 
 	server := &CelestiaServer{
@@ -171,10 +202,17 @@ func TestNormalMode_AllowsPUT(t *testing.T) {
 	workerCfg := worker.DefaultConfig()
 	workerCfg.ReadOnly = false
 
-	// Create mock celestia store with test signer
+	// Create mock celestia store with test signer and mock client
 	testSignerAddr := make([]byte, 20)
-	for i := range testSignerAddr { testSignerAddr[i] = byte(i + 1) }
-	celestiaStore := &CelestiaStore{Log: logger, Namespace: namespace, SignerAddr: testSignerAddr}
+	for i := range testSignerAddr {
+		testSignerAddr[i] = byte(i + 1)
+	}
+	celestiaStore := &CelestiaStore{
+		Log:        logger,
+		Namespace:  namespace,
+		SignerAddr: testSignerAddr,
+		Client:     &mockReadOnlyTestClient{},
+	}
 
 	server := &CelestiaServer{
 		log:           logger,

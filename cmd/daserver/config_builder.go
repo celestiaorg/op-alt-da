@@ -41,10 +41,13 @@ func BuildConfigFromTOML(tomlCfg *Config) (*RuntimeConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid worker.get_timeout: %w", err)
 	}
-	backfillPeriod := 15 * time.Second // Default
-	if tomlCfg.Backfill.Enabled {
-		// Backfill period can be derived from reconcile period or set separately if needed
-		backfillPeriod = reconcilePeriod
+	backfillPeriod := 5 * time.Second // Default: check every 5s
+	if tomlCfg.Backfill.Period != "" {
+		parsed, err := time.ParseDuration(tomlCfg.Backfill.Period)
+		if err != nil {
+			return nil, fmt.Errorf("invalid backfill.period: %w", err)
+		}
+		backfillPeriod = parsed
 	}
 
 	// Build batch config
@@ -78,10 +81,26 @@ func BuildConfigFromTOML(tomlCfg *Config) (*RuntimeConfig, error) {
 		maxParallelSubmissions = tomlCfg.Worker.MaxParallelSubmissions
 	}
 
+	retryBackoff := 1 * time.Second // Default: 1s linear backoff
+	if tomlCfg.Worker.RetryBackoff != "" {
+		parsed, err := time.ParseDuration(tomlCfg.Worker.RetryBackoff)
+		if err != nil {
+			return nil, fmt.Errorf("invalid worker.retry_backoff: %w", err)
+		}
+		retryBackoff = parsed
+	}
+
+	// Confirmation depth: re-scan recent heights to catch late-propagating blobs
+	confirmationDepth := uint64(10) // Default: re-scan last 10 heights
+	if tomlCfg.Backfill.ConfirmationDepth > 0 {
+		confirmationDepth = tomlCfg.Backfill.ConfirmationDepth
+	}
+
 	workerCfg := &worker.Config{
 		SubmitPeriod:           submitPeriod,
 		SubmitTimeout:          submitTimeout,
 		MaxRetries:             tomlCfg.Worker.MaxRetries,
+		RetryBackoff:           retryBackoff,
 		MaxParallelSubmissions: maxParallelSubmissions,
 		MaxBlobWaitTime:        maxBlobWaitTime,
 		ReconcilePeriod:        reconcilePeriod,
@@ -93,6 +112,7 @@ func BuildConfigFromTOML(tomlCfg *Config) (*RuntimeConfig, error) {
 		StartHeight:            tomlCfg.Backfill.StartHeight,
 		BackfillPeriod:         backfillPeriod,
 		BlocksPerScan:          tomlCfg.Backfill.BlocksPerScan,
+		ConfirmationDepth:      confirmationDepth,
 		MaxTxSizeBytes:         maxTxSizeBytes,
 		MaxBlockSizeBytes:      maxBlockSizeBytes,
 	}
@@ -208,6 +228,8 @@ func BuildCLIConfigFromTOML(tomlCfg *Config) CLIConfig {
 
 	return CLIConfig{
 		CelestiaConfig: celestia.CelestiaClientConfig{
+			// Read-only mode
+			ReadOnly: tomlCfg.ReadOnly,
 			// Bridge node settings
 			BridgeAddr:       tomlCfg.Celestia.BridgeAddr,
 			BridgeAuthToken:  tomlCfg.Celestia.BridgeAuthToken,

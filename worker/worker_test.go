@@ -2,13 +2,14 @@ package worker
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/celestiaorg/celestia-node/blob"
+	"github.com/celestiaorg/celestia-node/header"
+	libhead "github.com/celestiaorg/go-header"
+	"github.com/celestiaorg/go-header/sync"
 	libshare "github.com/celestiaorg/go-square/v3/share"
 	"github.com/ethereum/go-ethereum/log"
 
@@ -27,6 +28,48 @@ type mockCelestiaAPI struct {
 	submitFunc func(ctx context.Context, blobs []*blob.Blob) (uint64, error)
 	getFunc    func(ctx context.Context, height uint64, ns libshare.Namespace, commitment blob.Commitment) (*blob.Blob, error)
 	getAllFunc func(ctx context.Context, height uint64, namespaces []libshare.Namespace) ([]*blob.Blob, error)
+}
+
+// Mock Header API - implements headerAPI.Module interface
+type mockHeaderAPI struct {
+	tipHeight uint64
+}
+
+func (m *mockHeaderAPI) NetworkHead(ctx context.Context) (*header.ExtendedHeader, error) {
+	return &header.ExtendedHeader{
+		RawHeader: header.RawHeader{
+			Height: int64(m.tipHeight),
+		},
+	}, nil
+}
+
+// Satisfy the header.Module interface with stub implementations
+func (m *mockHeaderAPI) LocalHead(ctx context.Context) (*header.ExtendedHeader, error) {
+	return m.NetworkHead(ctx)
+}
+func (m *mockHeaderAPI) GetByHash(ctx context.Context, hash libhead.Hash) (*header.ExtendedHeader, error) {
+	return nil, nil
+}
+func (m *mockHeaderAPI) GetRangeByHeight(ctx context.Context, from *header.ExtendedHeader, to uint64) ([]*header.ExtendedHeader, error) {
+	return nil, nil
+}
+func (m *mockHeaderAPI) GetByHeight(ctx context.Context, height uint64) (*header.ExtendedHeader, error) {
+	return nil, nil
+}
+func (m *mockHeaderAPI) WaitForHeight(ctx context.Context, height uint64) (*header.ExtendedHeader, error) {
+	return nil, nil
+}
+func (m *mockHeaderAPI) SyncState(ctx context.Context) (sync.State, error) {
+	return sync.State{}, nil
+}
+func (m *mockHeaderAPI) SyncWait(ctx context.Context) error {
+	return nil
+}
+func (m *mockHeaderAPI) Tail(ctx context.Context) (*header.ExtendedHeader, error) {
+	return nil, nil
+}
+func (m *mockHeaderAPI) Subscribe(ctx context.Context) (<-chan *header.ExtendedHeader, error) {
+	return nil, nil
 }
 
 // Submit implements blob.Module interface
@@ -323,26 +366,21 @@ func TestSubmissionWorker_LargeSize(t *testing.T) {
 	}
 }
 
-// TestSubmissionWorker_ManyLargeBlobs tests that batching correctly handles many large blobs
-// by creating multiple batches that each fit within the MaxBatchSizeBytes limit
-func TestSubmissionWorker_ManyLargeBlobs(t *testing.T) {
+// TestSubmissionWorker_OneBatchPerTick tests that the simplified worker submits ONE batch per tick
+// Each call to submitPendingBlobs processes one batch only
+func TestSubmissionWorker_OneBatchPerTick(t *testing.T) {
 	store, namespace, cleanup := setupWorkerTest(t)
 	defer cleanup()
 
 	ctx := context.Background()
 
-	// Insert 20 blobs of 800KB each (16MB total - way over 1MB limit)
-	// Each blob has unique data to avoid duplicate batch commitments
-	for i := 0; i < 20; i++ {
-		largeData := make([]byte, 800*1024) // 800KB each
-		// Make data unique by setting first bytes to index
-		largeData[0] = byte(i)
-		largeData[1] = byte(i >> 8)
+	// Insert 3 small blobs that will fit in one batch
+	for i := 0; i < 3; i++ {
 		testBlob := &db.Blob{
 			Commitment: []byte{byte(i), 0x00, 0x00, 0x00},
 			Namespace:  namespace.Bytes(),
-			Data:       largeData,
-			Size:       len(largeData),
+			Data:       []byte{byte(i), 0x01, 0x02, 0x03},
+			Size:       4,
 			Status:     "pending_submission",
 		}
 		_, err := store.InsertBlob(ctx, testBlob)
@@ -351,21 +389,10 @@ func TestSubmissionWorker_ManyLargeBlobs(t *testing.T) {
 		}
 	}
 
-	var submitCallCount int
-	var totalBlobsSubmitted int
-	var mu sync.Mutex
+	submitCallCount := 0
 	mock := &mockCelestiaAPI{
 		submitFunc: func(ctx context.Context, blobs []*blob.Blob) (uint64, error) {
-			mu.Lock()
 			submitCallCount++
-			totalBlobsSubmitted += len(blobs)
-			mu.Unlock()
-			// Verify each packed batch doesn't exceed 1MB
-			for _, b := range blobs {
-				if len(b.Data()) > 1*1024*1024 {
-					return 0, fmt.Errorf("batch size %d exceeds 1MB limit", len(b.Data()))
-				}
-			}
 			return 12345, nil
 		},
 	}
@@ -373,34 +400,28 @@ func TestSubmissionWorker_ManyLargeBlobs(t *testing.T) {
 	logger := log.NewLogger(log.DiscardHandler())
 	batchCfg := batch.DefaultConfig()
 	workerCfg := DefaultConfig()
-	signerAddr := make([]byte, 20) // Test signer
+	signerAddr := make([]byte, 20)
 	worker := NewSubmissionWorker(store, mock, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
 
-	// Submit pending blobs
+	// Submit pending blobs - should submit ONE batch containing all 3 small blobs
 	err := worker.submitPendingBlobs(ctx)
 	if err != nil {
 		t.Fatalf("submitPendingBlobs failed: %v", err)
 	}
 
-	// Should have submitted (at least one call)
-	if submitCallCount == 0 {
-		t.Error("No batches were submitted")
+	// Should have exactly 1 Submit call (one batch per tick)
+	if submitCallCount != 1 {
+		t.Errorf("Expected 1 Submit call, got %d", submitCallCount)
 	}
 
-	// Should have created 20 batches total (each 800KB blob = 1 batch since 2*800KB > 1MB)
-	// With one-blob-per-Submit, we get 20 Submit() calls
-	if totalBlobsSubmitted != 20 {
-		t.Errorf("Expected 20 batches total (one per 800KB blob), got %d", totalBlobsSubmitted)
-	}
-
-	// Verify all blobs are now batched (none pending)
-	pending, err := store.GetPendingBlobs(ctx, 30)
+	// All 3 blobs should be batched (none pending)
+	pending, err := store.GetPendingBlobs(ctx, 10)
 	if err != nil {
 		t.Fatalf("GetPendingBlobs failed: %v", err)
 	}
 
 	if len(pending) != 0 {
-		t.Errorf("Expected 0 pending blobs remaining, got %d", len(pending))
+		t.Errorf("Expected 0 pending blobs, got %d", len(pending))
 	}
 }
 

@@ -53,14 +53,10 @@ func (l *EventListener) Run(ctx context.Context) error {
 	if l.workerCfg.ReconcileAge <= 0 {
 		return fmt.Errorf("invalid reconcile age: %v (must be positive)", l.workerCfg.ReconcileAge)
 	}
-	if l.workerCfg.GetTimeout <= 0 {
-		return fmt.Errorf("invalid get timeout: %v (must be positive)", l.workerCfg.GetTimeout)
-	}
 
 	l.log.Info("Reconciliation worker starting (using Get operations only)",
 		"reconcile_period", l.workerCfg.ReconcilePeriod,
-		"reconcile_age", l.workerCfg.ReconcileAge,
-		"get_timeout", l.workerCfg.GetTimeout)
+		"reconcile_age", l.workerCfg.ReconcileAge)
 
 	// Start reconciliation ticker
 	reconcileTicker := time.NewTicker(l.workerCfg.ReconcilePeriod)
@@ -151,10 +147,8 @@ func (l *EventListener) reconcileBatch(ctx context.Context, batch *db.Batch) err
 			continue
 		}
 
-		// Try to Get with this commitment
-		getCtx, cancel := context.WithTimeout(ctx, l.workerCfg.GetTimeout)
-		celestiaBlob, err := l.celestia.Get(getCtx, *batch.CelestiaHeight, l.namespace, commitmentBytes)
-		cancel()
+		// Try to Get with this commitment - let Celestia client handle timeouts
+		celestiaBlob, err := l.celestia.Get(ctx, *batch.CelestiaHeight, l.namespace, commitmentBytes)
 
 		if err != nil {
 			// Not found with this signer, try next

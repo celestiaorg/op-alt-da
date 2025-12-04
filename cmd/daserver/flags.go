@@ -259,6 +259,8 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 	ns, _ := hex.DecodeString(ctx.String(CelestiaNamespaceFlagName))
 	return CLIConfig{
 		CelestiaConfig: celestia.CelestiaClientConfig{
+			// Read-only mode
+			ReadOnly: ctx.Bool(ReadOnlyFlagName),
 			// Bridge node settings
 			BridgeAddr:       ctx.String(CelestiaBridgeAddrFlagName),
 			BridgeAuthToken:  ctx.String(CelestiaBridgeAuthTokenFlagName),

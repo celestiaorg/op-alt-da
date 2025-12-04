@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/celestiaorg/celestia-node/blob"
 	libshare "github.com/celestiaorg/go-square/v3/share"
-	altda "github.com/ethereum-optimism/optimism/op-alt-da"
 	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/celestiaorg/op-alt-da/batch"
@@ -21,6 +21,42 @@ import (
 	"github.com/celestiaorg/op-alt-da/db"
 	"github.com/celestiaorg/op-alt-da/worker"
 )
+
+// mockCelestiaClient implements blobAPI.Module for testing
+type mockCelestiaClient struct {
+	submitFunc func(ctx context.Context, blobs []*blob.Blob, opts *blob.SubmitOptions) (uint64, error)
+}
+
+func (m *mockCelestiaClient) Submit(ctx context.Context, blobs []*blob.Blob, opts *blob.SubmitOptions) (uint64, error) {
+	if m.submitFunc != nil {
+		return m.submitFunc(ctx, blobs, opts)
+	}
+	return 12345, nil // Default success
+}
+
+func (m *mockCelestiaClient) Get(ctx context.Context, height uint64, ns libshare.Namespace, commitment blob.Commitment) (*blob.Blob, error) {
+	return nil, nil
+}
+
+func (m *mockCelestiaClient) GetAll(ctx context.Context, height uint64, namespaces []libshare.Namespace) ([]*blob.Blob, error) {
+	return nil, nil
+}
+
+func (m *mockCelestiaClient) Subscribe(ctx context.Context, ns libshare.Namespace) (<-chan *blob.SubscriptionResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCelestiaClient) GetProof(ctx context.Context, height uint64, ns libshare.Namespace, commitment blob.Commitment) (*blob.Proof, error) {
+	return nil, nil
+}
+
+func (m *mockCelestiaClient) Included(ctx context.Context, height uint64, ns libshare.Namespace, proof *blob.Proof, commitment blob.Commitment) (bool, error) {
+	return false, nil
+}
+
+func (m *mockCelestiaClient) GetCommitmentProof(ctx context.Context, height uint64, namespace libshare.Namespace, shareCommitment []byte) (*blob.CommitmentProof, error) {
+	return nil, nil
+}
 
 func setupServerTest(t *testing.T) (*CelestiaServer, *db.BlobStore, func()) {
 	tmpFile, err := os.CreateTemp("", "test-server-*.db")
@@ -50,15 +86,17 @@ func setupServerTest(t *testing.T) (*CelestiaServer, *db.BlobStore, func()) {
 
 	logger := log.NewLogger(log.DiscardHandler())
 
-	// Create a mock celestia store with signer address
+	// Create a mock celestia store with signer address and mock client
 	testSignerAddr := make([]byte, 20)
 	for i := range testSignerAddr {
 		testSignerAddr[i] = byte(i + 1) // Non-zero test signer
 	}
+	mockClient := &mockCelestiaClient{}
 	celestiaStore := &CelestiaStore{
 		Log:        logger,
 		Namespace:  namespace,
 		SignerAddr: testSignerAddr,
+		Client:     mockClient,
 	}
 
 	server := &CelestiaServer{
@@ -404,12 +442,13 @@ func TestHandleStats(t *testing.T) {
 	t.Logf("Stats response: %s", bodyStr)
 }
 
-// TestPutGetRoundTrip tests a full PUT then GET workflow
-func TestPutGetRoundTrip(t *testing.T) {
-	server, store, cleanup := setupServerTest(t)
+// TestPutReturnsValidCommitment tests that PUT returns a valid commitment format
+// Note: With direct Celestia submission, PUT no longer stores in local DB
+func TestPutReturnsValidCommitment(t *testing.T) {
+	server, _, cleanup := setupServerTest(t)
 	defer cleanup()
 
-	testData := []byte("round trip test data")
+	testData := []byte("test data for commitment")
 
 	// PUT request
 	putReq := httptest.NewRequest("PUT", "/put/", bytes.NewReader(testData))
@@ -430,83 +469,20 @@ func TestPutGetRoundTrip(t *testing.T) {
 	t.Logf("PUT returned commitment (hex): %x", putBody)
 	t.Logf("PUT returned commitment length: %d", len(putBody))
 
-	// Decode what was returned to see the blob commitment
-	comm, err := altda.DecodeCommitmentData(putBody)
-	if err == nil {
-		txData := comm.TxData()
-		t.Logf("TxData from commitment: %x (len=%d)", txData, len(txData))
-		if len(txData) > 1 {
-			t.Logf("Blob commitment (after stripping version): %x (len=%d)", txData[1:], len(txData)-1)
-		}
-	} else {
-		t.Logf("Failed to decode as GenericCommitment: %v", err)
+	// Verify commitment format
+	// Expected: [commitment_type_byte][version_byte][blob_commitment...]
+	if len(putBody) < 34 { // 1 + 1 + 32 minimum
+		t.Fatalf("Commitment too short: %d bytes", len(putBody))
 	}
 
-	// Check what's actually in the DB
-	blobs, _ := store.GetPendingBlobs(context.Background(), 10)
-	if len(blobs) == 0 {
-		t.Fatal("No blobs found in DB after PUT")
+	// Check the returned commitment format directly
+	// Format: [commitment_type_byte (0x01)][version_byte (0x0c)][commitment...]
+	if putBody[0] != 0x01 {
+		t.Errorf("Expected commitment type 0x01 at position 0, got 0x%02x", putBody[0])
 	}
-
-	blob := blobs[0]
-	t.Logf("DB has blob with commitment: %x (len=%d)", blob.Commitment, len(blob.Commitment))
-
-	// Simulate the batching and confirmation process
-	// Properly pack the blob data
-	batchCfg := batch.DefaultConfig()
-	packedData, err := batch.PackBlobs([]*db.Blob{blob}, batchCfg)
-	if err != nil {
-		t.Fatalf("Failed to pack blob: %v", err)
+	if putBody[1] != 0x0c {
+		t.Errorf("Expected version byte 0x0c at position 1, got 0x%02x", putBody[1])
 	}
-
-	// Compute batch commitment from packed data
-	batchCommitment, err := commitment.ComputeCommitment(packedData, server.namespace, make([]byte, 20))
-	if err != nil {
-		t.Fatalf("Failed to compute batch commitment: %v", err)
-	}
-
-	// Create a batch with properly packed data
-	batchID, err := store.CreateBatch(context.Background(), []int64{blob.ID}, batchCommitment, packedData)
-	if err != nil {
-		t.Fatalf("Failed to create batch: %v", err)
-	}
-
-	// Mark the batch as confirmed on DA layer
-	err = store.MarkBatchConfirmed(context.Background(), batchCommitment, uint64(12345))
-	if err != nil {
-		t.Fatalf("Failed to mark batch as confirmed: %v", err)
-	}
-
-	t.Logf("Created and confirmed batch %d at height 12345", batchID)
-
-	// Hex-encode commitment for URL path
-	commitmentHex := hex.EncodeToString(putBody)
-
-	t.Logf("GET URL: /get/%s", commitmentHex)
-
-	// GET request using the hex-encoded commitment
-	getURL := fmt.Sprintf("/get/%s", commitmentHex)
-	getReq := httptest.NewRequest("GET", getURL, nil)
-	getW := httptest.NewRecorder()
-
-	server.HandleGet(getW, getReq)
-
-	getResp := getW.Result()
-	defer getResp.Body.Close()
-
-	if getResp.StatusCode != http.StatusOK {
-		getBody, _ := io.ReadAll(getResp.Body)
-		t.Fatalf("GET failed with status %d: %s", getResp.StatusCode, getBody)
-	}
-
-	// Verify data matches
-	getBody, _ := io.ReadAll(getResp.Body)
-
-	if !bytes.Equal(getBody, testData) {
-		t.Errorf("Round trip data mismatch: sent %s, got %s", testData, getBody)
-	}
-
-	t.Logf("Round trip successful: %d bytes", len(testData))
 }
 
 // TestMultiplePutsSameData tests idempotent PUT behavior (same data = same commitment)

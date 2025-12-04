@@ -8,7 +8,9 @@ import (
 	"time"
 
 	txClient "github.com/celestiaorg/celestia-node/api/client"
+	rpcClient "github.com/celestiaorg/celestia-node/api/rpc/client"
 	blobAPI "github.com/celestiaorg/celestia-node/nodebuilder/blob"
+	headerAPI "github.com/celestiaorg/celestia-node/nodebuilder/header"
 	"github.com/celestiaorg/celestia-node/nodebuilder/p2p"
 	libshare "github.com/celestiaorg/go-square/v3/share"
 	"github.com/cosmos/cosmos-sdk/crypto/hd"
@@ -126,6 +128,7 @@ type CelestiaStore struct {
 	GetTimeout    time.Duration
 	Namespace     libshare.Namespace
 	Client        blobAPI.Module
+	Header        headerAPI.Module // For querying network head
 	CompactBlobID bool
 	SignerAddr    []byte // 20-byte signer address for BlobV1 (CIP-21)
 }
@@ -148,14 +151,15 @@ func NewCelestiaStore(ctx context.Context, cfg CelestiaClientConfig) (*CelestiaS
 			"bridge_addr", cfg.BridgeAddr,
 			"bridge_auth_token_set", cfg.BridgeAuthToken != "")
 
-		readClient, err := initReadOnlyClient(ctx, cfg)
+		blobClient, headerClient, err := initReadOnlyClient(ctx, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize read-only celestia client: %w", err)
 		}
 
 		return &CelestiaStore{
 			Log:           logger,
-			Client:        readClient,
+			Client:        blobClient,
+			Header:        headerClient,
 			GetTimeout:    time.Minute,
 			Namespace:     namespace,
 			CompactBlobID: cfg.CompactBlobID,
@@ -299,23 +303,15 @@ func (s *SignerAddresses) AllAddresses() []string {
 }
 
 // initReadOnlyClient initializes a read-only Celestia client for blob retrieval.
-// Uses only the bridge node (no keyring or CoreGRPC needed).
-func initReadOnlyClient(ctx context.Context, cfg CelestiaClientConfig) (blobAPI.Module, error) {
-	config := txClient.Config{
-		ReadConfig: txClient.ReadConfig{
-			BridgeDAAddr: cfg.BridgeAddr,
-			DAAuthToken:  cfg.BridgeAuthToken,
-			EnableDATLS:  cfg.BridgeTLSEnabled,
-		},
-		// No SubmitConfig needed for read-only mode
-	}
-
-	client, err := txClient.New(ctx, config, nil) // No keyring needed
+// Uses only the bridge node JSON-RPC (no keyring or CoreGRPC needed).
+func initReadOnlyClient(ctx context.Context, cfg CelestiaClientConfig) (blobAPI.Module, headerAPI.Module, error) {
+	// Use simple RPC client - only needs bridge address and optional auth token
+	client, err := rpcClient.NewClient(ctx, cfg.BridgeAddr, cfg.BridgeAuthToken)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create read-only celestia client: %w", err)
+		return nil, nil, fmt.Errorf("failed to create read-only celestia client: %w", err)
 	}
 
-	return client.Blob, nil
+	return &client.Blob, &client.Header, nil
 }
 
 // initCelestiaClient initializes a Celestia client and extracts the signer address.

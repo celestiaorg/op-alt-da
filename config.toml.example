@@ -44,6 +44,22 @@ log_color = true
 log_pid = false
 
 # ==============================================================================
+# READ-ONLY MODE (set to true for reader servers)
+# ==============================================================================
+# When enabled:
+#   - PUT requests are rejected (server only serves GET requests)
+#   - Submission worker is disabled
+#   - Backfill worker syncs data from Celestia
+#
+# Requirements for read-only mode:
+#   - [backfill] enabled = true (to sync from Celestia)
+#   - [worker] trusted_signers must list writer's Celestia addresses
+#
+# CLI equivalent: --read-only
+# Env var: OP_ALTDA_READ_ONLY=true
+read_only = false
+
+# ==============================================================================
 # CELESTIA CONFIGURATION
 # ==============================================================================
 
@@ -157,7 +173,10 @@ submit_period = "6s"
 submit_timeout = "60s"
 
 # Maximum retries for failed submissions
-max_retries = 10
+max_retries = 3
+
+# Wait time between retries (linear backoff)
+retry_backoff = "1s"
 
 # Max time a blob waits before forced submission
 # Recommended: 12s (2 blocks - allows batching but prevents long waits)
@@ -181,27 +200,31 @@ get_timeout = "30s"
 trusted_signers = []
 
 # ==============================================================================
-# READ-ONLY MODE CONFIGURATION
-# ==============================================================================
-# Run server in read-only mode (no writes to Celestia)
-# Requires trusted_signers to be configured for security
-
-read_only = false
-
-# ==============================================================================
 # BACKFILL CONFIGURATION
 # ==============================================================================
 # Backfill historical blobs from Celestia into local database
 
 [backfill]
-# Enable backfill on startup
+# Enable backfill on startup (for read-only servers)
 enabled = false
+
+# How often to scan for new Celestia blocks (lower = faster catch-up)
+period = "1s"
 
 # Starting Celestia block height for backfill
 start_height = 1
 
 # Ending Celestia block height for backfill (0 = current chain tip)
 end_height = 0
+
+# How many blocks to scan per iteration (also = parallel GetAll concurrency)
+# Higher = faster scanning but more load on Celestia node
+blocks_per_scan = 20
+
+# Re-scan last N heights to catch late-propagating blobs
+# Higher values = more reliable but more GetAll calls
+# Recommended: 10-20 for production
+confirmation_depth = 10
 
 # ==============================================================================
 # S3 BACKUP CONFIGURATION (Optional)

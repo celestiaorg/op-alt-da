@@ -132,6 +132,7 @@ func NewCelestiaServer(
 		server.backfillWorker = worker.NewBackfillWorker(
 			store,
 			celestiaStore.Client,
+			celestiaStore.Header,
 			celestiaStore.Namespace,
 			batchCfg,
 			workerCfg,
@@ -455,11 +456,9 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.log.Info("GET request details",
-		"encoded_length", len(encodedCommitment),
-		"encoded_hex", hex.EncodeToString(encodedCommitment),
-		"commitment_length", len(requestedCommitment),
-		"commitment_hex", hex.EncodeToString(requestedCommitment))
+	// Log at debug level - success/failure logs below are more informative
+	s.log.Debug("GET request received",
+		"commitment", hex.EncodeToString(requestedCommitment)[:16]+"...")
 
 	commitmentKey := hex.EncodeToString(requestedCommitment)
 	s.firstRequestTimes.LoadOrStore(commitmentKey, startTime)
@@ -471,10 +470,9 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 				firstRequestTime := firstTime.(time.Time)
 				timeToAvailability := time.Since(firstRequestTime)
 				s.celestiaMetrics.RecordTimeToAvailability(timeToAvailability)
-				s.log.Info("Blob became available",
+				s.log.Debug("Time to availability recorded",
 					"commitment", commitmentKey[:16]+"...",
-					"time_to_availability_seconds", timeToAvailability.Seconds(),
-					"first_request_time", firstRequestTime.Format(time.RFC3339))
+					"seconds", timeToAvailability.Seconds())
 			}
 			s.firstRequestTimes.Delete(commitmentKey)
 		}
@@ -484,8 +482,8 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	if err == db.ErrBlobNotFound {
 		batch, batchErr := s.store.GetBatchByCommitment(r.Context(), requestedCommitment)
 		if batchErr == db.ErrBatchNotFound {
-			s.log.Warn("Blob not found in DB",
-				"commitment", hex.EncodeToString(requestedCommitment))
+			s.log.Debug("GET miss - commitment not found",
+				"commitment", hex.EncodeToString(requestedCommitment)[:16]+"...")
 			http.Error(rw, "blob not found", http.StatusNotFound)
 			return
 		}
@@ -505,13 +503,11 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Batch is confirmed - return the packed batch data (what's actually on Celestia)
-		s.log.Info("Batch retrieved",
-			"batch_id", batch.BatchID,
-			"size", batch.BatchSize,
-			"blob_count", batch.BlobCount,
-			"status", batch.Status,
+		s.log.Info("✅ GET batch success",
+			"commitment", hex.EncodeToString(requestedCommitment)[:16]+"...",
 			"celestia_height", *batch.CelestiaHeight,
-			"commitment", hex.EncodeToString(requestedCommitment),
+			"size_bytes", batch.BatchSize,
+			"blob_count", batch.BlobCount,
 			"latency_ms", time.Since(startTime).Milliseconds())
 
 		rw.WriteHeader(http.StatusOK)
@@ -526,19 +522,18 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 
 	// Only return blob if it's confirmed on DA layer
 	if blob.Status != "confirmed" || blob.CelestiaHeight == nil {
-		s.log.Warn("Blob not yet confirmed on DA layer",
-			"blob_id", blob.ID,
-			"status", blob.Status,
-			"has_height", blob.CelestiaHeight != nil)
+		// Only warn if blob is NOT in initial pending state (to reduce noise)
+		if blob.Status != "pending_submission" {
+			s.log.Warn("Blob not yet confirmed on DA layer",
+				"blob_id", blob.ID,
+				"status", blob.Status,
+				"has_height", blob.CelestiaHeight != nil)
+		}
 		http.Error(rw, "blob not yet available on DA layer", http.StatusNotFound)
 		return
 	}
 
 	blobData := blob.Data
-	s.log.Debug("Retrieved blob from database",
-		"blob_id", blob.ID,
-		"size", len(blobData),
-		"height", *blob.CelestiaHeight)
 
 	// Record inclusion height if available
 	if s.celestiaMetrics != nil && blob.CelestiaHeight != nil {
@@ -554,11 +549,10 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	s.log.Info("Blob retrieved",
-		"blob_id", blob.ID,
-		"size", len(blobData),
-		"status", blob.Status,
-		"commitment", hex.EncodeToString(requestedCommitment),
+	s.log.Info("✅ GET blob success",
+		"commitment", hex.EncodeToString(requestedCommitment)[:16]+"...",
+		"celestia_height", *blob.CelestiaHeight,
+		"size_bytes", len(blobData),
 		"latency_ms", time.Since(startTime).Milliseconds())
 
 	// Return blob data

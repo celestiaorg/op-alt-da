@@ -2,12 +2,14 @@ package celestia
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/celestiaorg/celestia-node/blob"
 	libshare "github.com/celestiaorg/go-square/v3/share"
 	"github.com/celestiaorg/op-alt-da/batch"
 	"github.com/celestiaorg/op-alt-da/db"
@@ -17,6 +19,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// mockBoundaryTestClient implements blobAPI.Module for boundary tests
+type mockBoundaryTestClient struct{}
+
+func (m *mockBoundaryTestClient) Submit(ctx context.Context, blobs []*blob.Blob, opts *blob.SubmitOptions) (uint64, error) {
+	return 12345, nil
+}
+func (m *mockBoundaryTestClient) Get(ctx context.Context, height uint64, ns libshare.Namespace, commitment blob.Commitment) (*blob.Blob, error) {
+	return nil, nil
+}
+func (m *mockBoundaryTestClient) GetAll(ctx context.Context, height uint64, namespaces []libshare.Namespace) ([]*blob.Blob, error) {
+	return nil, nil
+}
+func (m *mockBoundaryTestClient) Subscribe(ctx context.Context, ns libshare.Namespace) (<-chan *blob.SubscriptionResponse, error) {
+	return nil, nil
+}
+func (m *mockBoundaryTestClient) GetProof(ctx context.Context, height uint64, ns libshare.Namespace, commitment blob.Commitment) (*blob.Proof, error) {
+	return nil, nil
+}
+func (m *mockBoundaryTestClient) Included(ctx context.Context, height uint64, ns libshare.Namespace, proof *blob.Proof, commitment blob.Commitment) (bool, error) {
+	return false, nil
+}
+func (m *mockBoundaryTestClient) GetCommitmentProof(ctx context.Context, height uint64, namespace libshare.Namespace, shareCommitment []byte) (*blob.CommitmentProof, error) {
+	return nil, nil
+}
+
 // TestHTTP_PutBoundaries tests PUT endpoint with boundary cases
 func TestHTTP_PutBoundaries(t *testing.T) {
 	store, cleanup := setupTestDB(t)
@@ -24,10 +51,17 @@ func TestHTTP_PutBoundaries(t *testing.T) {
 
 	namespace := createTestNamespace(t)
 
-	// Create mock celestia store with test signer
+	// Create mock celestia store with test signer and mock client
 	testSignerAddr := make([]byte, 20)
-	for i := range testSignerAddr { testSignerAddr[i] = byte(i + 1) }
-	celestiaStore := &CelestiaStore{Log: log.New(), Namespace: namespace, SignerAddr: testSignerAddr}
+	for i := range testSignerAddr {
+		testSignerAddr[i] = byte(i + 1)
+	}
+	celestiaStore := &CelestiaStore{
+		Log:        log.New(),
+		Namespace:  namespace,
+		SignerAddr: testSignerAddr,
+		Client:     &mockBoundaryTestClient{},
+	}
 	batchCfg := batch.DefaultConfig()
 	workerCfg := worker.DefaultConfig()
 
@@ -39,6 +73,9 @@ func TestHTTP_PutBoundaries(t *testing.T) {
 		workerCfg:     workerCfg,
 		log:           log.New(),
 	}
+
+	// HandlePut now uses 8MB max size (hardcoded for Celestia tx limit)
+	const maxBlobSize = 8 * 1024 * 1024
 
 	tests := []struct {
 		name           string
@@ -65,14 +102,14 @@ func TestHTTP_PutBoundaries(t *testing.T) {
 			errorContains:  "",
 		},
 		{
-			name:           "maximum allowed size",
-			body:           bytes.NewReader(make([]byte, batchCfg.MaxBatchSizeBytes)),
+			name:           "1MB blob (valid)",
+			body:           bytes.NewReader(make([]byte, 1*1024*1024)),
 			expectedStatus: http.StatusOK,
 			errorContains:  "",
 		},
 		{
-			name: "exceeds maximum size",
-			body: bytes.NewReader(make([]byte, batchCfg.MaxBatchSizeBytes+batchCfg.MaxBatchSizeBytes/10+1)),
+			name:           "exceeds maximum size (>8MB)",
+			body:           bytes.NewReader(make([]byte, maxBlobSize+1)),
 			expectedStatus: http.StatusRequestEntityTooLarge,
 			errorContains:  "too large",
 		},
@@ -123,7 +160,9 @@ func TestHTTP_GetBoundaries(t *testing.T) {
 
 	// Create mock celestia store with test signer
 	testSignerAddr := make([]byte, 20)
-	for i := range testSignerAddr { testSignerAddr[i] = byte(i + 1) }
+	for i := range testSignerAddr {
+		testSignerAddr[i] = byte(i + 1)
+	}
 	celestiaStore := &CelestiaStore{Log: log.New(), Namespace: namespace, SignerAddr: testSignerAddr}
 	batchCfg := batch.DefaultConfig()
 	workerCfg := worker.DefaultConfig()
@@ -242,7 +281,9 @@ func TestHTTP_ReadOnlyMode(t *testing.T) {
 
 	// Create mock celestia store with test signer
 	testSignerAddr := make([]byte, 20)
-	for i := range testSignerAddr { testSignerAddr[i] = byte(i + 1) }
+	for i := range testSignerAddr {
+		testSignerAddr[i] = byte(i + 1)
+	}
 	celestiaStore := &CelestiaStore{Log: log.New(), Namespace: namespace, SignerAddr: testSignerAddr}
 	batchCfg := batch.DefaultConfig()
 	workerCfg := worker.DefaultConfig()

@@ -21,6 +21,8 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 )
 
+// mockCelestiaClient is defined in graceful_shutdown_test.go
+
 // TestHandlePut_Success tests successful PUT operation
 func TestHandlePut_Success(t *testing.T) {
 	// Setup
@@ -136,8 +138,9 @@ func TestHandlePut_TooLarge(t *testing.T) {
 		log.New(),
 	)
 
-	// Create data larger than max batch size
-	largeData := make([]byte, cfg.MaxBatchSizeBytes*2)
+	// Create data larger than max blob size (8MB hardcoded in HandlePut)
+	const maxBlobSize = 8 * 1024 * 1024
+	largeData := make([]byte, maxBlobSize+1)
 	req := httptest.NewRequest(http.MethodPost, "/put", bytes.NewReader(largeData))
 	w := httptest.NewRecorder()
 
@@ -491,15 +494,16 @@ func setupTestServer(t *testing.T) (*db.BlobStore, *celestia.CelestiaStore) {
 		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
 	}
 
-	// Create mock celestia store with test signer address
+	ns, err := libshare.NewNamespaceFromBytes(nsBytes)
+	require.NoError(t, err)
+
+	// Create mock celestia store with test signer address and mock client
 	celestiaStore := &celestia.CelestiaStore{
 		Log:        log.New(),
 		SignerAddr: make([]byte, 20), // 20-byte test signer address
+		Namespace:  ns,
+		Client:     &mockCelestiaClient{},
 	}
-
-	ns, err := libshare.NewNamespaceFromBytes(nsBytes)
-	require.NoError(t, err)
-	celestiaStore.Namespace = ns
 
 	return store, celestiaStore
 }

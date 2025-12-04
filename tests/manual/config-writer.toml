@@ -53,16 +53,16 @@ bridge_auth_token = ""
 bridge_tls_enabled = true
 
 
-core_grpc_addr = "celestia-testnet-consensus.itrocket.net:9090"
-core_grpc_auth_token = ""
-core_grpc_tls_enabled = false
+# core_grpc_addr = "celestia-testnet-consensus.itrocket.net:9090"
+# core_grpc_auth_token = ""
+# core_grpc_tls_enabled = false
 # core_grpc_addr = "151.115.60.15:9090"
 # core_grpc_auth_token = ""
 # core_grpc_tls_enabled = false
 # CoreGRPC settings (for submitting blobs)
-# core_grpc_addr = "https://young-weathered-scion.celestia-mocha.quiknode.pro:9090"
-# core_grpc_auth_token = "2ae91d0d78ef0a253990449d0bb7e9f054f024c0"
-# core_grpc_tls_enabled = true
+core_grpc_addr = "https://young-weathered-scion.celestia-mocha.quiknode.pro:9090"
+core_grpc_auth_token = "2ae91d0d78ef0a253990449d0bb7e9f054f024c0"
+core_grpc_tls_enabled = true
 
 # Keyring settings (for signing)
 keyring_path = "~/.celestia-light-mocha-4/keys"
@@ -86,7 +86,7 @@ tx_worker_accounts = 8
 # Minimum number of blobs before creating a batch
 # With 1MB blobs every 2.5s, we get ~2.4 blobs per 6s Celestia block
 # Setting to 2 allows efficient batching without unnecessary delay
-min_blobs = 3
+min_blobs = 1
 
 # Maximum number of blobs per batch
 # Celestia max blob size ~2MB, so max 2 x 1MB blobs per batch
@@ -94,7 +94,7 @@ max_blobs = 8
 
 # Target number of blobs to fetch for batching
 # Aim for 2 blobs (2MB total) to fill Celestia efficiently
-target_blobs = 5
+target_blobs = 1
 
 # Maximum batch size in KB
 # Celestia supports ~2MB blobs, set to 1.8MB (1843KB) for safety margin
@@ -113,13 +113,16 @@ min_size_kb = 500
 [worker]
 # How often submission worker checks for pending blobs
 # Check frequently to catch accumulation of 2-3 blobs quickly
-submit_period = "6s"
+submit_period = "4s"
 
 # Timeout for submitting batch to Celestia
 submit_timeout = "20s"
 
 # Maximum retries for failed submissions
-max_retries = 10
+max_retries = 3
+
+# Wait time between retries (linear backoff)
+retry_backoff = "1s"
 
 # Number of parallel Submit() calls to Celestia
 # Should match TxWorkerAccounts on your Celestia node
@@ -160,10 +163,22 @@ trusted_signers = [
 [backfill]
 # WRITER: Backfill disabled (we submit directly)
 enabled = false
-start_height = 0
-end_height = 0
-blocks_per_scan = 10
 
+# Ending Celestia block height for backfill (0 = current chain tip)
+end_height = 0
+
+# How often to scan for new Celestia blocks
+period = "5s"
+
+# How many blocks to scan per iteration
+# PRODUCTION SETTINGS for 400KB/s throughput:
+# Celestia Mocha-4: ~10 blocks/minute (1 block every ~6s)
+# With period = 5s, scan capacity = 5 blocks × 12 = 60 blocks/min
+# This provides 6x safety margin over Celestia's 10 blocks/min production rate
+blocks_per_scan = 5
+
+# Re-scan last N heights to catch late-propagating blobs (only used when backfill is enabled)
+confirmation_depth = 10
 # ==============================================================================
 # S3 BACKUP CONFIGURATION (Optional)
 # ==============================================================================
