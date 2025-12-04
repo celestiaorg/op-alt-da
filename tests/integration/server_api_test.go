@@ -491,9 +491,10 @@ func setupTestServer(t *testing.T) (*db.BlobStore, *celestia.CelestiaStore) {
 		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
 	}
 
-	// Create mock celestia store
+	// Create mock celestia store with test signer address
 	celestiaStore := &celestia.CelestiaStore{
-		Log: log.New(),
+		Log:        log.New(),
+		SignerAddr: make([]byte, 20), // 20-byte test signer address
 	}
 
 	ns, err := libshare.NewNamespaceFromBytes(nsBytes)

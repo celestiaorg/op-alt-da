@@ -41,33 +41,27 @@ read_only = true
 
 [celestia]
 # Celestia namespace (29 bytes hex, version 0 requires 18 leading zeros)
-# SAME namespace as writer (changed last 5 chars: ...c3 -> ...ab)
-namespace = "00000000000000000000000000000000000000655bc8d4c270c556acfe"
-
-# DA Node RPC server URL (for reads: Get, GetAll, Subscribe)
-da_rpc_server = "http://151.115.62.190:26658"
-
-# RPC auth token (from ~/.celestia-*/keys/keyring-test/auth-token)
-auth_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJBbGxvdyI6WyJwdWJsaWMiLCJyZWFkIiwid3JpdGUiLCJhZG1pbiJdLCJOb25jZSI6IlhJakVKNXV4UjJXOG1ERnErbzh5NkdtRHFhTUV3ZDRmejM3RC92MzdMWTg9IiwiRXhwaXJlc0F0IjoiMDAwMS0wMS0wMVQwMDowMDowMFoifQ.Bokj6b5p2AXz-QjcSSG2qAyA3Lrnc5uleczXd106jN8"
-
-# RPC TLS enabled
-tls_enabled = false
-
-# Use compact blob IDs (recommended: true for smaller commitments)
+# SAME namespace as writer
+namespace = "0000000000000000000000000000000000000041ca0e22713b4d1c5912"
+# Use compact blob IDs
 blobid_compact = true
 
-# ==============================================================================
-# CELESTIA TX CLIENT CONFIGURATION (Option B only - Service Provider)
-# ==============================================================================
+bridge_addr = "https://young-weathered-scion.celestia-mocha.quiknode.pro/2ae91d0d78ef0a253990449d0bb7e9f054f024c0/"
+# bridge_auth_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJBbGxvdyI6WyJwdWJsaWMiLCJyZWFkIiwid3JpdGUiLCJhZG1pbiJdLCJOb25jZSI6IlhJakVKNXV4UjJXOG1ERnErbzh5NkdtRHFhTUV3ZDRmejM3RC92MzdMWTg9IiwiRXhwaXJlc0F0IjoiMDAwMS0wMS0wMVQwMDowMDowMFoifQ.Bokj6b5p2AXz-QjcSSG2qAyA3Lrnc5uleczXd106jN8"
+bridge_auth_token = ""
+bridge_tls_enabled = true
 
-[celestia.tx_client]
-# Not using service provider - using local node auth_token instead
-core_grpc_addr = ""
+# CoreGRPC settings (for submitting blobs)
+core_grpc_addr = "consensus-full-mocha-4.celestia-mocha.com:9090"
 core_grpc_auth_token = ""
 core_grpc_tls_enabled = true
+
+# Keyring settings (for signing)
+keyring_path = "~/.celestia-light-mocha-4/keys"
 default_key_name = "my_celes_key"
-keyring_path = ""
 p2p_network = "mocha-4"
+
+# 5b9b bc07 3f02 b4bd
 
 # ==============================================================================
 # BATCH CONFIGURATION
@@ -77,19 +71,19 @@ p2p_network = "mocha-4"
 # Minimum number of blobs before creating a batch
 # With 1MB blobs every 2.5s, we get ~2.4 blobs per 6s Celestia block
 # Setting to 2 allows efficient batching without unnecessary delay
-min_blobs = 2
+min_blobs = 3
 
 # Maximum number of blobs per batch
 # Celestia max blob size ~2MB, so max 2 x 1MB blobs per batch
-max_blobs = 3
+max_blobs = 8
 
 # Target number of blobs to fetch for batching
 # Aim for 2 blobs (2MB total) to fill Celestia efficiently
-target_blobs = 2
+target_blobs = 5
 
 # Maximum batch size in KB
 # Celestia supports ~2MB blobs, set to 1.8MB (1843KB) for safety margin
-max_size_kb = 1843
+max_size_kb = 8343
 
 # Minimum batch size in KB before forcing submission
 # With 1MB execution blocks, wait for at least 1.5MB before submitting
@@ -128,7 +122,12 @@ get_timeout = "30s"
 # This is the Bech32 address from the writer's logs
 # After starting writer, check logs: grep "signer_bech32" writer.log
 # For now using the example address - UPDATE THIS with real writer address!
-trusted_signers = ["celestia15m7s9d0ldd9ur9mgh9m6r4kc396dp68szwqmyc"]
+trusted_signers = [
+    "celestia1gazv7rsqd5tdmr67tg8p0s5ardxv60k4wnyqfw",
+    "celestia1qxdkn22x62d5h8pxaceghylwal7q0r352hndmr",
+    "celestia1yq37dq6sz0yvgxk8gpkfppypyqxptze9thyp48",
+    "celestia1rw6x3v8le8lmxf7ena8gexhm4lyfgj9hy23fuw",
+]
 
 # ==============================================================================
 # BACKFILL CONFIGURATION
@@ -141,7 +140,7 @@ enabled = true
 # Starting Celestia block height for backfill
 # Set to 0 to start from latest (recommended for new deployments)
 # Set to specific height only if you need historical data
-start_height = 8986927
+start_height = 9082750
 
 # Ending Celestia block height for backfill (0 = current chain tip)
 end_height = 0
@@ -180,4 +179,4 @@ timeout = "5s"
 
 [metrics]
 enabled = true
-port = 6061  # Different port from writer if running on same machine
+port = 6061    # Different port from writer if running on same machine

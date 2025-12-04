@@ -41,33 +41,40 @@ read_only = false
 
 [celestia]
 # Celestia namespace (29 bytes hex, version 0 requires 18 leading zeros)
-# Changed last 5 chars for testing: ...c3 -> ...ab
-namespace = "00000000000000000000000000000000000000655bc8d4c270c556acfe"
+namespace = "0000000000000000000000000000000000000041ca0e22713b4d1c5912"
 
-# DA Node RPC server URL (for reads: Get, GetAll, Subscribe)
-da_rpc_server = "http://151.115.62.190:26658"
-
-# RPC auth token (from ~/.celestia-*/keys/keyring-test/auth-token)
-auth_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJBbGxvdyI6WyJwdWJsaWMiLCJyZWFkIiwid3JpdGUiLCJhZG1pbiJdLCJOb25jZSI6IlhJakVKNXV4UjJXOG1ERnErbzh5NkdtRHFhTUV3ZDRmejM3RC92MzdMWTg9IiwiRXhwaXJlc0F0IjoiMDAwMS0wMS0wMVQwMDowMDowMFoifQ.Bokj6b5p2AXz-QjcSSG2qAyA3Lrnc5uleczXd106jN8"
-
-# RPC TLS enabled
-tls_enabled = false
-
-# Use compact blob IDs (recommended: true for smaller commitments)
+# Use compact blob IDs
 blobid_compact = true
 
-# ==============================================================================
-# CELESTIA TX CLIENT CONFIGURATION (Option B only - Service Provider)
-# ==============================================================================
+# Bridge node settings (for reading blobs)
+bridge_addr = "https://young-weathered-scion.celestia-mocha.quiknode.pro/2ae91d0d78ef0a253990449d0bb7e9f054f024c0/"
+# bridge_auth_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJBbGxvdyI6WyJwdWJsaWMiLCJyZWFkIiwid3JpdGUiLCJhZG1pbiJdLCJOb25jZSI6IlhJakVKNXV4UjJXOG1ERnErbzh5NkdtRHFhTUV3ZDRmejM3RC92MzdMWTg9IiwiRXhwaXJlc0F0IjoiMDAwMS0wMS0wMVQwMDowMDowMFoifQ.Bokj6b5p2AXz-QjcSSG2qAyA3Lrnc5uleczXd106jN8"
+bridge_auth_token = ""
+bridge_tls_enabled = true
 
-[celestia.tx_client]
-# Not using service provider - using local node auth_token instead
-core_grpc_addr = ""
+
+core_grpc_addr = "celestia-testnet-consensus.itrocket.net:9090"
 core_grpc_auth_token = ""
-core_grpc_tls_enabled = true
+core_grpc_tls_enabled = false
+# core_grpc_addr = "151.115.60.15:9090"
+# core_grpc_auth_token = ""
+# core_grpc_tls_enabled = false
+# CoreGRPC settings (for submitting blobs)
+# core_grpc_addr = "https://young-weathered-scion.celestia-mocha.quiknode.pro:9090"
+# core_grpc_auth_token = "2ae91d0d78ef0a253990449d0bb7e9f054f024c0"
+# core_grpc_tls_enabled = true
+
+# Keyring settings (for signing)
+keyring_path = "~/.celestia-light-mocha-4/keys"
 default_key_name = "my_celes_key"
-keyring_path = ""
 p2p_network = "mocha-4"
+
+# Parallel submission settings
+# 0 = immediate submission (no queue, default)
+# 1 = synchronous submission (queued, single signer)
+# >1 = parallel submission (queued, multiple worker accounts)
+# When >1, run `da-server init` to get worker addresses for trusted_signers
+tx_worker_accounts = 8
 
 # ==============================================================================
 # BATCH CONFIGURATION
@@ -79,19 +86,19 @@ p2p_network = "mocha-4"
 # Minimum number of blobs before creating a batch
 # With 1MB blobs every 2.5s, we get ~2.4 blobs per 6s Celestia block
 # Setting to 2 allows efficient batching without unnecessary delay
-min_blobs = 2
+min_blobs = 3
 
 # Maximum number of blobs per batch
 # Celestia max blob size ~2MB, so max 2 x 1MB blobs per batch
-max_blobs = 3
+max_blobs = 8
 
 # Target number of blobs to fetch for batching
 # Aim for 2 blobs (2MB total) to fill Celestia efficiently
-target_blobs = 2
+target_blobs = 5
 
 # Maximum batch size in KB
 # Celestia supports ~2MB blobs, set to 1.8MB (1843KB) for safety margin
-max_size_kb = 1843
+max_size_kb = 7543
 
 # Minimum batch size in KB before forcing submission
 # With 1MB execution blocks, wait for at least 1.5MB before submitting
@@ -106,13 +113,18 @@ min_size_kb = 500
 [worker]
 # How often submission worker checks for pending blobs
 # Check frequently to catch accumulation of 2-3 blobs quickly
-submit_period = "3s"
+submit_period = "6s"
 
 # Timeout for submitting batch to Celestia
-submit_timeout = "60s"
+submit_timeout = "20s"
 
 # Maximum retries for failed submissions
 max_retries = 10
+
+# Number of parallel Submit() calls to Celestia
+# Should match TxWorkerAccounts on your Celestia node
+# Each call uses a different worker account for signing
+max_parallel_submissions = 8
 
 # Max time a blob waits before forced submission
 # With 1MB blocks every 2.5s, force submission after 8s to avoid stale data
@@ -121,7 +133,7 @@ max_blob_wait_time = "8s"
 
 # How often event listener reconciles unconfirmed batches
 # Faster reconciliation for production (check every 3s)
-reconcile_period = "3s"
+reconcile_period = "10s"
 
 # Age threshold for reconciling unconfirmed batches
 reconcile_age = "12s"
@@ -129,9 +141,18 @@ reconcile_age = "12s"
 # Timeout for Celestia Get operations during reconciliation
 get_timeout = "30s"
 
-# WRITER: No trusted_signers needed (we are the writer)
-trusted_signers = []
+trusted_signers = [
+    "celestia1gazv7rsqd5tdmr67tg8p0s5ardxv60k4wnyqfw",
+    "celestia1qxdkn22x62d5h8pxaceghylwal7q0r352hndmr",
+    "celestia1yq37dq6sz0yvgxk8gpkfppypyqxptze9thyp48",
+    "celestia1rw6x3v8le8lmxf7ena8gexhm4lyfgj9hy23fuw",
+    "celestia1qhfvv7a6tpdv3pphrmenv3r20acrgvqrptx5pw",
+    "celestia19z2k2yxa06a8hf4l9wqt0s4kkyy4fyph84sefs",
+    "celestia1rwjv6gawl7adj6tu8v3hyj2q8zme23y7w6zupk",
+    "celestia1fmmjrkxt6mvl0zkeretz60rhucyffqd7vxqd0n",
+]
 
+# WRITER: No trusted_signers needed (we are the writer)
 # ==============================================================================
 # BACKFILL CONFIGURATION
 # ==============================================================================

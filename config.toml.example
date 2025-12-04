@@ -1,27 +1,25 @@
 # Celestia Alt-DA Server Configuration
 # ==============================================================================
-# IMPORTANT: CHOOSE YOUR DEPLOYMENT MODE
+# ARCHITECTURE
 # ==============================================================================
 #
-# You have TWO options for connecting to Celestia:
+# This server uses a dual-endpoint architecture for Celestia:
 #
-# OPTION B: Service Provider (e.g., Quicknode) - RECOMMENDED
-#   - No local node required
-#   - Uses RPC endpoint for reads (Get, GetAll, Subscribe)
-#   - Uses gRPC endpoint for writes (Submit transactions via client-tx)
-#   - Requires keyring for transaction signing
-#   - Easiest setup for production
+# 1. BRIDGE NODE (JSON-RPC) - for reading blobs
+#    - da_rpc_server: Your bridge/light node endpoint
+#    - auth_token: Authentication for the bridge node
 #
-# OPTION A: Local Celestia Node (Light/Bridge Node)
-#   - Run your own celestia-node locally
-#   - Use RPC endpoint for both reads and writes
-#   - Requires running local infrastructure
+# 2. CORE GRPC - for submitting blobs
+#    - core_grpc_addr: Celestia consensus node gRPC endpoint
+#    - keyring_path: Local keyring for transaction signing
 #
-# Configure ONLY the section for your chosen mode below.
+# This architecture is required because submitting blobs through
+# bridge node RPC is deprecated.
+#
 # ==============================================================================
 
 # ==============================================================================
-# BASIC OP-ALT-DA SERVER CONFIGURATION (Required for both options)
+# BASIC OP-ALT-DA SERVER CONFIGURATION
 # ==============================================================================
 
 # Server listening address
@@ -54,49 +52,73 @@ log_pid = false
 # Generate with: 00000000000000000000000000000000000000$(openssl rand -hex 10)
 namespace = ""
 
-# DA Node RPC server URL (for reads: Get, GetAll, Subscribe)
-# Option A: http://localhost:26658
-# Option B: https://your-endpoint.celestia-mocha.quiknode.pro/your-auth-token
-da_rpc_server = ""
-
-# RPC auth token (Option A only - from ~/.celestia-*/keys/keyring-test/auth-token)
-# Leave empty for Option B
-auth_token = ""
-
-# RPC TLS enabled
-tls_enabled = true
-
 # Use compact blob IDs (recommended: true for smaller commitments)
 blobid_compact = true
 
-# ==============================================================================
-# CELESTIA TX CLIENT CONFIGURATION (Option B only - Service Provider)
-# ==============================================================================
-# Configure this section if using a service provider (Quicknode, etc.)
-# Leave empty if using Option A (local node)
+# -----------------------------------------------------------------------------
+# Bridge Node Settings (for reading blobs via JSON-RPC)
+# -----------------------------------------------------------------------------
 
-[celestia.tx_client]
-# gRPC endpoint for transaction submission
-# Example: your-endpoint.celestia-mocha.quiknode.pro:9090
+# Bridge node JSON-RPC endpoint
+# Example: http://localhost:26658 or https://your-endpoint.celestia-mocha.quiknode.pro/token
+bridge_addr = ""
+
+# Auth token for bridge node (optional, some providers require it)
+# Get from: ~/.celestia-*/keys/keyring-test/auth-token
+bridge_auth_token = ""
+
+# Enable TLS for bridge node connection
+bridge_tls_enabled = false
+
+# -----------------------------------------------------------------------------
+# CoreGRPC Settings (for submitting blobs)
+# -----------------------------------------------------------------------------
+
+# Consensus node gRPC endpoint (required)
+# Example: consensus-full-mocha-4.celestia-mocha.com:9090 or your-provider:9090
 core_grpc_addr = ""
 
-# gRPC auth token (if required by provider)
+# Auth token for gRPC (optional, some providers like QuickNode require it)
 core_grpc_auth_token = ""
 
-# gRPC TLS enabled
+# Enable TLS for gRPC connection
 core_grpc_tls_enabled = true
 
-# Keyring key name
-default_key_name = "my_celes_key"
+# -----------------------------------------------------------------------------
+# Keyring Settings (for signing transactions)
+# -----------------------------------------------------------------------------
 
-# Keyring path (where your keys are stored)
+# Keyring path (required - where your keys are stored)
 # Example: ~/.celestia-light-mocha-4/keys
 # Initialize with: celestia light init --p2p.network mocha-4
 # Create key with: celestia-appd keys add my_key --keyring-backend test --home ~/.celestia-light-mocha-4
 keyring_path = ""
 
-# P2P network: mocha-4, arabica-11, mainnet
+# Key name to use for signing (required)
+default_key_name = "my_celes_key"
+
+# P2P network (required): mocha-4, arabica-11, mainnet
 p2p_network = "mocha-4"
+
+# -----------------------------------------------------------------------------
+# Parallel Submission Settings (Optional)
+# -----------------------------------------------------------------------------
+# Parallel submission is configured on your Celestia node, not here.
+# To enable parallel blob submission:
+#
+# 1. Configure your Celestia node's config.toml:
+#    [State]
+#    TxWorkerAccounts = 8  # Creates 8 parallel submission lanes
+#
+# 2. Initialize your Celestia node: celestia light init
+#
+# 3. Run: da-server init --config config.toml
+#    This lists all signer addresses (primary + workers)
+#
+# 4. Add ALL addresses to your reader's trusted_signers
+#
+# This field documents expected worker accounts (for init command)
+tx_worker_accounts = 0
 
 # ==============================================================================
 # BATCH CONFIGURATION

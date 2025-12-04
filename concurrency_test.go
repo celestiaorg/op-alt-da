@@ -691,13 +691,14 @@ func TestConcurrentDuplicateInserts(t *testing.T) {
 
 	t.Logf("Duplicate inserts: %d success, %d errors", successCount, errorCount)
 
-	// Exactly one should succeed (UNIQUE constraint on commitment)
-	if successCount != 1 {
-		t.Errorf("Expected 1 successful insert, got %d", successCount)
+	// All should succeed due to idempotent handling of duplicate commitments
+	// InsertBlob now returns success (with existing blob ID) for duplicates
+	if successCount != 10 {
+		t.Errorf("Expected 10 successful inserts (idempotent), got %d", successCount)
 	}
 
-	if errorCount != 9 {
-		t.Logf("Expected 9 errors (duplicate key), got %d", errorCount)
+	if errorCount != 0 {
+		t.Errorf("Expected 0 errors (idempotent duplicates), got %d", errorCount)
 	}
 }
 
