@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -33,7 +34,7 @@ type Blob struct {
 	Size           int
 	Status         string
 	BatchID        *int64
-	BatchIndex     *int  // Position within batch (0-based)
+	BatchIndex     *int // Position within batch (0-based)
 	CelestiaHeight *uint64
 	RetryCount     int
 	CreatedAt      time.Time
@@ -42,17 +43,17 @@ type Blob struct {
 }
 
 type Batch struct {
-	BatchID          int64
-	BatchCommitment  []byte
-	BatchData        []byte
-	BatchSize        int
-	BlobCount        int
-	Status           string
-	CelestiaHeight   *uint64
-	CelestiaTxHash   *string
-	CreatedAt        time.Time
-	SubmittedAt      time.Time
-	ConfirmedAt      *time.Time
+	BatchID         int64
+	BatchCommitment []byte
+	BatchData       []byte
+	BatchSize       int
+	BlobCount       int
+	Status          string
+	CelestiaHeight  *uint64
+	CelestiaTxHash  *string
+	CreatedAt       time.Time
+	SubmittedAt     time.Time
+	ConfirmedAt     *time.Time
 }
 
 // NewBlobStore creates a new blob store with SQLite backend
@@ -118,7 +119,10 @@ func (s *BlobStore) GetDB() *sql.DB {
 	return s.db
 }
 
-// InsertBlob inserts a new blob into the database
+// InsertBlob inserts a new blob into the database.
+// Handles race conditions gracefully - if a blob with the same commitment
+// already exists (due to concurrent requests), returns the existing blob's ID
+// instead of an error. This ensures idempotent behavior at the database level.
 func (s *BlobStore) InsertBlob(ctx context.Context, blob *Blob) (int64, error) {
 	result, err := s.db.ExecContext(ctx, `
 		INSERT INTO blobs (
@@ -127,10 +131,33 @@ func (s *BlobStore) InsertBlob(ctx context.Context, blob *Blob) (int64, error) {
 	`, blob.Commitment, blob.Namespace, blob.Data, len(blob.Data))
 
 	if err != nil {
+		// Check for UNIQUE constraint violation (SQLite error code 19 / SQLITE_CONSTRAINT)
+		// This happens in race conditions where two concurrent requests insert the same blob
+		if isUniqueConstraintError(err) {
+			// Blob already exists - fetch and return existing ID (idempotent success)
+			var existingID int64
+			lookupErr := s.db.QueryRowContext(ctx, `
+				SELECT id FROM blobs WHERE commitment = ?
+			`, blob.Commitment).Scan(&existingID)
+			if lookupErr != nil {
+				return 0, fmt.Errorf("insert blob: %w (also failed to lookup existing: %v)", err, lookupErr)
+			}
+			return existingID, nil
+		}
 		return 0, fmt.Errorf("insert blob: %w", err)
 	}
 
 	return result.LastInsertId()
+}
+
+// isUniqueConstraintError checks if the error is a SQLite UNIQUE constraint violation
+func isUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// SQLite returns "UNIQUE constraint failed" in the error message
+	errStr := err.Error()
+	return strings.Contains(errStr, "UNIQUE constraint failed")
 }
 
 // GetBlobByCommitment retrieves a blob by its commitment
@@ -267,6 +294,19 @@ func (s *BlobStore) UpdateBatchHeight(ctx context.Context, batchID int64, height
 	return err
 }
 
+// UpdateBatchCommitment updates the batch commitment with the actual on-chain commitment.
+// This is needed because TxWorkerAccounts may cause the Celestia node to use a different
+// signer, which changes the commitment.
+func (s *BlobStore) UpdateBatchCommitment(ctx context.Context, batchID int64, newCommitment []byte) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE batches
+		SET batch_commitment = ?
+		WHERE batch_id = ?
+	`, newCommitment, batchID)
+
+	return err
+}
+
 // MarkBatchConfirmed marks a batch and all its blobs as confirmed
 func (s *BlobStore) MarkBatchConfirmed(ctx context.Context, batchCommitment []byte, height uint64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -318,10 +358,73 @@ func (s *BlobStore) MarkBatchConfirmed(ctx context.Context, batchCommitment []by
 	return tx.Commit()
 }
 
+// MarkBatchConfirmedByID marks a batch and all its blobs as confirmed using batch ID
+func (s *BlobStore) MarkBatchConfirmedByID(ctx context.Context, batchID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Get batch info first to get the height
+	var height sql.NullInt64
+	err = tx.QueryRowContext(ctx, `
+		SELECT celestia_height FROM batches WHERE batch_id = ?
+	`, batchID).Scan(&height)
+	if err == sql.ErrNoRows {
+		return ErrBatchNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("get batch height: %w", err)
+	}
+
+	// Update batch
+	result, err := tx.ExecContext(ctx, `
+		UPDATE batches
+		SET status = 'confirmed',
+		    confirmed_at = CURRENT_TIMESTAMP
+		WHERE batch_id = ?
+		  AND status = 'submitted'
+	`, batchID)
+	if err != nil {
+		return fmt.Errorf("update batch: %w", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return ErrBatchNotFound
+	}
+
+	// Update all blobs in batch
+	if height.Valid {
+		_, err = tx.ExecContext(ctx, `
+			UPDATE blobs
+			SET status = 'confirmed',
+			    confirmed_at = CURRENT_TIMESTAMP,
+			    celestia_height = ?
+			WHERE batch_id = ?
+			  AND status = 'batched'
+		`, height.Int64, batchID)
+	} else {
+		_, err = tx.ExecContext(ctx, `
+			UPDATE blobs
+			SET status = 'confirmed',
+			    confirmed_at = CURRENT_TIMESTAMP
+			WHERE batch_id = ?
+			  AND status = 'batched'
+		`, batchID)
+	}
+	if err != nil {
+		return fmt.Errorf("update blobs: %w", err)
+	}
+
+	return tx.Commit()
+}
+
 // GetUnconfirmedBatches retrieves batches that are submitted but not confirmed
 func (s *BlobStore) GetUnconfirmedBatches(ctx context.Context, olderThan time.Duration) ([]*Batch, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT batch_id, batch_commitment, celestia_height, submitted_at
+		SELECT batch_id, batch_commitment, batch_data, celestia_height, submitted_at
 		FROM batches
 		WHERE status = 'submitted'
 		  AND submitted_at < datetime('now', ?)
@@ -336,7 +439,7 @@ func (s *BlobStore) GetUnconfirmedBatches(ctx context.Context, olderThan time.Du
 	for rows.Next() {
 		var batch Batch
 		var celestiaHeight sql.NullInt64
-		if err := rows.Scan(&batch.BatchID, &batch.BatchCommitment,
+		if err := rows.Scan(&batch.BatchID, &batch.BatchCommitment, &batch.BatchData,
 			&celestiaHeight, &batch.SubmittedAt); err != nil {
 			return nil, fmt.Errorf("scan batch: %w", err)
 		}
