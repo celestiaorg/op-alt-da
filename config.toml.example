@@ -177,6 +177,10 @@ retry_backoff = "1s"
 # Should match TxWorkerAccounts on your Celestia node
 max_parallel_submissions = 1
 
+# Transaction priority for blob submissions: 1=low, 2=medium, 3=high
+# Higher priority = higher gas price = faster inclusion during congestion
+tx_priority = 2
+
 # How often event listener reconciles unconfirmed batches
 # Recommended: 6s (check every Celestia block for confirmations)
 reconcile_period = "6s"

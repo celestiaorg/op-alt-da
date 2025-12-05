@@ -78,6 +78,7 @@ type WorkerConfig struct {
 	MaxRetries             int      `toml:"max_retries"`
 	RetryBackoff           string   `toml:"retry_backoff"`
 	MaxParallelSubmissions int      `toml:"max_parallel_submissions"`
+	TxPriority             int      `toml:"tx_priority"` // Transaction priority: 1=low, 2=medium, 3=high
 	ReconcilePeriod        string   `toml:"reconcile_period"`
 	ReconcileAge           string   `toml:"reconcile_age"`
 	GetTimeout             string   `toml:"get_timeout"`

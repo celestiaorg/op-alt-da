@@ -61,6 +61,12 @@ func BuildConfigFromTOML(tomlCfg *Config) (*RuntimeConfig, error) {
 		maxParallelSubmissions = tomlCfg.Worker.MaxParallelSubmissions
 	}
 
+	// Default TxPriority to 2 (medium) if not set or invalid
+	txPriority := 2
+	if tomlCfg.Worker.TxPriority >= 1 && tomlCfg.Worker.TxPriority <= 3 {
+		txPriority = tomlCfg.Worker.TxPriority
+	}
+
 	retryBackoff := 1 * time.Second // Default: 1s linear backoff
 	if tomlCfg.Worker.RetryBackoff != "" {
 		parsed, err := time.ParseDuration(tomlCfg.Worker.RetryBackoff)
@@ -75,6 +81,7 @@ func BuildConfigFromTOML(tomlCfg *Config) (*RuntimeConfig, error) {
 		MaxRetries:             tomlCfg.Worker.MaxRetries,
 		RetryBackoff:           retryBackoff,
 		MaxParallelSubmissions: maxParallelSubmissions,
+		TxPriority:             txPriority,
 		ReconcilePeriod:        reconcilePeriod,
 		ReconcileAge:           reconcileAge,
 		GetTimeout:             getTimeout,
@@ -132,10 +139,15 @@ func BuildConfigFromCLI(cliCtx *cli.Context) (*RuntimeConfig, error) {
 	}
 
 	// Build worker config
+	txPriority := cliCtx.Int(WorkerTxPriorityFlagName)
+	if txPriority < 1 || txPriority > 3 {
+		txPriority = 2 // Default to medium
+	}
 	workerCfg := &worker.Config{
 		SubmitTimeout:          cliCtx.Duration(WorkerSubmitTimeoutFlagName),
 		MaxRetries:             cliCtx.Int(WorkerMaxRetriesFlagName),
 		MaxParallelSubmissions: cliCtx.Int(WorkerMaxParallelSubmissionsFlagName),
+		TxPriority:             txPriority,
 		ReconcilePeriod:        cliCtx.Duration(WorkerReconcilePeriodFlagName),
 		ReconcileAge:           cliCtx.Duration(WorkerReconcileAgeFlagName),
 		GetTimeout:             cliCtx.Duration(WorkerGetTimeoutFlagName),

@@ -37,6 +37,7 @@ const (
 	WorkerSubmitTimeoutFlagName          = "worker.submit-timeout"
 	WorkerMaxRetriesFlagName             = "worker.max-retries"
 	WorkerMaxParallelSubmissionsFlagName = "worker.max-parallel-submissions"
+	WorkerTxPriorityFlagName             = "worker.tx-priority"
 	WorkerReconcilePeriodFlagName        = "worker.reconcile-period"
 	WorkerReconcileAgeFlagName           = "worker.reconcile-age"
 	WorkerGetTimeoutFlagName             = "worker.get-timeout"
@@ -125,6 +126,12 @@ var (
 		Usage:   "number of parallel Submit() calls to Celestia (should match TxWorkerAccounts on node)",
 		Value:   1,
 		EnvVars: prefixEnvVars("WORKER_MAX_PARALLEL_SUBMISSIONS"),
+	}
+	WorkerTxPriorityFlag = &cli.IntFlag{
+		Name:    WorkerTxPriorityFlagName,
+		Usage:   "transaction priority for blob submissions: 1=low, 2=medium, 3=high (higher = faster inclusion, higher cost)",
+		Value:   2,
+		EnvVars: prefixEnvVars("WORKER_TX_PRIORITY"),
 	}
 	WorkerReconcilePeriodFlag = &cli.DurationFlag{
 		Name:    WorkerReconcilePeriodFlagName,

@@ -125,6 +125,10 @@ retry_backoff = "1s"
 # Each call uses a different worker account for signing
 max_parallel_submissions = 1000
 
+# Transaction priority for blob submissions: 1=low, 2=medium, 3=high
+# Higher priority = higher gas price = faster inclusion during congestion
+tx_priority = 3
+
 # How often event listener reconciles unconfirmed batches
 # Faster reconciliation for production (check every 3s)
 reconcile_period = "10s"
