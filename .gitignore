@@ -1,1 +1,8 @@
 bin/
+.env
+tests/sanity/sanity.test
+config.toml
+data/
+test-data/
+tests/manual/*.db*
+daserver
