@@ -59,6 +59,73 @@ type CelestiaServer struct {
 	celestiaMetrics *metrics.CelestiaMetrics
 
 	firstRequestTimes sync.Map
+
+	// GET stats aggregator for batched logging
+	getStats *getStatsAggregator
+}
+
+// getStatsAggregator collects GET request stats for periodic logging
+type getStatsAggregator struct {
+	mu              sync.Mutex
+	requestCount    int64
+	totalBytes      int64
+	totalLatencyMs  int64
+	heightCounts    map[uint64]int64 // count per height
+	lastLogTime     time.Time
+	logInterval     time.Duration
+}
+
+func newGetStatsAggregator(logInterval time.Duration) *getStatsAggregator {
+	return &getStatsAggregator{
+		heightCounts: make(map[uint64]int64),
+		lastLogTime:  time.Now(),
+		logInterval:  logInterval,
+	}
+}
+
+func (g *getStatsAggregator) record(height uint64, sizeBytes int, latencyMs int64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	g.requestCount++
+	g.totalBytes += int64(sizeBytes)
+	g.totalLatencyMs += latencyMs
+	g.heightCounts[height]++
+}
+
+// flush returns stats and resets if interval elapsed, returns nil otherwise
+func (g *getStatsAggregator) flush() *getStatsSummary {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if time.Since(g.lastLogTime) < g.logInterval || g.requestCount == 0 {
+		return nil
+	}
+
+	summary := &getStatsSummary{
+		requestCount:   g.requestCount,
+		totalBytes:     g.totalBytes,
+		avgLatencyMs:   g.totalLatencyMs / g.requestCount,
+		uniqueHeights:  len(g.heightCounts),
+		heightCounts:   g.heightCounts,
+	}
+
+	// Reset
+	g.requestCount = 0
+	g.totalBytes = 0
+	g.totalLatencyMs = 0
+	g.heightCounts = make(map[uint64]int64)
+	g.lastLogTime = time.Now()
+
+	return summary
+}
+
+type getStatsSummary struct {
+	requestCount   int64
+	totalBytes     int64
+	avgLatencyMs   int64
+	uniqueHeights  int
+	heightCounts   map[uint64]int64
 }
 
 func NewCelestiaServer(
@@ -96,6 +163,7 @@ func NewCelestiaServer(
 		metricsPort:     metricsPort,
 		metricsRegistry: metricsRegistry,
 		celestiaMetrics: celestiaMetrics,
+		getStats:        newGetStatsAggregator(10 * time.Second), // Log GET stats every 10s
 		httpServer: &http.Server{
 			Addr:         endpoint,
 			ReadTimeout:  30 * time.Second,
@@ -108,6 +176,7 @@ func NewCelestiaServer(
 	server.submissionWorker = worker.NewSubmissionWorker(
 		store,
 		celestiaStore.Client,
+		celestiaStore.Header, // For checking if blob landed after timeout
 		celestiaStore.Namespace,
 		celestiaStore.SignerAddr, // Real signer address from keyring/RPC
 		batchCfg,
@@ -479,8 +548,9 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if batch.Status != "confirmed" || batch.CelestiaHeight == nil {
-			s.log.Warn("Batch not yet confirmed on DA layer",
+		// Allow both 'confirmed' and 'verified' statuses
+		if (batch.Status != "confirmed" && batch.Status != "verified") || batch.CelestiaHeight == nil {
+			s.log.Warn("Batch not yet available on DA layer",
 				"batch_id", batch.BatchID,
 				"status", batch.Status,
 				"has_height", batch.CelestiaHeight != nil)
@@ -488,13 +558,10 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Batch is confirmed - return the packed batch data (what's actually on Celestia)
-		s.log.Info("✅ GET batch success",
-			"commitment", logCommitment,
-			"celestia_height", *batch.CelestiaHeight,
-			"size_bytes", batch.BatchSize,
-			"blob_count", batch.BlobCount,
-			"latency_ms", time.Since(startTime).Milliseconds())
+		// Batch is available - return the packed batch data (what's on Celestia)
+		latencyMs := time.Since(startTime).Milliseconds()
+		s.getStats.record(*batch.CelestiaHeight, batch.BatchSize, latencyMs)
+		s.logGetStatsIfReady()
 
 		rw.WriteHeader(http.StatusOK)
 		rw.Write(batch.BatchData)
@@ -506,13 +573,11 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only return blob if it's confirmed on DA layer
-	if blob.Status != "confirmed" || blob.CelestiaHeight == nil {
-		// Only warn if blob is stuck in unexpected state (not pending or batched)
-		// pending_submission = waiting to be batched
-		// batched = currently being submitted to Celestia (normal intermediate state)
+	// Only return blob if it's confirmed or verified on DA layer
+	if (blob.Status != "confirmed" && blob.Status != "verified") || blob.CelestiaHeight == nil {
+		// Only warn if blob is stuck in unexpected state
 		if blob.Status != "pending_submission" && blob.Status != "batched" {
-			s.log.Warn("Blob in unexpected state",
+			s.log.Warn("Blob not yet available",
 				"blob_id", blob.ID,
 				"status", blob.Status,
 				"has_height", blob.CelestiaHeight != nil)
@@ -537,11 +602,9 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	s.log.Info("✅ GET blob success",
-		"commitment", logCommitment,
-		"celestia_height", *blob.CelestiaHeight,
-		"size_bytes", len(blobData),
-		"latency_ms", time.Since(startTime).Milliseconds())
+	latencyMs := time.Since(startTime).Milliseconds()
+	s.getStats.record(*blob.CelestiaHeight, len(blobData), latencyMs)
+	s.logGetStatsIfReady()
 
 	// Return blob data
 	rw.WriteHeader(http.StatusOK)
@@ -568,4 +631,54 @@ func (s *CelestiaServer) HandleStats(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("Failed to encode stats", "error", err)
 		// Status already sent, can't send error response
 	}
+}
+
+// logGetStatsIfReady logs aggregated GET stats if the log interval has elapsed
+func (s *CelestiaServer) logGetStatsIfReady() {
+	summary := s.getStats.flush()
+	if summary == nil {
+		return
+	}
+
+	// Format heights for logging
+	heightsStr := formatHeightCounts(summary.heightCounts)
+
+	s.log.Info("GET requests served",
+		"requests", summary.requestCount,
+		"total_bytes", summary.totalBytes,
+		"avg_latency_ms", summary.avgLatencyMs,
+		"heights", heightsStr)
+}
+
+// formatHeightCounts formats height counts for logging
+func formatHeightCounts(heightCounts map[uint64]int64) string {
+	if len(heightCounts) == 0 {
+		return "none"
+	}
+
+	// If only one height, just return it
+	if len(heightCounts) == 1 {
+		for h, c := range heightCounts {
+			return fmt.Sprintf("%d (%d reqs)", h, c)
+		}
+	}
+
+	// Multiple heights - find min/max and total
+	var minH, maxH uint64
+	first := true
+	for h := range heightCounts {
+		if first {
+			minH, maxH = h, h
+			first = false
+		} else {
+			if h < minH {
+				minH = h
+			}
+			if h > maxH {
+				maxH = h
+			}
+		}
+	}
+
+	return fmt.Sprintf("%d-%d (%d unique)", minH, maxH, len(heightCounts))
 }
