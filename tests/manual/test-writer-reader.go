@@ -424,50 +424,49 @@ func (r *Reader) Run(ctx context.Context) {
 	ticker := time.NewTicker(r.config.PollInterval)
 	defer ticker.Stop()
 
-	lastConfirmedIndex := -1
-
 	for {
 		select {
 		case <-ctx.Done():
 			fmt.Println("[READER] Shutting down")
 			return
 		case <-ticker.C:
-			lastConfirmedIndex = r.checkBlobs(ctx, lastConfirmedIndex)
+			r.checkAllUnconfirmedBlobs(ctx)
 		}
 	}
 }
 
-func (r *Reader) checkBlobs(ctx context.Context, lastConfirmedIndex int) int {
+// checkAllUnconfirmedBlobs polls ALL unconfirmed blobs every round.
+// This ensures we never give up on a blob - it will keep being polled until
+// the test ends, regardless of how long it's been waiting.
+func (r *Reader) checkAllUnconfirmedBlobs(ctx context.Context) {
 	blobs := r.store.Snapshot()
 	totalBlobs := len(blobs)
 
 	if totalBlobs == 0 {
-		return lastConfirmedIndex
+		return
 	}
-
-	startIdx := lastConfirmedIndex + 1
-	if startIdx >= totalBlobs {
-		return lastConfirmedIndex
-	}
-
-	// Check all unconfirmed blobs (not just 10)
-	endIdx := totalBlobs
 
 	confirmedThisRound := 0
-	notFoundThisRound := 0
+	pendingCount := 0
+	totalConfirmed := 0
 
-	for i := startIdx; i < endIdx; i++ {
+	// Always check ALL blobs - never skip any
+	for i := 0; i < totalBlobs; i++ {
 		select {
 		case <-ctx.Done():
-			return lastConfirmedIndex
+			return
 		default:
 		}
 
 		blob := blobs[i]
+
+		// Skip already confirmed blobs
 		if blob.Confirmed {
-			lastConfirmedIndex = i
+			totalConfirmed++
 			continue
 		}
+
+		pendingCount++
 
 		// Increment poll attempts
 		r.pollMu.Lock()
@@ -488,37 +487,43 @@ func (r *Reader) checkBlobs(ctx context.Context, lastConfirmedIndex int) int {
 			r.stats.RecordGet(GetSuccess)
 			r.stats.RecordConfirmation(totalTime, daConfirmTime, attempts)
 
-			fmt.Printf("[READER] ✅ Blob #%d: %s (polls: %d, total: %v, DA: %v)\n",
-				blob.BlobNum, msg, attempts,
-				totalTime.Round(time.Millisecond),
-				daConfirmTime.Round(time.Millisecond))
+			waitTime := confirmedTime.Sub(blob.PutStartTime)
+			wasStuck := waitTime > 60*time.Second
+
+			if wasStuck {
+				fmt.Printf("[READER] 🎉 Blob #%d RECOVERED after %v: %s (polls: %d)\n",
+					blob.BlobNum, waitTime.Round(time.Second), msg, attempts)
+			} else {
+				fmt.Printf("[READER] ✅ Blob #%d: %s (polls: %d, total: %v, DA: %v)\n",
+					blob.BlobNum, msg, attempts,
+					totalTime.Round(time.Millisecond),
+					daConfirmTime.Round(time.Millisecond))
+			}
 
 			confirmedThisRound++
-			lastConfirmedIndex = i
+			totalConfirmed++
+			pendingCount-- // We just confirmed it
 
 		case GetNotFound:
 			r.stats.RecordGet(GetNotFound)
-			notFoundThisRound++
-			// Don't log every 404 - too noisy
+			// Still pending - will retry next round
 
 		case GetDataMismatch:
 			fmt.Printf("[READER] ⚠️  Blob #%d: %s\n", blob.BlobNum, msg)
 			r.stats.RecordGet(GetDataMismatch)
-			return lastConfirmedIndex
+			// Continue checking others - don't give up
 
 		case GetFailed:
 			fmt.Printf("[READER] ❌ Blob #%d: %s\n", blob.BlobNum, msg)
 			r.stats.RecordGet(GetFailed)
-			// Continue checking others
+			// Continue checking others - will retry next round
 		}
 	}
 
-	if confirmedThisRound > 0 || notFoundThisRound > 0 {
-		fmt.Printf("[READER] Round: ✅ %d confirmed, ⏳ %d pending (total confirmed: %d/%d)\n",
-			confirmedThisRound, notFoundThisRound, lastConfirmedIndex+1, totalBlobs)
+	if confirmedThisRound > 0 || pendingCount > 0 {
+		fmt.Printf("[READER] Round: ✅ %d confirmed, ⏳ %d pending (total: %d/%d)\n",
+			confirmedThisRound, pendingCount, totalConfirmed, totalBlobs)
 	}
-
-	return lastConfirmedIndex
 }
 
 func (r *Reader) verifyBlob(ctx context.Context, blob BlobRecord) (GetStatus, string) {
@@ -667,38 +672,55 @@ func (t *Test) printBlobDetails() {
 	fmt.Println("\n────────────────────────────────────────────────────────────────")
 	fmt.Println("                    PER-BLOB TIMING DETAILS")
 	fmt.Println("────────────────────────────────────────────────────────────────")
-	fmt.Printf("%-6s %-12s %-12s %-12s %-6s %-8s\n",
+	fmt.Printf("%-6s %-12s %-12s %-12s %-6s %-10s\n",
 		"Blob#", "PUT Latency", "DA Confirm", "Total Time", "Polls", "Status")
 	fmt.Println("────────────────────────────────────────────────────────────────")
 
 	confirmed := 0
 	pending := 0
+	longWait := 0 // Blobs waiting >60s
 	var stuckBlobs []int
 	var stuckCommitments []string
 
-	for _, b := range blobs {
+	for i, b := range blobs {
 		if b.Confirmed {
 			confirmed++
-			fmt.Printf("%-6d %-12v %-12v %-12v %-6d %-8s\n",
+			// Show if this blob took a long time (was "stuck" but recovered)
+			wasLongWait := b.TotalTime > 60*time.Second
+			status := "✅"
+			if wasLongWait {
+				status = "✅ (slow)"
+			}
+			fmt.Printf("%-6d %-12v %-12v %-12v %-6d %-10s\n",
 				b.BlobNum,
 				b.PutLatency.Round(time.Millisecond),
 				b.DAConfirmTime.Round(time.Millisecond),
 				b.TotalTime.Round(time.Millisecond),
 				b.PollAttempts,
-				"✅")
+				status)
 		} else {
 			pending++
 			waitTime := time.Since(b.PutStartTime)
-			// Mark as STUCK if waiting longer than 60 seconds
-			status := "⏳"
+
+			// Get poll attempts from store
+			pollAttempts := b.PollAttempts
+			if pollAttempts == 0 {
+				// Estimate from index if not set
+				pollAttempts = i + 1
+			}
+
+			// Status based on wait time
+			status := "⏳ polling"
 			if waitTime > 60*time.Second {
-				status = "🔴 STUCK"
+				longWait++
+				status = "⏳ long wait"
 				stuckBlobs = append(stuckBlobs, b.BlobNum)
 				if len(b.Commitment) >= 8 {
 					stuckCommitments = append(stuckCommitments, hex.EncodeToString(b.Commitment[:8]))
 				}
 			}
-			fmt.Printf("%-6d %-12v %-12s %-12v %-6s %-8s\n",
+
+			fmt.Printf("%-6d %-12v %-12s %-12v %-6s %-10s\n",
 				b.BlobNum,
 				b.PutLatency.Round(time.Millisecond),
 				"...",
@@ -709,10 +731,16 @@ func (t *Test) printBlobDetails() {
 	}
 
 	fmt.Println("────────────────────────────────────────────────────────────────")
-	fmt.Printf("Summary: %d confirmed, %d pending\n", confirmed, pending)
+	fmt.Printf("Summary: %d confirmed, %d pending", confirmed, pending)
+	if longWait > 0 {
+		fmt.Printf(" (%d waiting >60s)", longWait)
+	}
+	fmt.Println()
 
-	// Detect and report gaps (stuck blobs surrounded by confirmed ones)
-	t.reportGaps(blobs, stuckBlobs, stuckCommitments)
+	// Report potential issues if there are blobs waiting a long time
+	if len(stuckBlobs) > 0 {
+		t.reportGaps(blobs, stuckBlobs, stuckCommitments)
+	}
 }
 
 // reportGaps identifies blobs that are stuck while later blobs got confirmed (indicates a system issue)

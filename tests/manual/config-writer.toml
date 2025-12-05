@@ -74,7 +74,7 @@ p2p_network = "mocha-4"
 # 1 = synchronous submission (queued, single signer)
 # >1 = parallel submission (queued, multiple worker accounts)
 # When >1, run `da-server init` to get worker addresses for trusted_signers
-tx_worker_accounts = 0
+tx_worker_accounts = 8
 
 # ==============================================================================
 # BATCH CONFIGURATION
@@ -98,7 +98,7 @@ target_blobs = 7
 
 # Maximum batch size in KB
 # Celestia supports ~2MB blobs, set to 1.8MB (1843KB) for safety margin
-max_size_kb = 6943
+max_size_kb = 7943
 
 # Minimum batch size in KB before forcing submission
 # With 1MB execution blocks, wait for at least 1.5MB before submitting
@@ -112,7 +112,7 @@ min_size_kb = 500
 
 [worker]
 # Timeout for submitting batch to Celestia
-submit_timeout = "120s"
+submit_timeout = "30s"
 
 # Maximum retries for failed submissions
 max_retries = 3
@@ -135,7 +135,16 @@ reconcile_age = "20s"
 # Timeout for Celestia Get operations during reconciliation
 get_timeout = "10s"
 
-trusted_signers = ["celestia1gazv7rsqd5tdmr67tg8p0s5ardxv60k4wnyqfw"]
+trusted_signers = [
+    "celestia1gazv7rsqd5tdmr67tg8p0s5ardxv60k4wnyqfw",
+    "celestia1qxdkn22x62d5h8pxaceghylwal7q0r352hndmr",
+    "celestia1yq37dq6sz0yvgxk8gpkfppypyqxptze9thyp48",
+    "celestia1rw6x3v8le8lmxf7ena8gexhm4lyfgj9hy23fuw",
+    "celestia1qhfvv7a6tpdv3pphrmenv3r20acrgvqrptx5pw",
+    "celestia19z2k2yxa06a8hf4l9wqt0s4kkyy4fyph84sefs",
+    "celestia1rwjv6gawl7adj6tu8v3hyj2q8zme23y7w6zupk",
+    "celestia1fmmjrkxt6mvl0zkeretz60rhucyffqd7vxqd0n",
+]
 
 # WRITER: No trusted_signers needed (we are the writer)
 # ==============================================================================

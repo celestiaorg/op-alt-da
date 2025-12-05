@@ -189,7 +189,7 @@ func TestSubmissionWorker_SubmitPendingBlobs(t *testing.T) {
 	batchCfg := batch.DefaultConfig()
 	workerCfg := DefaultConfig()
 	signerAddr := make([]byte, 20) // Test signer
-	worker := NewSubmissionWorker(store, mock, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
+	worker := NewSubmissionWorker(store, mock, nil, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
 
 	// Submit pending blobs
 	_, err := worker.submitPendingBlobs(ctx)
@@ -239,7 +239,7 @@ func TestSubmissionWorker_NoBlobs(t *testing.T) {
 	batchCfg := batch.DefaultConfig()
 	workerCfg := DefaultConfig()
 	signerAddr := make([]byte, 20) // Test signer
-	worker := NewSubmissionWorker(store, mock, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
+	worker := NewSubmissionWorker(store, mock, nil, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
 
 	// Submit pending blobs (there are none)
 	_, err := worker.submitPendingBlobs(ctx)
@@ -290,7 +290,7 @@ func TestSubmissionWorker_FewBlobs(t *testing.T) {
 	batchCfg := batch.DefaultConfig()
 	workerCfg := DefaultConfig()
 	signerAddr := make([]byte, 20) // Test signer
-	worker := NewSubmissionWorker(store, mock, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
+	worker := NewSubmissionWorker(store, mock, nil, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
 
 	// Submit pending blobs
 	_, err := worker.submitPendingBlobs(ctx)
@@ -357,7 +357,7 @@ func TestSubmissionWorker_LargeSize(t *testing.T) {
 	batchCfg := batch.DefaultConfig()
 	workerCfg := DefaultConfig()
 	signerAddr := make([]byte, 20) // Test signer
-	worker := NewSubmissionWorker(store, mock, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
+	worker := NewSubmissionWorker(store, mock, nil, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
 
 	// Submit pending blobs
 	_, err := worker.submitPendingBlobs(ctx)
@@ -409,7 +409,7 @@ func TestSubmissionWorker_OneBatchPerTick(t *testing.T) {
 	batchCfg := batch.DefaultConfig()
 	workerCfg := DefaultConfig()
 	signerAddr := make([]byte, 20)
-	worker := NewSubmissionWorker(store, mock, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
+	worker := NewSubmissionWorker(store, mock, nil, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
 
 	// Submit pending blobs - should submit ONE batch containing all 3 small blobs
 	_, err := worker.submitPendingBlobs(ctx)
@@ -446,7 +446,7 @@ func TestSubmissionWorker_ContextCancellation(t *testing.T) {
 	batchCfg := batch.DefaultConfig()
 	workerCfg := DefaultConfig()
 	signerAddr := make([]byte, 20) // Test signer
-	worker := NewSubmissionWorker(store, mock, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
+	worker := NewSubmissionWorker(store, mock, nil, namespace, signerAddr, batchCfg, workerCfg, nil, logger)
 
 	// Create context with cancel
 	ctx, cancel := context.WithCancel(context.Background())
@@ -472,8 +472,8 @@ func TestSubmissionWorker_ContextCancellation(t *testing.T) {
 	}
 }
 
-// TestEventListener_Reconciliation tests reconciliation of unconfirmed batches
-func TestEventListener_Reconciliation(t *testing.T) {
+// TestEventListener_Verification tests verification of confirmed batches
+func TestEventListener_Verification(t *testing.T) {
 	store, namespace, cleanup := setupWorkerTest(t)
 	defer cleanup()
 
@@ -496,8 +496,18 @@ func TestEventListener_Reconciliation(t *testing.T) {
 		t.Fatalf("CreateBatch failed: %v", err)
 	}
 
-	// Manually set submitted_at to 5 minutes ago
-	store.GetDB().Exec("UPDATE batches SET submitted_at = datetime('now', '-5 minutes'), celestia_height = 12345 WHERE batch_id = ?", batchID)
+	// Set batch as 'confirmed' with height and confirmed_at in the past (for verification)
+	store.GetDB().Exec(`
+		UPDATE batches 
+		SET status = 'confirmed', 
+		    celestia_height = 12345, 
+		    confirmed_at = datetime('now', '-5 minutes') 
+		WHERE batch_id = ?`, batchID)
+	store.GetDB().Exec(`
+		UPDATE blobs 
+		SET status = 'confirmed', 
+		    celestia_height = 12345 
+		WHERE batch_id = ?`, batchID)
 
 	// Create mock that returns blob on Get (we now try Get with each trusted signer's commitment)
 	mock := &mockCelestiaAPI{
@@ -515,20 +525,20 @@ func TestEventListener_Reconciliation(t *testing.T) {
 	workerCfg.TrustedSigners = []string{"celestia1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqzf30as"}
 	listener := NewEventListener(store, mock, namespace, workerCfg, nil, logger)
 
-	// Run reconciliation
-	err = listener.reconcileUnconfirmed(ctx)
+	// Run verification
+	err = listener.verifyConfirmedBatches(ctx)
 	if err != nil {
-		t.Fatalf("reconcileUnconfirmed failed: %v", err)
+		t.Fatalf("verifyConfirmedBatches failed: %v", err)
 	}
 
-	// Verify batch is now confirmed
+	// Verify batch is now verified
 	b, err := store.GetBlobByCommitment(ctx, testBlob.Commitment)
 	if err != nil {
 		t.Fatalf("GetBlobByCommitment failed: %v", err)
 	}
 
-	if b.Status != "confirmed" {
-		t.Errorf("Expected status confirmed after reconciliation, got %s", b.Status)
+	if b.Status != "verified" {
+		t.Errorf("Expected status 'verified' after verification, got %s", b.Status)
 	}
 }
 
