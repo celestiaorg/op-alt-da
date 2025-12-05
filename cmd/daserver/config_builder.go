@@ -17,17 +17,9 @@ import (
 // This bypasses the environment variable conversion layer for cleaner, more idiomatic Go code
 func BuildConfigFromTOML(tomlCfg *Config) (*RuntimeConfig, error) {
 	// Parse durations
-	submitPeriod, err := time.ParseDuration(tomlCfg.Worker.SubmitPeriod)
-	if err != nil {
-		return nil, fmt.Errorf("invalid worker.submit_period: %w", err)
-	}
 	submitTimeout, err := time.ParseDuration(tomlCfg.Worker.SubmitTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("invalid worker.submit_timeout: %w", err)
-	}
-	maxBlobWaitTime, err := time.ParseDuration(tomlCfg.Worker.MaxBlobWaitTime)
-	if err != nil {
-		return nil, fmt.Errorf("invalid worker.max_blob_wait_time: %w", err)
 	}
 	reconcilePeriod, err := time.ParseDuration(tomlCfg.Worker.ReconcilePeriod)
 	if err != nil {
@@ -63,18 +55,6 @@ func BuildConfigFromTOML(tomlCfg *Config) (*RuntimeConfig, error) {
 		return nil, fmt.Errorf("invalid batch configuration: %w", err)
 	}
 
-	// Calculate MaxTxSizeBytes from MaxTxSizeKB (default 1800 KB = 1.8 MB)
-	maxTxSizeBytes := 1843200 // Default: 1800KB
-	if tomlCfg.Worker.MaxTxSizeKB > 0 {
-		maxTxSizeBytes = tomlCfg.Worker.MaxTxSizeKB * 1024
-	}
-
-	// Calculate MaxBlockSizeBytes from MaxBlockSizeKB (default 32768 KB = 32 MB)
-	maxBlockSizeBytes := 33554432 // Default: 32MB
-	if tomlCfg.Worker.MaxBlockSizeKB > 0 {
-		maxBlockSizeBytes = tomlCfg.Worker.MaxBlockSizeKB * 1024
-	}
-
 	// Build worker config
 	maxParallelSubmissions := 1
 	if tomlCfg.Worker.MaxParallelSubmissions > 0 {
@@ -91,12 +71,10 @@ func BuildConfigFromTOML(tomlCfg *Config) (*RuntimeConfig, error) {
 	}
 
 	workerCfg := &worker.Config{
-		SubmitPeriod:           submitPeriod,
 		SubmitTimeout:          submitTimeout,
 		MaxRetries:             tomlCfg.Worker.MaxRetries,
 		RetryBackoff:           retryBackoff,
 		MaxParallelSubmissions: maxParallelSubmissions,
-		MaxBlobWaitTime:        maxBlobWaitTime,
 		ReconcilePeriod:        reconcilePeriod,
 		ReconcileAge:           reconcileAge,
 		GetTimeout:             getTimeout,
@@ -106,8 +84,6 @@ func BuildConfigFromTOML(tomlCfg *Config) (*RuntimeConfig, error) {
 		BackfillTargetHeight:   tomlCfg.Backfill.TargetHeight,
 		BackfillPeriod:         backfillPeriod,
 		BlocksPerScan:          tomlCfg.Backfill.BlocksPerScan,
-		MaxTxSizeBytes:         maxTxSizeBytes,
-		MaxBlockSizeBytes:      maxBlockSizeBytes,
 	}
 
 	if err := validateWorkerConfig(workerCfg); err != nil {
@@ -157,11 +133,9 @@ func BuildConfigFromCLI(cliCtx *cli.Context) (*RuntimeConfig, error) {
 
 	// Build worker config
 	workerCfg := &worker.Config{
-		SubmitPeriod:           cliCtx.Duration(WorkerSubmitPeriodFlagName),
 		SubmitTimeout:          cliCtx.Duration(WorkerSubmitTimeoutFlagName),
 		MaxRetries:             cliCtx.Int(WorkerMaxRetriesFlagName),
 		MaxParallelSubmissions: cliCtx.Int(WorkerMaxParallelSubmissionsFlagName),
-		MaxBlobWaitTime:        cliCtx.Duration(WorkerMaxBlobWaitTimeFlagName),
 		ReconcilePeriod:        cliCtx.Duration(WorkerReconcilePeriodFlagName),
 		ReconcileAge:           cliCtx.Duration(WorkerReconcileAgeFlagName),
 		GetTimeout:             cliCtx.Duration(WorkerGetTimeoutFlagName),

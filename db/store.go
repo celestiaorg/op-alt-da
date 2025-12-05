@@ -199,14 +199,15 @@ func (s *BlobStore) GetBlobByCommitment(ctx context.Context, commitment []byte) 
 	return &blob, nil
 }
 
-// GetPendingBlobs retrieves N pending blobs for batching (FIFO order)
+// GetPendingBlobs retrieves N pending blobs for batching
+// Prioritizes retries (higher retry_count first), then FIFO for same retry count
 func (s *BlobStore) GetPendingBlobs(ctx context.Context, limit int) ([]*Blob, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, commitment, namespace, blob_data, blob_size, retry_count, created_at
 		FROM blobs
 		WHERE status = 'pending_submission'
 		  AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)
-		ORDER BY id ASC
+		ORDER BY retry_count DESC, id ASC
 		LIMIT ?
 	`, limit)
 	if err != nil {
@@ -225,6 +226,73 @@ func (s *BlobStore) GetPendingBlobs(ctx context.Context, limit int) ([]*Blob, er
 	}
 
 	return blobs, rows.Err()
+}
+
+// CreateBatchAndConfirm creates a batch AND marks blobs as confirmed in one atomic operation.
+// Used after successful Celestia submission to avoid DB writes before submission.
+// If batch already exists (duplicate submission), just confirms the blobs.
+func (s *BlobStore) CreateBatchAndConfirm(ctx context.Context, blobIDs []int64, batchCommitment, batchData []byte, height uint64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Try to insert batch - might fail if already exists (duplicate submission)
+	var batchID int64
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO batches (
+			batch_commitment, batch_data, batch_size, blob_count, 
+			celestia_height, status, confirmed_at
+		) VALUES (?, ?, ?, ?, ?, 'confirmed', CURRENT_TIMESTAMP)
+	`, batchCommitment, batchData, len(batchData), len(blobIDs), height)
+
+	if err != nil {
+		// Check if it's a duplicate - batch already exists
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			// Get existing batch ID
+			err = tx.QueryRowContext(ctx, `
+				SELECT batch_id FROM batches WHERE batch_commitment = ?
+			`, batchCommitment).Scan(&batchID)
+			if err != nil {
+				return fmt.Errorf("get existing batch: %w", err)
+			}
+			// Batch already exists - just confirm the blobs below
+		} else {
+			return fmt.Errorf("insert batch: %w", err)
+		}
+	} else {
+		batchID, err = result.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("get batch id: %w", err)
+		}
+	}
+
+	// Update all blobs to confirmed in one query using IN clause
+	if len(blobIDs) > 0 {
+		placeholders := make([]string, len(blobIDs))
+		args := make([]interface{}, len(blobIDs)+2)
+		args[0] = height
+		args[1] = batchID
+		for i, id := range blobIDs {
+			placeholders[i] = "?"
+			args[i+2] = id
+		}
+		query := fmt.Sprintf(`
+			UPDATE blobs
+			SET status = 'confirmed',
+			    celestia_height = ?,
+			    batch_id = ?,
+			    confirmed_at = CURRENT_TIMESTAMP
+			WHERE id IN (%s)
+		`, strings.Join(placeholders, ","))
+		_, err = tx.ExecContext(ctx, query, args...)
+		if err != nil {
+			return fmt.Errorf("update blobs: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // CreateBatch creates a new batch and marks blobs as batched
@@ -283,14 +351,51 @@ func (s *BlobStore) MarkBatchSubmitted(ctx context.Context, batchID int64) error
 	return err
 }
 
-// UpdateBatchHeight updates the Celestia height for a submitted batch
+// UpdateBatchHeight updates the Celestia height for a submitted batch AND marks it confirmed.
+// This is called immediately after successful Celestia submission, providing fast confirmation.
 func (s *BlobStore) UpdateBatchHeight(ctx context.Context, batchID int64, height uint64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Update batch with height AND mark confirmed
+	_, err = tx.ExecContext(ctx, `
+		UPDATE batches
+		SET celestia_height = ?,
+		    status = 'confirmed',
+		    confirmed_at = CURRENT_TIMESTAMP
+		WHERE batch_id = ?
+	`, height, batchID)
+	if err != nil {
+		return fmt.Errorf("update batch: %w", err)
+	}
+
+	// Also mark all blobs in this batch as confirmed
+	_, err = tx.ExecContext(ctx, `
+		UPDATE blobs
+		SET status = 'confirmed',
+		    celestia_height = ?,
+		    confirmed_at = CURRENT_TIMESTAMP
+		WHERE batch_id = ?
+		  AND status = 'batched'
+	`, height, batchID)
+	if err != nil {
+		return fmt.Errorf("update blobs: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// UpdateBatchHeightOnly updates ONLY the Celestia height (no confirmation).
+// Used when verification fails but we want reconciliation to be able to find the batch.
+func (s *BlobStore) UpdateBatchHeightOnly(ctx context.Context, batchID int64, height uint64) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE batches
 		SET celestia_height = ?
 		WHERE batch_id = ?
 	`, height, batchID)
-
 	return err
 }
 
@@ -429,12 +534,13 @@ func (s *BlobStore) RevertBatchToPending(ctx context.Context, batchID int64) err
 	}
 	defer tx.Rollback()
 
-	// Mark blobs back to pending_submission
+	// Mark blobs back to pending_submission and increment retry_count
 	_, err = tx.ExecContext(ctx, `
 		UPDATE blobs
 		SET status = 'pending_submission',
 		    batch_id = NULL,
-		    batch_index = NULL
+		    batch_index = NULL,
+		    retry_count = retry_count + 1
 		WHERE batch_id = ?
 		  AND status = 'batched'
 	`, batchID)

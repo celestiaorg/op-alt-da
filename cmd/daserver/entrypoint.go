@@ -34,11 +34,9 @@ const (
 	BatchMinSizeFlagName     = "batch.min-size-kb"
 
 	// Worker configuration
-	WorkerSubmitPeriodFlagName           = "worker.submit-period"
 	WorkerSubmitTimeoutFlagName          = "worker.submit-timeout"
 	WorkerMaxRetriesFlagName             = "worker.max-retries"
 	WorkerMaxParallelSubmissionsFlagName = "worker.max-parallel-submissions"
-	WorkerMaxBlobWaitTimeFlagName        = "worker.max-blob-wait-time"
 	WorkerReconcilePeriodFlagName        = "worker.reconcile-period"
 	WorkerReconcileAgeFlagName           = "worker.reconcile-age"
 	WorkerGetTimeoutFlagName             = "worker.get-timeout"
@@ -110,12 +108,6 @@ var (
 		Value:   500,
 		EnvVars: prefixEnvVars("BATCH_MIN_SIZE_KB"),
 	}
-	WorkerSubmitPeriodFlag = &cli.DurationFlag{
-		Name:    WorkerSubmitPeriodFlagName,
-		Usage:   "how often submission worker checks for pending blobs",
-		Value:   2 * time.Second,
-		EnvVars: prefixEnvVars("WORKER_SUBMIT_PERIOD"),
-	}
 	WorkerSubmitTimeoutFlag = &cli.DurationFlag{
 		Name:    WorkerSubmitTimeoutFlagName,
 		Usage:   "timeout for submitting batch to Celestia",
@@ -133,12 +125,6 @@ var (
 		Usage:   "number of parallel Submit() calls to Celestia (should match TxWorkerAccounts on node)",
 		Value:   1,
 		EnvVars: prefixEnvVars("WORKER_MAX_PARALLEL_SUBMISSIONS"),
-	}
-	WorkerMaxBlobWaitTimeFlag = &cli.DurationFlag{
-		Name:    WorkerMaxBlobWaitTimeFlagName,
-		Usage:   "max time a blob waits before forced submission (time-based batching)",
-		Value:   30 * time.Second,
-		EnvVars: prefixEnvVars("WORKER_MAX_BLOB_WAIT_TIME"),
 	}
 	WorkerReconcilePeriodFlag = &cli.DurationFlag{
 		Name:    WorkerReconcilePeriodFlagName,
@@ -304,13 +290,13 @@ func StartDAServer(cliCtx *cli.Context) error {
 		"max_size_kb", runtimeCfg.BatchConfig.MaxBatchSizeBytes/1024,
 		"min_size_kb", runtimeCfg.BatchConfig.MinBatchSizeBytes/1024)
 
-	// Log worker configuration
+	// Log worker configuration (continuous mode - no tick period)
 	l.Info("Worker configuration",
+		"mode", "continuous",
 		"trusted_signers", strings.Join(runtimeCfg.WorkerConfig.TrustedSigners, ","),
-		"submit_period", runtimeCfg.WorkerConfig.SubmitPeriod,
 		"submit_timeout", runtimeCfg.WorkerConfig.SubmitTimeout,
 		"max_retries", runtimeCfg.WorkerConfig.MaxRetries,
-		"max_blob_wait_time", runtimeCfg.WorkerConfig.MaxBlobWaitTime,
+		"max_parallel_submissions", runtimeCfg.WorkerConfig.MaxParallelSubmissions,
 		"reconcile_period", runtimeCfg.WorkerConfig.ReconcilePeriod,
 		"reconcile_age", runtimeCfg.WorkerConfig.ReconcileAge,
 		"get_timeout", runtimeCfg.WorkerConfig.GetTimeout)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/celestiaorg/celestia-node/blob"
@@ -17,6 +18,30 @@ import (
 	"github.com/celestiaorg/op-alt-da/db"
 	"github.com/celestiaorg/op-alt-da/metrics"
 )
+
+// retryOnDBLock retries a database operation if it fails with "database is locked"
+func retryOnDBLock(ctx context.Context, maxRetries int, backoff time.Duration, op func() error) error {
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		lastErr = op()
+		if lastErr == nil {
+			return nil
+		}
+		if !strings.Contains(lastErr.Error(), "database is locked") {
+			return lastErr
+		}
+		// Database locked - wait and retry
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff * time.Duration(attempt+1)):
+		}
+	}
+	return lastErr
+}
 
 type EventListener struct {
 	store     *db.BlobStore
@@ -85,12 +110,6 @@ func (l *EventListener) reconcileUnconfirmed(ctx context.Context) error {
 		l.log.Error("Cleanup stuck batches failed", "error", err)
 	}
 
-	// Get total count of all unconfirmed batches (regardless of age)
-	totalUnconfirmed, err := l.store.CountUnconfirmedBatches(ctx)
-	if err != nil {
-		return fmt.Errorf("count unconfirmed batches: %w", err)
-	}
-
 	// Get batches older than configured age that need reconciliation
 	batches, err := l.store.GetUnconfirmedBatches(ctx, l.workerCfg.ReconcileAge)
 	if err != nil {
@@ -98,25 +117,26 @@ func (l *EventListener) reconcileUnconfirmed(ctx context.Context) error {
 	}
 
 	if len(batches) == 0 {
-		if totalUnconfirmed > 0 {
-			l.log.Debug("No batches ready for reconciliation",
-				"total_unconfirmed", totalUnconfirmed,
-				"min_age", l.workerCfg.ReconcileAge)
-		}
 		return nil
 	}
 
-	l.log.Info("Reconciling unconfirmed batches",
-		"ready_for_reconciliation", len(batches),
-		"total_unconfirmed", totalUnconfirmed,
-		"min_age", l.workerCfg.ReconcileAge)
+	// Only log if we have significant work to do
+	if len(batches) >= 5 {
+		l.log.Info("Reconciling old batches", "count", len(batches))
+	}
 
+	confirmed := 0
 	for _, batch := range batches {
 		if err := l.reconcileBatch(ctx, batch); err != nil {
-			l.log.Error("Reconcile batch failed",
-				"batch_id", batch.BatchID,
-				"error", err)
+			l.log.Error("Reconcile failed", "batch_id", batch.BatchID, "error", err)
+		} else {
+			confirmed++
 		}
+	}
+
+	// Only log summary if we confirmed something
+	if confirmed > 0 {
+		l.log.Info("✅ Reconciled", "confirmed", confirmed, "total", len(batches))
 	}
 
 	return nil
@@ -160,7 +180,7 @@ func (l *EventListener) reconcileBatch(ctx context.Context, batch *db.Batch) err
 		return nil
 	}
 
-	l.log.Info("Reconciling batch",
+	l.log.Debug("Reconciling batch",
 		"batch_id", batch.BatchID,
 		"height", *batch.CelestiaHeight,
 		"trusted_signers", len(l.workerCfg.TrustedSigners))
@@ -241,19 +261,16 @@ func (l *EventListener) reconcileBatch(ctx context.Context, batch *db.Batch) err
 		}
 	}
 
-	// Mark as confirmed using the batch ID
-	err := l.store.MarkBatchConfirmedByID(ctx, batch.BatchID)
+	// Mark as confirmed using the batch ID (with retry for DB lock)
+	err := retryOnDBLock(ctx, 5, 100*time.Millisecond, func() error {
+		return l.store.MarkBatchConfirmedByID(ctx, batch.BatchID)
+	})
 	if err != nil {
 		return fmt.Errorf("mark batch confirmed: %w", err)
 	}
 
-	l.log.Info("✅ Batch confirmed via reconciliation",
-		"batch_id", batch.BatchID,
-		"height", *batch.CelestiaHeight,
-		"size", blobSize,
-		"matched_signer", matchedSigner,
-		"duration_ms", duration.Milliseconds(),
-		"onchain_commitment", hex.EncodeToString(onChainCommitment))
+	// Individual confirmations logged at debug level - summary in reconcileUnconfirmed
+	l.log.Debug("Batch reconciled", "batch_id", batch.BatchID, "height", *batch.CelestiaHeight)
 
 	// Record time-to-confirmation metrics for each blob in the batch
 	if l.metrics != nil {

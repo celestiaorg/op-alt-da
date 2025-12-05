@@ -32,10 +32,10 @@ func DefaultConfig() Config {
 	return Config{
 		WriterURL:    "http://localhost:3100",
 		ReaderURL:    "http://localhost:3100",
-		BlobSize:     1300 * 1024, // ~1MB
-		PutInterval:  400 * time.Millisecond,
-		ReaderLag:    5 * time.Second, // Shorter initial lag
-		PollInterval: 2 * time.Second, // Poll frequently for accurate timing
+		BlobSize:     1200 * 1024, // ~1MB
+		PutInterval:  1000 * time.Millisecond,
+		ReaderLag:    30 * time.Second, // Shorter initial lag
+		PollInterval: 2 * time.Second,  // Poll frequently for accurate timing
 		Duration:     100 * time.Second,
 	}
 }

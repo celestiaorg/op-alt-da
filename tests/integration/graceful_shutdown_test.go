@@ -286,14 +286,12 @@ func TestServer_WorkersShutdownCleanly(t *testing.T) {
 
 	// Enable all workers
 	workerCfg := &worker.Config{
-		SubmitPeriod:         1 * time.Second,
 		ReconcilePeriod:      1 * time.Second,
 		BackfillEnabled:      true,
 		BackfillTargetHeight: 10,
 		BackfillPeriod:       1 * time.Second,
 		SubmitTimeout:        5 * time.Second,
 		MaxRetries:           3,
-		MaxBlobWaitTime:      5 * time.Second,
 		ReconcileAge:         10 * time.Second,
 		GetTimeout:           5 * time.Second,
 		StartHeight:          1,

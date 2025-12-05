@@ -74,7 +74,7 @@ p2p_network = "mocha-4"
 # 1 = synchronous submission (queued, single signer)
 # >1 = parallel submission (queued, multiple worker accounts)
 # When >1, run `da-server init` to get worker addresses for trusted_signers
-tx_worker_accounts = 8
+tx_worker_accounts = 0
 
 # ==============================================================================
 # BATCH CONFIGURATION
@@ -86,19 +86,19 @@ tx_worker_accounts = 8
 # Minimum number of blobs before creating a batch
 # With 1MB blobs every 2.5s, we get ~2.4 blobs per 6s Celestia block
 # Setting to 2 allows efficient batching without unnecessary delay
-min_blobs = 1
+min_blobs = 4
 
 # Maximum number of blobs per batch
 # Celestia max blob size ~2MB, so max 2 x 1MB blobs per batch
-max_blobs = 8
+max_blobs = 20
 
 # Target number of blobs to fetch for batching
 # Aim for 2 blobs (2MB total) to fill Celestia efficiently
-target_blobs = 1
+target_blobs = 7
 
 # Maximum batch size in KB
 # Celestia supports ~2MB blobs, set to 1.8MB (1843KB) for safety margin
-max_size_kb = 7943
+max_size_kb = 6943
 
 # Minimum batch size in KB before forcing submission
 # With 1MB execution blocks, wait for at least 1.5MB before submitting
@@ -108,15 +108,11 @@ min_size_kb = 500
 # ==============================================================================
 # WORKER CONFIGURATION
 # ==============================================================================
-# PRODUCTION SETTINGS for 400KB/s throughput
+# Submission worker runs in continuous mode - no tick period needed
 
 [worker]
-# How often submission worker checks for pending blobs
-# Check frequently to catch accumulation of 2-3 blobs quickly
-submit_period = "1s"
-
 # Timeout for submitting batch to Celestia
-submit_timeout = "60s"
+submit_timeout = "120s"
 
 # Maximum retries for failed submissions
 max_retries = 3
@@ -127,33 +123,19 @@ retry_backoff = "1s"
 # Number of parallel Submit() calls to Celestia
 # Should match TxWorkerAccounts on your Celestia node
 # Each call uses a different worker account for signing
-max_parallel_submissions = 8
-
-# Max time a blob waits before forced submission
-# With 1MB blocks every 2.5s, force submission after 8s to avoid stale data
-# This ensures max 3-4 execution blocks per batch (worst case)
-max_blob_wait_time = "1s"
+max_parallel_submissions = 1000
 
 # How often event listener reconciles unconfirmed batches
 # Faster reconciliation for production (check every 3s)
-reconcile_period = "3s"
+reconcile_period = "10s"
 
 # Age threshold for reconciling unconfirmed batches
-reconcile_age = "6s"
+reconcile_age = "20s"
 
 # Timeout for Celestia Get operations during reconciliation
 get_timeout = "10s"
 
-trusted_signers = [
-    "celestia1gazv7rsqd5tdmr67tg8p0s5ardxv60k4wnyqfw",
-    "celestia1qxdkn22x62d5h8pxaceghylwal7q0r352hndmr",
-    "celestia1yq37dq6sz0yvgxk8gpkfppypyqxptze9thyp48",
-    "celestia1rw6x3v8le8lmxf7ena8gexhm4lyfgj9hy23fuw",
-    "celestia1qhfvv7a6tpdv3pphrmenv3r20acrgvqrptx5pw",
-    "celestia19z2k2yxa06a8hf4l9wqt0s4kkyy4fyph84sefs",
-    "celestia1rwjv6gawl7adj6tu8v3hyj2q8zme23y7w6zupk",
-    "celestia1fmmjrkxt6mvl0zkeretz60rhucyffqd7vxqd0n",
-]
+trusted_signers = ["celestia1gazv7rsqd5tdmr67tg8p0s5ardxv60k4wnyqfw"]
 
 # WRITER: No trusted_signers needed (we are the writer)
 # ==============================================================================

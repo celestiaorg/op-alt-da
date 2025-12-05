@@ -4,12 +4,10 @@ import "time"
 
 // Config holds worker configuration
 type Config struct {
-	// Submission worker settings
-	SubmitPeriod           time.Duration // How often to check for pending blobs
+	// Submission worker settings (continuous mode - no tick period)
 	SubmitTimeout          time.Duration // Timeout for Celestia submit operations
 	MaxRetries             int           // Maximum retries for failed submissions
 	RetryBackoff           time.Duration // Wait time between retries (linear backoff)
-	MaxBlobWaitTime        time.Duration // Max time a blob waits before forced submission (time-based batching)
 	MaxParallelSubmissions int           // Number of parallel Submit() calls (should match TxWorkerAccounts)
 
 	// Event listener settings
@@ -26,21 +24,15 @@ type Config struct {
 	BackfillTargetHeight uint64        // Target height to backfill to (0 = disabled)
 	BackfillPeriod       time.Duration // How often to run backfill iterations
 	BlocksPerScan        int           // How many blocks to scan per iteration (also used as concurrency)
-
-	// Multi-blob submission settings
-	MaxTxSizeBytes    int // Maximum Celestia transaction size in bytes (default: 1.8MB)
-	MaxBlockSizeBytes int // Maximum Celestia block size in bytes (default: 32MB)
 }
 
 // DefaultConfig returns default worker configuration
 func DefaultConfig() *Config {
 	return &Config{
-		// Submission settings
-		SubmitPeriod:           2 * time.Second,
+		// Submission settings (continuous mode - submits immediately)
 		SubmitTimeout:          60 * time.Second,
 		MaxRetries:             3,
 		RetryBackoff:           1 * time.Second,
-		MaxBlobWaitTime:        30 * time.Second,
 		MaxParallelSubmissions: 1,
 
 		// Event listener settings
@@ -57,9 +49,5 @@ func DefaultConfig() *Config {
 		BackfillTargetHeight: 0, // 0 = disabled
 		BackfillPeriod:       1 * time.Second,
 		BlocksPerScan:        50, // Scan 50 blocks in parallel per iteration
-
-		// Celestia transaction limits
-		MaxTxSizeBytes:    1843200,  // 1.8MB (safe limit below Celestia's 2MB max)
-		MaxBlockSizeBytes: 33554432, // 32MB Celestia block size
 	}
 }

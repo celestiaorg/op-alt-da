@@ -354,11 +354,10 @@ func (s *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.log.Info("Blob stored",
-		"blob_id", blobID,
-		"size", len(blobData),
-		"commitment", hex.EncodeToString(blobCommitment),
-		"latency_ms", time.Since(startTime).Milliseconds())
+	// Only log every 100 blobs to reduce noise
+	if blobID%100 == 0 {
+		s.log.Info("Blobs stored", "latest_id", blobID, "size", len(blobData))
+	}
 
 	// Return commitment in GenericCommitment format (binary bytes)
 	// [commitment_type_byte][version_byte][blob_commitment]
@@ -443,10 +442,12 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Log at debug level - success/failure logs below are more informative
-	s.log.Debug("GET request received",
-		"commitment", hex.EncodeToString(requestedCommitment)[:16]+"...")
-
 	commitmentKey := hex.EncodeToString(requestedCommitment)
+	logCommitment := commitmentKey
+	if len(logCommitment) > 16 {
+		logCommitment = logCommitment[:16] + "..."
+	}
+	s.log.Debug("GET request received", "commitment", logCommitment)
 	s.firstRequestTimes.LoadOrStore(commitmentKey, startTime)
 
 	// Defer cleanup to prevent memory leak (remove after 1 hour or on success)
@@ -457,7 +458,7 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 				timeToAvailability := time.Since(firstRequestTime)
 				s.celestiaMetrics.RecordTimeToAvailability(timeToAvailability)
 				s.log.Debug("Time to availability recorded",
-					"commitment", commitmentKey[:16]+"...",
+					"commitment", logCommitment,
 					"seconds", timeToAvailability.Seconds())
 			}
 			s.firstRequestTimes.Delete(commitmentKey)
@@ -468,8 +469,7 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	if err == db.ErrBlobNotFound {
 		batch, batchErr := s.store.GetBatchByCommitment(r.Context(), requestedCommitment)
 		if batchErr == db.ErrBatchNotFound {
-			s.log.Debug("GET miss - commitment not found",
-				"commitment", hex.EncodeToString(requestedCommitment)[:16]+"...")
+			s.log.Debug("GET miss - commitment not found", "commitment", logCommitment)
 			http.Error(rw, "blob not found", http.StatusNotFound)
 			return
 		}
@@ -490,7 +490,7 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 
 		// Batch is confirmed - return the packed batch data (what's actually on Celestia)
 		s.log.Info("✅ GET batch success",
-			"commitment", hex.EncodeToString(requestedCommitment)[:16]+"...",
+			"commitment", logCommitment,
 			"celestia_height", *batch.CelestiaHeight,
 			"size_bytes", batch.BatchSize,
 			"blob_count", batch.BlobCount,
@@ -538,7 +538,7 @@ func (s *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	s.log.Info("✅ GET blob success",
-		"commitment", hex.EncodeToString(requestedCommitment)[:16]+"...",
+		"commitment", logCommitment,
 		"celestia_height", *blob.CelestiaHeight,
 		"size_bytes", len(blobData),
 		"latency_ms", time.Since(startTime).Milliseconds())

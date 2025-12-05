@@ -103,22 +103,17 @@ min_size_kb = 500
 # ==============================================================================
 # WORKER CONFIGURATION
 # ==============================================================================
+# Reader doesn't submit blobs, but needs worker config for reconciliation
 
 [worker]
-# How often submission worker checks for pending blobs
-submit_period = "6s"
-
-# Timeout for submitting batch to Celestia
+# Timeout for submitting batch to Celestia (not used in read-only mode)
 submit_timeout = "60s"
 
-# Maximum retries for failed submissions
+# Maximum retries for failed submissions (not used in read-only mode)
 max_retries = 3
 
-# Wait time between retries (linear backoff)
+# Wait time between retries (not used in read-only mode)
 retry_backoff = "1s"
-
-# Max time a blob waits before forced submission
-max_blob_wait_time = "12s"
 
 # How often event listener reconciles unconfirmed batches
 # For readers, this also determines backfill scan frequency

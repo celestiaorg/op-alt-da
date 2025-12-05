@@ -74,18 +74,14 @@ type BatchConfig struct {
 
 // WorkerConfig holds worker timing and retry settings
 type WorkerConfig struct {
-	SubmitPeriod           string   `toml:"submit_period"`
 	SubmitTimeout          string   `toml:"submit_timeout"`
 	MaxRetries             int      `toml:"max_retries"`
 	RetryBackoff           string   `toml:"retry_backoff"`
 	MaxParallelSubmissions int      `toml:"max_parallel_submissions"`
-	MaxBlobWaitTime        string   `toml:"max_blob_wait_time"`
 	ReconcilePeriod        string   `toml:"reconcile_period"`
 	ReconcileAge           string   `toml:"reconcile_age"`
 	GetTimeout             string   `toml:"get_timeout"`
 	TrustedSigners         []string `toml:"trusted_signers"`
-	MaxTxSizeKB            int      `toml:"max_tx_size_kb"`    // Maximum Celestia transaction size in KB (default: 1800KB = 1.8MB)
-	MaxBlockSizeKB         int      `toml:"max_block_size_kb"` // Maximum Celestia block size in KB (default: 32768KB = 32MB)
 }
 
 // BackfillConfig holds backfill settings for historical data migration
@@ -191,14 +187,8 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate worker duration strings
-	if _, err := time.ParseDuration(c.Worker.SubmitPeriod); err != nil {
-		return fmt.Errorf("worker.submit_period is invalid: %w", err)
-	}
 	if _, err := time.ParseDuration(c.Worker.SubmitTimeout); err != nil {
 		return fmt.Errorf("worker.submit_timeout is invalid: %w", err)
-	}
-	if _, err := time.ParseDuration(c.Worker.MaxBlobWaitTime); err != nil {
-		return fmt.Errorf("worker.max_blob_wait_time is invalid: %w", err)
 	}
 	if _, err := time.ParseDuration(c.Worker.ReconcilePeriod); err != nil {
 		return fmt.Errorf("worker.reconcile_period is invalid: %w", err)

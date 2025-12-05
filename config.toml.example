@@ -161,14 +161,9 @@ min_size_kb = 500
 # ==============================================================================
 # WORKER CONFIGURATION
 # ==============================================================================
-# Control worker timeouts and retry behavior
-# Optimized for Celestia block time (~6 seconds)
+# Submission worker runs in continuous mode - submits immediately when blobs arrive
 
 [worker]
-# How often submission worker checks for pending blobs
-# Recommended: 6s (aligned with Celestia block time)
-submit_period = "6s"
-
 # Timeout for submitting batch to Celestia
 submit_timeout = "60s"
 
@@ -178,9 +173,9 @@ max_retries = 3
 # Wait time between retries (linear backoff)
 retry_backoff = "1s"
 
-# Max time a blob waits before forced submission
-# Recommended: 12s (2 blocks - allows batching but prevents long waits)
-max_blob_wait_time = "12s"
+# Number of parallel Submit() calls to Celestia
+# Should match TxWorkerAccounts on your Celestia node
+max_parallel_submissions = 1
 
 # How often event listener reconciles unconfirmed batches
 # Recommended: 6s (check every Celestia block for confirmations)
