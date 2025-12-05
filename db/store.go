@@ -591,6 +591,77 @@ func (s *BlobStore) GetUnconfirmedBatches(ctx context.Context, olderThan time.Du
 	return batches, rows.Err()
 }
 
+// GetUnverifiedBatches retrieves batches that are confirmed but not yet verified with blob.Get.
+// Used by reconciliation worker to verify data is actually on Celestia.
+func (s *BlobStore) GetUnverifiedBatches(ctx context.Context, olderThan time.Duration) ([]*Batch, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT batch_id, batch_commitment, batch_data, celestia_height, confirmed_at
+		FROM batches
+		WHERE status = 'confirmed'
+		  AND celestia_height IS NOT NULL
+		  AND confirmed_at < datetime('now', ?)
+		ORDER BY batch_id ASC
+	`, fmt.Sprintf("-%d seconds", int(olderThan.Seconds())))
+	if err != nil {
+		return nil, fmt.Errorf("query unverified batches: %w", err)
+	}
+	defer rows.Close()
+
+	var batches []*Batch
+	for rows.Next() {
+		var batch Batch
+		var celestiaHeight sql.NullInt64
+		var confirmedAt sql.NullTime
+		if err := rows.Scan(&batch.BatchID, &batch.BatchCommitment, &batch.BatchData,
+			&celestiaHeight, &confirmedAt); err != nil {
+			return nil, fmt.Errorf("scan batch: %w", err)
+		}
+		if celestiaHeight.Valid {
+			height := uint64(celestiaHeight.Int64)
+			batch.CelestiaHeight = &height
+		}
+		if confirmedAt.Valid {
+			batch.ConfirmedAt = &confirmedAt.Time
+		}
+		batches = append(batches, &batch)
+	}
+
+	return batches, rows.Err()
+}
+
+// MarkBatchVerified marks a batch and its blobs as verified after successful blob.Get.
+func (s *BlobStore) MarkBatchVerified(ctx context.Context, batchID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Update batch status
+	_, err = tx.ExecContext(ctx, `
+		UPDATE batches
+		SET status = 'verified'
+		WHERE batch_id = ?
+		  AND status = 'confirmed'
+	`, batchID)
+	if err != nil {
+		return fmt.Errorf("update batch: %w", err)
+	}
+
+	// Update all blobs in batch
+	_, err = tx.ExecContext(ctx, `
+		UPDATE blobs
+		SET status = 'verified'
+		WHERE batch_id = ?
+		  AND status = 'confirmed'
+	`, batchID)
+	if err != nil {
+		return fmt.Errorf("update blobs: %w", err)
+	}
+
+	return tx.Commit()
+}
+
 // GetStuckBatches returns batches with no celestia_height that are older than threshold.
 // These batches failed submission and need to be reverted to pending.
 func (s *BlobStore) GetStuckBatches(ctx context.Context, olderThan time.Duration) ([]*Batch, error) {

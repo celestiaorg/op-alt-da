@@ -3,12 +3,10 @@ package worker
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/celestiaorg/celestia-node/blob"
 	blobAPI "github.com/celestiaorg/celestia-node/nodebuilder/blob"
 	libshare "github.com/celestiaorg/go-square/v3/share"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -79,212 +77,236 @@ func (l *EventListener) Run(ctx context.Context) error {
 		return fmt.Errorf("invalid reconcile age: %v (must be positive)", l.workerCfg.ReconcileAge)
 	}
 
-	l.log.Info("Reconciliation worker starting (using Get operations only)",
-		"reconcile_period", l.workerCfg.ReconcilePeriod,
-		"reconcile_age", l.workerCfg.ReconcileAge)
+	l.log.Info("Verification worker starting",
+		"verify_period", l.workerCfg.ReconcilePeriod,
+		"verify_age", l.workerCfg.ReconcileAge)
 
-	// Start reconciliation ticker
-	reconcileTicker := time.NewTicker(l.workerCfg.ReconcilePeriod)
-	defer reconcileTicker.Stop()
+	ticker := time.NewTicker(l.workerCfg.ReconcilePeriod)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			l.log.Info("Reconciliation worker stopping")
+			l.log.Info("Verification worker stopping")
 			return ctx.Err()
 
-		case <-reconcileTicker.C:
-			if err := l.reconcileUnconfirmed(ctx); err != nil {
-				l.log.Error("Reconcile unconfirmed failed", "error", err)
+		case <-ticker.C:
+			if err := l.verifyConfirmedBatches(ctx); err != nil {
+				l.log.Error("Verify batches failed", "error", err)
 			}
 		}
 	}
 }
 
-func (l *EventListener) reconcileUnconfirmed(ctx context.Context) error {
-	// First, clean up stuck batches (no height, submission failed/crashed)
-	// Use 5 minutes - must be MUCH longer than Celestia submission time (30-60s)
-	// to avoid cleaning up batches that are still being submitted
-	stuckThreshold := 5 * time.Minute
-	if err := l.cleanupStuckBatches(ctx, stuckThreshold); err != nil {
-		l.log.Error("Cleanup stuck batches failed", "error", err)
-	}
-
-	// Get batches older than configured age that need reconciliation
-	batches, err := l.store.GetUnconfirmedBatches(ctx, l.workerCfg.ReconcileAge)
+// verifyConfirmedBatches uses blob.Get to verify confirmed batches are on Celestia.
+// If verification succeeds, marks as 'verified'. If fails, reverts to pending for resubmission.
+func (l *EventListener) verifyConfirmedBatches(ctx context.Context) error {
+	// Get confirmed batches that need verification (older than configured age)
+	batches, err := l.store.GetUnverifiedBatches(ctx, l.workerCfg.ReconcileAge)
 	if err != nil {
-		return fmt.Errorf("get unconfirmed batches: %w", err)
+		return fmt.Errorf("get unverified batches: %w", err)
 	}
 
 	if len(batches) == 0 {
 		return nil
 	}
 
-	// Only log if we have significant work to do
-	if len(batches) >= 5 {
-		l.log.Info("Reconciling old batches", "count", len(batches))
-	}
+	l.log.Debug("Verifying batches", "count", len(batches))
 
-	confirmed := 0
+	verified := 0
+	reverted := 0
 	for _, batch := range batches {
-		if err := l.reconcileBatch(ctx, batch); err != nil {
-			l.log.Error("Reconcile failed", "batch_id", batch.BatchID, "error", err)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		verifyResult := l.verifyBatch(ctx, batch)
+		if verifyResult.err != nil {
+			recordedHeight := uint64(0)
+			if batch.CelestiaHeight != nil {
+				recordedHeight = *batch.CelestiaHeight
+			}
+
+			if verifyResult.actualHeight > 0 {
+				// CRITICAL: blob.Submit returned wrong height - this is a bug to report!
+				l.log.Error("BLOB HEIGHT MISMATCH: blob.Submit returned incorrect height",
+					"batch_id", batch.BatchID,
+					"recorded_height", recordedHeight,
+					"actual_height", verifyResult.actualHeight,
+					"height_diff", int64(verifyResult.actualHeight)-int64(recordedHeight),
+					"note", "This indicates blob.Submit() returned a wrong height - please report to protocol devs")
+			} else {
+				l.log.Warn("Verification failed: blob not found at recorded height or nearby",
+					"batch_id", batch.BatchID,
+					"recorded_height", recordedHeight,
+					"search_range", fmt.Sprintf("%d to %d", verifyResult.searchStart, verifyResult.searchEnd),
+					"error", verifyResult.err)
+			}
+
+			// Revert to pending for resubmission
+			if revertErr := l.store.RevertBatchToPending(ctx, batch.BatchID); revertErr != nil {
+				l.log.Error("Failed to revert batch", "batch_id", batch.BatchID, "error", revertErr)
+			} else {
+				reverted++
+			}
 		} else {
-			confirmed++
+			verified++
 		}
 	}
 
-	// Only log summary if we confirmed something
-	if confirmed > 0 {
-		l.log.Info("✅ Reconciled", "confirmed", confirmed, "total", len(batches))
+	if verified > 0 || reverted > 0 {
+		l.log.Info("Verification complete", "verified", verified, "reverted", reverted)
 	}
 
 	return nil
 }
 
-// cleanupStuckBatches reverts batches that have no celestia_height (submission failed/crashed).
-// These blobs are stuck as 'batched' and need to be returned to pending_submission for retry.
-func (l *EventListener) cleanupStuckBatches(ctx context.Context, olderThan time.Duration) error {
-	stuckBatches, err := l.store.GetStuckBatches(ctx, olderThan)
-	if err != nil {
-		return fmt.Errorf("get stuck batches: %w", err)
-	}
-
-	if len(stuckBatches) == 0 {
-		return nil
-	}
-
-	l.log.Warn("Found stuck batches with no height, reverting to pending",
-		"count", len(stuckBatches),
-		"threshold", olderThan)
-
-	for _, batch := range stuckBatches {
-		if err := l.store.RevertBatchToPending(ctx, batch.BatchID); err != nil {
-			l.log.Error("Failed to revert stuck batch",
-				"batch_id", batch.BatchID,
-				"error", err)
-			continue
-		}
-		l.log.Info("Reverted stuck batch to pending",
-			"batch_id", batch.BatchID,
-			"age", time.Since(batch.SubmittedAt).Round(time.Second))
-	}
-
-	return nil
+// verifyResult contains detailed information about a verification attempt.
+type verifyResult struct {
+	err          error  // nil if verification succeeded
+	actualHeight uint64 // non-zero if blob was found at a different height than recorded
+	searchStart  uint64 // start of height range searched
+	searchEnd    uint64 // end of height range searched
 }
 
-func (l *EventListener) reconcileBatch(ctx context.Context, batch *db.Batch) error {
-	// If we don't have height, we can't query Celestia
+// verifyBatch uses blob.Get to verify a confirmed batch is actually on Celestia.
+// Returns verifyResult with detailed information about the verification.
+// If the blob is found at a different height than recorded, actualHeight will be set.
+func (l *EventListener) verifyBatch(ctx context.Context, batch *db.Batch) verifyResult {
 	if batch.CelestiaHeight == nil {
-		l.log.Debug("Batch has no height, cannot reconcile", "batch_id", batch.BatchID)
-		return nil
+		return verifyResult{err: fmt.Errorf("batch has no height recorded")}
 	}
 
-	l.log.Debug("Reconciling batch",
-		"batch_id", batch.BatchID,
-		"height", *batch.CelestiaHeight,
-		"trusted_signers", len(l.workerCfg.TrustedSigners))
-
-	// Try to find the blob by computing commitment with each trusted signer
-	// This is more efficient than GetAll + data matching
-	var matchedBlob *blob.Blob
-	var matchedSigner string
+	recordedHeight := *batch.CelestiaHeight
 	startTime := time.Now()
 
+	l.log.Debug("Starting verification",
+		"batch_id", batch.BatchID,
+		"height", recordedHeight,
+		"data_size", len(batch.BatchData),
+		"trusted_signers", len(l.workerCfg.TrustedSigners))
+
+	// Track errors for final error reporting
+	signersTried := 0
+	var lastGetErr error
+
+	// First, try at the recorded height with each trusted signer
 	for _, signerBech32 := range l.workerCfg.TrustedSigners {
-		// Parse signer address
 		signerAddr, err := sdk.AccAddressFromBech32(signerBech32)
 		if err != nil {
-			l.log.Warn("Invalid trusted signer address", "signer", signerBech32, "error", err)
 			continue
 		}
 
-		// Compute commitment with this signer
 		commitmentBytes, err := commitment.ComputeCommitment(batch.BatchData, l.namespace, signerAddr.Bytes())
 		if err != nil {
-			l.log.Warn("Failed to compute commitment", "signer", signerBech32, "error", err)
 			continue
 		}
 
-		// Try to Get with this commitment - let Celestia client handle timeouts
-		celestiaBlob, err := l.celestia.Get(ctx, *batch.CelestiaHeight, l.namespace, commitmentBytes)
+		signersTried++
 
+		// Try blob.Get with this commitment at recorded height
+		celestiaBlob, err := l.celestia.Get(ctx, recordedHeight, l.namespace, commitmentBytes)
 		if err != nil {
-			// Not found with this signer, try next
-			l.log.Debug("Blob not found with signer commitment",
+			lastGetErr = err
+			continue // Try next signer silently
+		}
+
+		// Found it - verify data matches
+		if !bytes.Equal(celestiaBlob.Data(), batch.BatchData) {
+			l.log.Warn("Data mismatch during verification",
 				"batch_id", batch.BatchID,
-				"signer", signerBech32,
-				"commitment", hex.EncodeToString(commitmentBytes))
+				"height", recordedHeight,
+				"signer", signerBech32)
 			continue
 		}
 
-		// Found it!
-		matchedBlob = celestiaBlob
-		matchedSigner = signerBech32
-		l.log.Debug("Found blob with trusted signer",
-			"batch_id", batch.BatchID,
-			"signer", signerBech32,
-			"commitment", hex.EncodeToString(commitmentBytes))
-		break
-	}
+		// Verification successful - mark as verified
+		if err := l.store.MarkBatchVerified(ctx, batch.BatchID); err != nil {
+			return verifyResult{err: fmt.Errorf("mark verified: %w", err)}
+		}
 
-	duration := time.Since(startTime)
-
-	if matchedBlob == nil {
+		// Record metrics
 		if l.metrics != nil {
-			l.metrics.RecordRetrievalError()
+			l.metrics.RecordRetrieval(time.Since(startTime), len(batch.BatchData))
 		}
-		l.log.Warn("Batch not found with any trusted signer",
+
+		l.log.Info("Batch verified",
 			"batch_id", batch.BatchID,
-			"height", *batch.CelestiaHeight,
-			"signers_tried", len(l.workerCfg.TrustedSigners))
-		return fmt.Errorf("batch not found at height %d with any trusted signer", *batch.CelestiaHeight)
+			"height", recordedHeight,
+			"signer", signerBech32,
+			"latency_ms", time.Since(startTime).Milliseconds())
+		return verifyResult{} // Success
 	}
 
-	blobSize := len(matchedBlob.Data())
-	onChainCommitment := matchedBlob.Commitment
-
-	// Record successful retrieval metrics
-	if l.metrics != nil {
-		l.metrics.RecordRetrieval(duration, blobSize)
+	// Not found at recorded height - search nearby to detect potential blob.Submit bug
+	// Search ±10 blocks around the recorded height
+	searchRadius := uint64(10)
+	searchStart := recordedHeight
+	if searchStart > searchRadius {
+		searchStart = recordedHeight - searchRadius
+	} else {
+		searchStart = 1
 	}
+	searchEnd := recordedHeight + searchRadius
 
-	// Update batch with actual on-chain commitment (may differ from ours)
-	if !bytes.Equal(onChainCommitment, batch.BatchCommitment) {
-		l.log.Info("Updating batch with on-chain commitment",
-			"batch_id", batch.BatchID,
-			"matched_signer", matchedSigner,
-			"our_commitment", hex.EncodeToString(batch.BatchCommitment),
-			"onchain_commitment", hex.EncodeToString(onChainCommitment))
-		if err := l.store.UpdateBatchCommitment(ctx, batch.BatchID, onChainCommitment); err != nil {
-			l.log.Error("Failed to update batch commitment", "batch_id", batch.BatchID, "error", err)
-		}
-	}
+	l.log.Debug("Blob not at recorded height, searching nearby",
+		"batch_id", batch.BatchID,
+		"recorded_height", recordedHeight,
+		"search_range", fmt.Sprintf("%d to %d", searchStart, searchEnd))
 
-	// Mark as confirmed using the batch ID (with retry for DB lock)
-	err := retryOnDBLock(ctx, 5, 100*time.Millisecond, func() error {
-		return l.store.MarkBatchConfirmedByID(ctx, batch.BatchID)
-	})
-	if err != nil {
-		return fmt.Errorf("mark batch confirmed: %w", err)
-	}
-
-	// Individual confirmations logged at debug level - summary in reconcileUnconfirmed
-	l.log.Debug("Batch reconciled", "batch_id", batch.BatchID, "height", *batch.CelestiaHeight)
-
-	// Record time-to-confirmation metrics for each blob in the batch
-	if l.metrics != nil {
-		blobs, err := l.store.GetBlobsByBatchID(ctx, batch.BatchID)
+	// Search nearby heights to find where blob actually is
+	for _, signerBech32 := range l.workerCfg.TrustedSigners {
+		signerAddr, err := sdk.AccAddressFromBech32(signerBech32)
 		if err != nil {
-			l.log.Warn("Failed to get blobs for metrics", "batch_id", batch.BatchID, "error", err)
-		} else {
-			now := time.Now()
-			for _, b := range blobs {
-				timeToConfirmation := now.Sub(b.CreatedAt)
-				l.metrics.RecordTimeToConfirmation(timeToConfirmation)
+			continue
+		}
+
+		commitmentBytes, err := commitment.ComputeCommitment(batch.BatchData, l.namespace, signerAddr.Bytes())
+		if err != nil {
+			continue
+		}
+
+		for height := searchStart; height <= searchEnd; height++ {
+			if height == recordedHeight {
+				continue // Already checked
+			}
+
+			celestiaBlob, err := l.celestia.Get(ctx, height, l.namespace, commitmentBytes)
+			if err != nil {
+				continue
+			}
+
+			// Found blob at different height - verify data matches
+			if bytes.Equal(celestiaBlob.Data(), batch.BatchData) {
+				// FOUND AT DIFFERENT HEIGHT - this indicates blob.Submit returned wrong height
+				if l.metrics != nil {
+					l.metrics.RecordRetrievalError()
+				}
+				return verifyResult{
+					err:          fmt.Errorf("blob.Submit returned height %d but blob found at height %d with signer %s", recordedHeight, height, signerBech32),
+					actualHeight: height,
+					searchStart:  searchStart,
+					searchEnd:    searchEnd,
+				}
 			}
 		}
 	}
 
-	return nil
+	// Not found anywhere in search range - NOW log the error
+	if l.metrics != nil {
+		l.metrics.RecordRetrievalError()
+	}
+
+	l.log.Error("Blob not found with any trusted signer",
+		"batch_id", batch.BatchID,
+		"recorded_height", recordedHeight,
+		"signers_tried", signersTried,
+		"search_range", fmt.Sprintf("%d to %d", searchStart, searchEnd),
+		"last_error", lastGetErr)
+
+	return verifyResult{
+		err:         fmt.Errorf("blob not found at recorded height %d or in range %d-%d (tried %d signers)", recordedHeight, searchStart, searchEnd, signersTried),
+		searchStart: searchStart,
+		searchEnd:   searchEnd,
+	}
 }

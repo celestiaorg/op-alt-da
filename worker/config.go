@@ -9,6 +9,7 @@ type Config struct {
 	MaxRetries             int           // Maximum retries for failed submissions
 	RetryBackoff           time.Duration // Wait time between retries (linear backoff)
 	MaxParallelSubmissions int           // Number of parallel Submit() calls (should match TxWorkerAccounts)
+	TxPriority             int           // Transaction priority: 1=low, 2=medium, 3=high (affects gas price)
 
 	// Event listener settings
 	ReconcilePeriod time.Duration // How often to reconcile unconfirmed batches
@@ -30,10 +31,12 @@ type Config struct {
 func DefaultConfig() *Config {
 	return &Config{
 		// Submission settings (continuous mode - submits immediately)
-		SubmitTimeout:          60 * time.Second,
+		// 30s timeout = ~3 Celestia blocks; on timeout we check if blob landed before retry
+		SubmitTimeout:          30 * time.Second,
 		MaxRetries:             3,
 		RetryBackoff:           1 * time.Second,
 		MaxParallelSubmissions: 1,
+		TxPriority:             2, // Medium priority (1=low, 2=medium, 3=high)
 
 		// Event listener settings
 		ReconcilePeriod: 5 * time.Second,

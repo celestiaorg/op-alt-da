@@ -13,11 +13,18 @@ CREATE TABLE IF NOT EXISTS blobs (
     blob_size           INTEGER NOT NULL,
 
     -- Submission lifecycle
+    -- pending_submission: waiting to be batched and submitted
+    -- batched: included in a batch (legacy, not used in new flow)
+    -- submitted: sent to Celestia (legacy, not used in new flow)
+    -- confirmed: submission returned height (ready for GET)
+    -- verified: blob.Get confirmed data is on Celestia
+    -- failed: submission failed permanently
     status              TEXT NOT NULL CHECK(status IN (
                             'pending_submission',
                             'batched',
                             'submitted',
                             'confirmed',
+                            'verified',
                             'failed'
                         )),
 
@@ -63,7 +70,11 @@ CREATE TABLE IF NOT EXISTS batches (
     celestia_tx_hash    TEXT,
 
     -- Status
-    status              TEXT NOT NULL CHECK(status IN ('submitted', 'confirmed', 'failed')),
+    -- submitted: sent to Celestia (legacy, not used in new flow)
+    -- confirmed: submission returned height (ready for GET)
+    -- verified: blob.Get confirmed data is on Celestia
+    -- failed: submission failed permanently
+    status              TEXT NOT NULL CHECK(status IN ('submitted', 'confirmed', 'verified', 'failed')),
 
     -- Timestamps
     created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
