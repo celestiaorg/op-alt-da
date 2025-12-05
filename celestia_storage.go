@@ -181,7 +181,7 @@ func NewCelestiaStore(ctx context.Context, cfg CelestiaClientConfig) (*CelestiaS
 		"bridge_auth_token_set", cfg.BridgeAuthToken != "",
 		"grpc_auth_token_set", cfg.CoreGRPCAuthToken != "")
 
-	blobClient, signerAddr, err := initCelestiaClient(ctx, cfg)
+	blobClient, headerClient, signerAddr, err := initCelestiaClient(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize celestia client: %w", err)
 	}
@@ -197,6 +197,7 @@ func NewCelestiaStore(ctx context.Context, cfg CelestiaClientConfig) (*CelestiaS
 	return &CelestiaStore{
 		Log:           logger,
 		Client:        blobClient,
+		Header:        headerClient,
 		GetTimeout:    time.Minute,
 		Namespace:     namespace,
 		CompactBlobID: cfg.CompactBlobID,
@@ -318,7 +319,7 @@ func initReadOnlyClient(ctx context.Context, cfg CelestiaClientConfig) (blobAPI.
 // Uses dual-endpoint architecture:
 //   - ReadConfig: Bridge node JSON-RPC for reading blobs
 //   - SubmitConfig: CoreGRPC for submitting blobs to consensus
-func initCelestiaClient(ctx context.Context, cfg CelestiaClientConfig) (blobAPI.Module, []byte, error) {
+func initCelestiaClient(ctx context.Context, cfg CelestiaClientConfig) (blobAPI.Module, headerAPI.Module, []byte, error) {
 	keyname := cfg.DefaultKeyName
 	if keyname == "" {
 		keyname = "my_celes_key"
@@ -328,17 +329,17 @@ func initCelestiaClient(ctx context.Context, cfg CelestiaClientConfig) (blobAPI.
 		BackendName: keyring.BackendTest,
 	}, cfg.KeyringPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create keyring: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create keyring: %w", err)
 	}
 
 	// Extract signer address from keyring
 	record, err := kr.Key(keyname)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get key from keyring: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to get key from keyring: %w", err)
 	}
 	signerAccAddr, err := record.GetAddress()
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get address from key: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to get address from key: %w", err)
 	}
 	signerAddr := signerAccAddr.Bytes() // Convert to raw 20-byte address
 
@@ -381,7 +382,7 @@ func initCelestiaClient(ctx context.Context, cfg CelestiaClientConfig) (blobAPI.
 
 	celestiaClient, err := txClient.New(ctx, config, kr)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create celestia client: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create celestia client: %w", err)
 	}
-	return celestiaClient.Blob, signerAddr, nil
+	return celestiaClient.Blob, celestiaClient.Header, signerAddr, nil
 }
