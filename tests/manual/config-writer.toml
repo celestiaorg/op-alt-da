@@ -94,11 +94,11 @@ max_blobs = 20
 
 # Target number of blobs to fetch for batching
 # Aim for 2 blobs (2MB total) to fill Celestia efficiently
-target_blobs = 7
+target_blobs = 8
 
 # Maximum batch size in KB
 # Celestia supports ~2MB blobs, set to 1.8MB (1843KB) for safety margin
-max_size_kb = 7943
+max_size_kb = 8192
 
 # Minimum batch size in KB before forcing submission
 # With 1MB execution blocks, wait for at least 1.5MB before submitting
@@ -112,7 +112,7 @@ min_size_kb = 500
 
 [worker]
 # Timeout for submitting batch to Celestia
-submit_timeout = "30s"
+submit_timeout = "60s"
 
 # Maximum retries for failed submissions
 max_retries = 3

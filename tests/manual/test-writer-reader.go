@@ -33,7 +33,7 @@ func DefaultConfig() Config {
 		WriterURL:    "http://localhost:3100",
 		ReaderURL:    "http://localhost:3100",
 		BlobSize:     1200 * 1024, // ~1MB
-		PutInterval:  1000 * time.Millisecond,
+		PutInterval:  800 * time.Millisecond,
 		ReaderLag:    30 * time.Second, // Shorter initial lag
 		PollInterval: 2 * time.Second,  // Poll frequently for accurate timing
 		Duration:     100 * time.Second,
@@ -142,9 +142,14 @@ type Stats struct {
 
 	// Poll attempts before success
 	TotalPollAttempts int
+
+	// Throughput tracking
+	TotalBytesConfirmed int64     // Total bytes successfully confirmed on DA
+	FirstPutTime        time.Time // Time of first PUT (for throughput window)
+	LastConfirmTime     time.Time // Time of last confirmation (for throughput window)
 }
 
-func (s *Stats) RecordPut(success bool, latency time.Duration) {
+func (s *Stats) RecordPut(success bool, latency time.Duration, putTime time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.PutsTotal++
@@ -152,6 +157,12 @@ func (s *Stats) RecordPut(success bool, latency time.Duration) {
 		s.PutsFailed++
 		return
 	}
+
+	// Track first PUT time for throughput window
+	if s.FirstPutTime.IsZero() {
+		s.FirstPutTime = putTime
+	}
+
 	s.PutLatencyCount++
 	s.PutLatencySum += latency
 	if s.PutLatencyMin == 0 || latency < s.PutLatencyMin {
@@ -178,7 +189,7 @@ func (s *Stats) RecordGet(status GetStatus) {
 	}
 }
 
-func (s *Stats) RecordConfirmation(totalTime, daConfirmTime time.Duration, pollAttempts int) {
+func (s *Stats) RecordConfirmation(totalTime, daConfirmTime time.Duration, pollAttempts int, blobSize int, confirmTime time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -203,6 +214,10 @@ func (s *Stats) RecordConfirmation(totalTime, daConfirmTime time.Duration, pollA
 	}
 
 	s.TotalPollAttempts += pollAttempts
+
+	// Throughput tracking
+	s.TotalBytesConfirmed += int64(blobSize)
+	s.LastConfirmTime = confirmTime
 }
 
 func (s *Stats) Print() {
@@ -258,6 +273,31 @@ func (s *Stats) Print() {
 		fmt.Printf("   Avg polls per blob: %.1f\n", avgPolls)
 	} else {
 		fmt.Printf("\n❌ No confirmations recorded\n")
+	}
+
+	// Throughput calculation
+	if s.TotalBytesConfirmed > 0 && !s.FirstPutTime.IsZero() && !s.LastConfirmTime.IsZero() {
+		fmt.Println("\n────────────────────────────────────────────────────────────────")
+		fmt.Println("                    📈 CELESTIA DA THROUGHPUT")
+		fmt.Println("────────────────────────────────────────────────────────────────")
+
+		// Calculate throughput window (from first PUT to last confirmation)
+		throughputWindow := s.LastConfirmTime.Sub(s.FirstPutTime)
+		if throughputWindow > 0 {
+			bytesPerSec := float64(s.TotalBytesConfirmed) / throughputWindow.Seconds()
+			mbPerSec := bytesPerSec / (1024 * 1024)
+			kbPerSec := bytesPerSec / 1024
+
+			totalMB := float64(s.TotalBytesConfirmed) / (1024 * 1024)
+
+			fmt.Printf("\n   Total data confirmed: %.2f MB (%d bytes)\n", totalMB, s.TotalBytesConfirmed)
+			fmt.Printf("   Throughput window:    %v (first PUT → last confirm)\n", throughputWindow.Round(time.Millisecond))
+			fmt.Printf("\n   🚀 Average throughput: %.2f MB/s (%.1f KB/s)\n", mbPerSec, kbPerSec)
+
+			// Also show blobs per second
+			blobsPerSec := float64(s.TotalTimeCount) / throughputWindow.Seconds()
+			fmt.Printf("   📦 Blob rate:          %.2f blobs/s\n", blobsPerSec)
+		}
 	}
 
 	if s.GetsDataMismatch > 0 {
@@ -326,7 +366,7 @@ func (w *Writer) Run(ctx context.Context) {
 				return
 			}
 			fmt.Printf("[WRITER] ERROR: %v\n", err)
-			w.stats.RecordPut(false, 0)
+			w.stats.RecordPut(false, 0, time.Time{})
 			if !sleep(ctx, w.config.PutInterval) {
 				return
 			}
@@ -341,7 +381,7 @@ func (w *Writer) Run(ctx context.Context) {
 			PutEndTime:   putEndTime,
 			PutLatency:   putLatency,
 		})
-		w.stats.RecordPut(true, putLatency)
+		w.stats.RecordPut(true, putLatency, putStartTime)
 
 		// Log progress every 10 blobs or 10 seconds
 		if batchCount >= 10 || time.Since(lastReportTime) >= 10*time.Second {
@@ -483,9 +523,10 @@ func (r *Reader) checkAllUnconfirmedBlobs(ctx context.Context) {
 
 			totalTime := confirmedTime.Sub(blob.PutStartTime)
 			daConfirmTime := confirmedTime.Sub(blob.PutEndTime)
+			blobSize := len(blob.OriginalData)
 
 			r.stats.RecordGet(GetSuccess)
-			r.stats.RecordConfirmation(totalTime, daConfirmTime, attempts)
+			r.stats.RecordConfirmation(totalTime, daConfirmTime, attempts, blobSize, confirmedTime)
 
 			waitTime := confirmedTime.Sub(blob.PutStartTime)
 			wasStuck := waitTime > 60*time.Second
