@@ -160,32 +160,39 @@ type CelestiaStore struct {
 }
 
 // NewCelestiaStore returns a celestia store.
-func NewCelestiaStore(cfg RPCClientConfig) *CelestiaStore {
+// The provided context is used for client initialization and should be the application's
+// root context to allow cancellation during startup.
+func NewCelestiaStore(ctx context.Context, cfg RPCClientConfig) (*CelestiaStore, error) {
 	var blobClient blobAPI.Module
 	var err error
 	if cfg.TxClientConfig != nil {
-		blobClient, err = initTxClient(cfg)
+		blobClient, err = initTxClient(ctx, cfg)
 	} else {
-		blobClient, err = initRPCClient(cfg)
+		blobClient, err = initRPCClient(ctx, cfg)
 	}
 	if err != nil {
-		log.Crit("failed to initialize celestia client", "err", err)
+		// H4: Return error instead of log.Crit (which calls os.Exit)
+		return nil, fmt.Errorf("failed to initialize celestia client: %w", err)
 	}
+
 	namespace, err := libshare.NewNamespaceFromBytes(cfg.Namespace)
 	if err != nil {
-		log.Crit("failed to parse namespace", "err", err)
+		// H4: Return error instead of log.Crit
+		return nil, fmt.Errorf("failed to parse namespace: %w", err)
 	}
+
 	return &CelestiaStore{
 		Log:           log.New(),
 		Client:        blobClient,
 		GetTimeout:    time.Minute,
 		Namespace:     namespace,
 		CompactBlobID: cfg.CompactBlobID,
-	}
+	}, nil
 }
 
 // initTxClient initializes a transaction client for Celestia.
-func initTxClient(cfg RPCClientConfig) (blobAPI.Module, error) {
+// The provided context is used for client initialization and allows cancellation during startup.
+func initTxClient(ctx context.Context, cfg RPCClientConfig) (blobAPI.Module, error) {
 	keyname := cfg.TxClientConfig.DefaultKeyName
 	if keyname == "" {
 		keyname = "my_celes_key"
@@ -230,7 +237,6 @@ func initTxClient(cfg RPCClientConfig) (blobAPI.Module, error) {
 	default:
 		log.Info("Immediate submission mode (default, no queue)")
 	}
-	ctx := context.Background()
 	celestiaClient, err := txClient.New(ctx, config, kr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create tx client: %w", err)
@@ -239,8 +245,9 @@ func initTxClient(cfg RPCClientConfig) (blobAPI.Module, error) {
 }
 
 // initRPCClient initializes an RPC client for Celestia.
-func initRPCClient(cfg RPCClientConfig) (blobAPI.Module, error) {
-	celestiaClient, err := client.NewClient(context.Background(), cfg.URL, cfg.AuthToken)
+// The provided context is used for client initialization and allows cancellation during startup.
+func initRPCClient(ctx context.Context, cfg RPCClientConfig) (blobAPI.Module, error) {
+	celestiaClient, err := client.NewClient(ctx, cfg.URL, cfg.AuthToken)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create rpc client: %w", err)
 	}
@@ -249,6 +256,23 @@ func initRPCClient(cfg RPCClientConfig) (blobAPI.Module, error) {
 
 func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	d.Log.Info("celestia: blob request", "id", hex.EncodeToString(key))
+
+	// C3: Validate minimum length before slicing
+	if len(key) < 2 {
+		return nil, fmt.Errorf("invalid commitment: too short (need at least 2 bytes, got %d)", len(key))
+	}
+
+	// M7: Validate version bytes
+	// key[0] = 0x01 (Generic Commitment type from optimism alt-da)
+	// key[1] = VersionByte (0x0c for Celestia)
+	if key[0] != 0x01 {
+		return nil, fmt.Errorf("unsupported commitment type: 0x%02x (expected 0x01)", key[0])
+	}
+	if key[1] != VersionByte {
+		return nil, fmt.Errorf("unsupported DA version: 0x%02x (expected 0x%02x)", key[1], VersionByte)
+	}
+
+	// H3: Use incoming ctx as parent to propagate request cancellation
 	ctx, cancel := context.WithTimeout(ctx, d.GetTimeout)
 	defer cancel()
 
@@ -257,7 +281,11 @@ func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	if err := blobID.UnmarshalBinary(key[2:]); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal blob ID: %w", err)
 	}
-	log.Debug("Retrieving blob with commitment", "blobID.Commitment", hex.EncodeToString(blobID.Commitment), "blobID.Height", blobID.Height)
+
+	log.Debug("Retrieving blob with commitment",
+		"blobID.Commitment", hex.EncodeToString(blobID.Commitment),
+		"blobID.Height", blobID.Height)
+
 	blob, err := d.Client.Get(ctx, blobID.Height, d.Namespace, blobID.Commitment)
 	if err != nil {
 		// Check if error indicates blob not found
