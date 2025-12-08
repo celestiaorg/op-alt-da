@@ -1,28 +1,18 @@
-# Alt-DA x Celestia: Stateless DA Server
+# Alt-DA x Celestia
 
 ## Overview
 
-This repository implements a **stateless** Celestia `da-server` for Alt-DA mode using generic commitments. The server provides a simple HTTP API that the OP Stack's `op-batcher` uses to store and retrieve data availability (DA) commitments.
-
-### Key Characteristics
-
-- **Stateless Architecture**: No local database, no caching, no batching
-- **Synchronous Submission**: PUT requests **block** until Celestia confirms the blob (10-60 seconds)
-- **Direct Retrieval**: GET requests fetch blobs directly from Celestia
-- **Optional S3 Fallback**: Configurable fallback storage for resilience
-- **Local Keyring Required**: Transaction signing uses a local Celestia keyring
+This repository implements a Celestia `da-server` for Alt-DA mode using generic commitments. The server provides a simple HTTP API that the OP Stack's `op-batcher` uses to store and retrieve data availability (DA) commitments.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    Stateless DA Architecture                        │
-├─────────────────────────────────────────────────────────────────────┤
-│  PUT Request → Create V0 blob → Submit via CoreGRPC → Return BlobID │
-│                                       ↑                             │
-│                     clientTX (signs with local keyring)             │
+│  PUT Request → Create blob → Submit via CoreGRPC → Return BlobID    │
+│                                    ↑                                │
+│                  clientTX (signs with local keyring)                │
 │                                                                     │
 │  GET Request → Parse BlobID (height + commitment) → blob.Get()      │
-│                                       ↑                             │
-│                           Bridge node JSON-RPC                      │
+│                                    ↑                                │
+│                        Bridge node JSON-RPC                         │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Requirements: Local keyring, Bridge node (read), CoreGRPC (write)  │
 └─────────────────────────────────────────────────────────────────────┘
@@ -30,7 +20,7 @@ This repository implements a **stateless** Celestia `da-server` for Alt-DA mode 
 
 ## Prerequisites
 
-Before running the DA server, you must have:
+Before running the DA server, you need:
 
 1. **A Celestia keyring with a funded account** - Required for signing transactions
 2. **Access to a Celestia bridge/light node** - For reading blobs (JSON-RPC)
@@ -105,7 +95,7 @@ Or using a config file:
 |------|---------------------|---------|-------------|
 | `--addr` | `OP_ALTDA_ADDR` | `127.0.0.1` | Server listening address |
 | `--port` | `OP_ALTDA_PORT` | `3100` | Server listening port |
-| `--celestia.server` | `OP_ALTDA_CELESTIA_SERVER` | `http://localhost:26658` | Bridge node RPC endpoint (for reads) |
+| `--celestia.server` | `OP_ALTDA_CELESTIA_SERVER` | `http://localhost:26658` | Bridge node RPC endpoint |
 | `--celestia.namespace` | `OP_ALTDA_CELESTIA_NAMESPACE` | (required) | Celestia namespace (29 bytes hex) |
 | `--celestia.auth-token` | `OP_ALTDA_CELESTIA_AUTH_TOKEN` | | Bridge node auth token |
 | `--celestia.tls-enabled` | `OP_ALTDA_CELESTIA_TLS_ENABLED` | `false` | Enable TLS for bridge RPC |
@@ -117,9 +107,9 @@ Or using a config file:
 |------|---------------------|---------|-------------|
 | `--celestia.tx-client.key-name` | `OP_ALTDA_CELESTIA_TX_CLIENT_KEY_NAME` | `my_celes_key` | Key name in keyring |
 | `--celestia.tx-client.keyring-path` | `OP_ALTDA_CELESTIA_TX_CLIENT_KEYRING_PATH` | **(required)** | Path to keyring directory |
-| `--celestia.tx-client.core-grpc.addr` | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_ADDR` | **(required)** | CoreGRPC endpoint for submission |
+| `--celestia.tx-client.core-grpc.addr` | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_ADDR` | **(required)** | CoreGRPC endpoint |
 | `--celestia.tx-client.core-grpc.tls-enabled` | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_TLS_ENABLED` | `true` | Enable TLS for CoreGRPC |
-| `--celestia.tx-client.core-grpc.auth-token` | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_AUTH_TOKEN` | | CoreGRPC auth token (if required) |
+| `--celestia.tx-client.core-grpc.auth-token` | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_AUTH_TOKEN` | | CoreGRPC auth token |
 | `--celestia.tx-client.p2p-network` | `OP_ALTDA_CELESTIA_TX_CLIENT_P2P_NETWORK` | `mocha-4` | Network: mocha-4, arabica-11, celestia |
 
 #### Fallback Storage (Optional)
@@ -208,14 +198,14 @@ See [API.md](./API.md) for detailed API documentation.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/put` | PUT | Submit blob to Celestia (blocks until confirmed, 10-60s) |
+| `/put` | PUT | Submit blob to Celestia |
 | `/get/:commitment` | GET | Retrieve blob by commitment |
 | `/health` | GET | Health check endpoint |
 
 ### Example Usage
 
 ```bash
-# Submit a blob (expect 10-60 second wait for Celestia confirmation)
+# Submit a blob
 COMMITMENT=$(curl -s -X PUT http://localhost:3100/put \
   -H "Content-Type: application/octet-stream" \
   --data-binary "hello world")
@@ -232,7 +222,7 @@ curl http://localhost:3100/health
 
 The server supports optional fallback storage for resilience. When enabled:
 
-- **write_through**: After successful Celestia submission, blob is also written to fallback (async)
+- **write_through**: After successful Celestia submission, blob is also written to fallback
 - **read_fallback**: If blob not found in Celestia, attempt to read from fallback
 - **both**: Enable both write-through and read-fallback (default)
 
@@ -268,19 +258,6 @@ When enabled (`--metrics.enabled=true`), Prometheus metrics are available at `ht
 | `celestia_retrievals_total` | Counter | Total blob retrievals |
 | `celestia_retrieval_errors_total` | Counter | Failed blob retrievals |
 
-### Example Grafana Queries
-
-```promql
-# Average submission latency (last 5 minutes)
-rate(celestia_submission_duration_seconds_sum[5m]) / rate(celestia_submission_duration_seconds_count[5m])
-
-# Submission success rate
-rate(celestia_submissions_total[5m]) / (rate(celestia_submissions_total[5m]) + rate(celestia_submission_errors_total[5m]))
-
-# Blob throughput (bytes/second)
-rate(op_altda_blob_size_bytes_sum[5m])
-```
-
 ## Testing
 
 ### Run Tests
@@ -308,8 +285,8 @@ make test-all
 # Start the server (ensure keyring is configured)
 ./bin/da-server --config=config.toml
 
-# Test PUT (expect 10-60 second wait)
-time curl -X PUT http://localhost:3100/put \
+# Test PUT
+curl -X PUT http://localhost:3100/put \
   -H "Content-Type: application/octet-stream" \
   --data-binary "hello world"
 
@@ -379,13 +356,6 @@ Verify the CoreGRPC endpoint is accessible:
 # Test connection
 grpcurl -plaintext consensus-full-mocha-4.celestia-mocha.com:9090 list
 ```
-
-### Slow PUT requests
-
-PUT requests block until Celestia confirms the blob (typically 10-60 seconds). This is by design for the stateless architecture. For lower latency, consider:
-
-- Using a higher `tx_priority` (3 = high)
-- Running your own consensus node for lower network latency
 
 ## License
 
