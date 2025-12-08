@@ -28,11 +28,15 @@ func createTestServer(t *testing.T, store *CelestiaStore) *CelestiaServer {
 
 	return NewCelestiaServer(
 		"127.0.0.1",
-		0, // port 0 = let OS assign
+		0,               // port 0 = let OS assign
 		store,
-		30*time.Second,
-		30*time.Second,
-		false, // metrics disabled for unit tests
+		30*time.Second,  // submitTimeout
+		30*time.Second,  // getTimeout
+		30*time.Second,  // httpReadTimeout (C2)
+		120*time.Second, // httpWriteTimeout (C2)
+		60*time.Second,  // httpIdleTimeout (C2)
+		2*1024*1024,     // maxBlobSize (2MB) (C1)
+		false,           // metrics disabled for unit tests
 		0,
 		nil, // fallback provider (nil = NoopProvider)
 		logger,
@@ -59,6 +63,7 @@ func TestHandlePut_EmptyBlob(t *testing.T) {
 	server := &CelestiaServer{
 		log:           log.New(),
 		submitTimeout: 30 * time.Second,
+		maxBlobSize:   2 * 1024 * 1024, // 2MB
 	}
 
 	// Test empty body
@@ -74,7 +79,8 @@ func TestHandlePut_EmptyBlob(t *testing.T) {
 // TestHandlePut_WrongRoute verifies that wrong PUT routes return 400.
 func TestHandlePut_WrongRoute(t *testing.T) {
 	server := &CelestiaServer{
-		log: log.New(),
+		log:         log.New(),
+		maxBlobSize: 2 * 1024 * 1024, // 2MB
 	}
 
 	req := httptest.NewRequest(http.MethodPut, "/put/extra/path", bytes.NewReader([]byte("data")))
@@ -181,6 +187,7 @@ func TestServerEndpoints(t *testing.T) {
 		endpoint:      "127.0.0.1:0",
 		submitTimeout: 30 * time.Second,
 		getTimeout:    30 * time.Second,
+		maxBlobSize:   2 * 1024 * 1024, // 2MB
 		httpServer:    &http.Server{},
 	}
 
