@@ -19,27 +19,34 @@ fmt:
 clean:
 	rm bin/da-server
 
-# Run all tests (unit tests only, excludes integration tests)
+# Run all unit tests (excludes integration tests)
 test:
 	go test -v ./... -tags='!integration'
 
-# Run unit tests that live under the ./tests/unit directory
+# Run unit tests only (main package + subpackages, excludes integration/benchmark)
 test-unit:
-	go test -v ./tests/unit/...
+	go test -v . ./fallback/... ./metrics/...
 
 # Run integration tests that live under the ./tests/integration directory
 TEST_REGEX ?=
 TIMEOUT ?= 10m
 test-integration:
-	go test -v -tags=integration -timeout=$(TIMEOUT) ./tests/integration $(if $(TEST_REGEX),-run $(TEST_REGEX),)
+	go test -v -tags=integration -timeout=$(TIMEOUT) ./tests/integration/... $(if $(TEST_REGEX),-run $(TEST_REGEX),)
+
+# Run benchmark tests
+test-benchmark:
+	go test -v -bench=. -benchmem ./tests/benchmark/...
 
 # Run all tests (unit + integration)
-test-all: test-unit test-integration
+test-all: test test-integration
 
 .PHONY: \
+	da-server \
+	lint \
+	fmt \
 	clean \
 	test \
 	test-unit \
 	test-integration \
-	test-e2e \
+	test-benchmark \
 	test-all

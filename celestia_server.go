@@ -1,91 +1,99 @@
 package celestia
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"path"
 	"strconv"
-	"sync"
 	"time"
 
-	"github.com/celestiaorg/celestia-node/blob"
-	libshare "github.com/celestiaorg/go-square/v3/share"
-	s3 "github.com/celestiaorg/op-alt-da/s3"
+	"github.com/celestiaorg/op-alt-da/fallback"
+	"github.com/celestiaorg/op-alt-da/metrics"
 	altda "github.com/ethereum-optimism/optimism/op-alt-da"
-	"github.com/ethereum-optimism/optimism/op-service/httputil"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-var (
-	requestDuration = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "op_altda_request_duration_seconds",
-			Help:    "Duration of requests",
-			Buckets: prometheus.DefBuckets,
-		},
-		[]string{"method"},
-	)
-	blobSize = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Name:    "op_altda_blob_size_bytes",
-			Help:    "Size of blobs",
-			Buckets: []float64{1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 8388608}, // 1k to 8M
-		},
-	)
-	inclusionHeight = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "op_altda_inclusion_height",
-			Help: "Inclusion height of blobs",
-		},
-	)
-)
-
+// CelestiaServer implements the HTTP server for the stateless DA server.
+// This is a simplified version without S3 caching/fallback, database, or workers.
 type CelestiaServer struct {
-	log        log.Logger
-	endpoint   string
-	store      *CelestiaStore
-	s3Store    *s3.S3Store
-	tls        *httputil.ServerTLSConfig
+	log      log.Logger
+	endpoint string
+	host     string
+
+	// Celestia storage layer
+	store *CelestiaStore
+
+	// Timeouts and settings
+	submitTimeout time.Duration
+	getTimeout    time.Duration
+
+	// HTTP server
 	httpServer *http.Server
 	listener   net.Listener
 
-	cache        bool
-	fallback     bool
-	cacheLock    sync.RWMutex
-	fallbackLock sync.RWMutex
-
+	// Metrics (from Agent C)
 	metricsEnabled bool
 	metricsPort    int
+	metrics        *metrics.CelestiaMetrics
+
+	// Fallback provider (Agent F)
+	fallback     fallback.Provider
+	fallbackMode string // "write_through", "read_fallback", "both"
 }
 
-func NewCelestiaServer(host string, port int, store *CelestiaStore, s3Store *s3.S3Store, fallback bool, cache bool, metricsEnabled bool, metricsPort int, log log.Logger) *CelestiaServer {
+// NewCelestiaServer creates a new stateless Celestia server.
+func NewCelestiaServer(
+	host string,
+	port int,
+	store *CelestiaStore,
+	submitTimeout time.Duration,
+	getTimeout time.Duration,
+	metricsEnabled bool,
+	metricsPort int,
+	fallbackProvider fallback.Provider,
+	fallbackMode string,
+	log log.Logger,
+) *CelestiaServer {
 	endpoint := net.JoinHostPort(host, strconv.Itoa(port))
+
+	// Default to NoOpProvider if nil
+	if fallbackProvider == nil {
+		fallbackProvider = &fallback.NoOpProvider{}
+	}
+
+	// Default fallback mode
+	if fallbackMode == "" {
+		fallbackMode = "both"
+	}
+
 	server := &CelestiaServer{
-		log:      log,
-		endpoint: endpoint,
-		store:    store,
-		s3Store:  s3Store,
+		log:            log,
+		endpoint:       endpoint,
+		host:           host,
+		store:          store,
+		submitTimeout:  submitTimeout,
+		getTimeout:     getTimeout,
+		metricsEnabled: metricsEnabled,
+		metricsPort:    metricsPort,
+		fallback:       fallbackProvider,
+		fallbackMode:   fallbackMode,
 		httpServer: &http.Server{
 			Addr: endpoint,
 		},
-		fallback:       fallback,
-		cache:          cache,
-		metricsEnabled: metricsEnabled,
-		metricsPort:    metricsPort,
 	}
+
+	// Initialize metrics if enabled
 	if metricsEnabled {
-		prometheus.MustRegister(requestDuration, blobSize, inclusionHeight)
+		server.metrics = metrics.NewCelestiaMetrics(prometheus.DefaultRegisterer)
 	}
+
 	return server
 }
 
@@ -95,6 +103,7 @@ func (d *CelestiaServer) Start() error {
 	mux.HandleFunc("/get/", d.HandleGet)
 	mux.HandleFunc("/put/", d.HandlePut)
 	mux.HandleFunc("/put", d.HandlePut)
+	mux.HandleFunc("/health", d.HandleHealth)
 
 	d.httpServer.Handler = mux
 
@@ -107,17 +116,12 @@ func (d *CelestiaServer) Start() error {
 	d.endpoint = listener.Addr().String()
 	errCh := make(chan error, 1)
 	go func() {
-		if d.tls != nil {
-			if err := d.httpServer.ServeTLS(d.listener, "", ""); err != nil {
-				errCh <- err
-			}
-		} else {
-			if err := d.httpServer.Serve(d.listener); err != nil {
-				errCh <- err
-			}
+		if err := d.httpServer.Serve(d.listener); err != nil && err != http.ErrServerClosed {
+			errCh <- err
 		}
 	}()
 
+	// Start metrics server if enabled
 	if d.metricsEnabled {
 		go func() {
 			metricsAddr := fmt.Sprintf(":%d", d.metricsPort)
@@ -128,7 +132,7 @@ func (d *CelestiaServer) Start() error {
 		}()
 	}
 
-	// verify that the server comes up
+	// Verify that the server comes up
 	tick := time.NewTimer(10 * time.Millisecond)
 	defer tick.Stop()
 
@@ -140,12 +144,17 @@ func (d *CelestiaServer) Start() error {
 	}
 }
 
-func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
-	if d.metricsEnabled {
-		timer := prometheus.NewTimer(requestDuration.WithLabelValues("get"))
-		defer timer.ObserveDuration()
-	}
+// HandleHealth returns 200 OK for health checks.
+func (d *CelestiaServer) HandleHealth(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("OK"))
+}
 
+// HandleGet retrieves a blob directly from Celestia.
+// Request: GET /get/<hex-encoded-commitment>
+// Response: Raw blob data on success, 404 on not found, 500 on error.
+func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	d.log.Debug("GET", "url", r.URL)
 
 	route := path.Dir(r.URL.Path)
@@ -157,58 +166,89 @@ func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	key := path.Base(r.URL.Path)
 	comm, err := hexutil.Decode(key)
 	if err != nil {
+		d.log.Warn("Invalid commitment format", "key", key, "err", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	// 1 read blob from cache if enabled
-	if d.cache {
-		cachedData, cacheErr := d.multiSourceRead(r.Context(), comm, d.store.Namespace, false)
-		if cacheErr == nil && cachedData != nil {
-			// Successfully got data from cache
-			if _, err := w.Write(cachedData); err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-			}
-			return
-		}
-	}
-	// 2 read blob from Celestia
-	celestiaData, err := d.store.Get(r.Context(), comm)
+	// Create context with configurable timeout
+	ctx, cancel := context.WithTimeout(r.Context(), d.getTimeout)
+	defer cancel()
+
+	// Read blob directly from Celestia (stateless - no caching)
+	celestiaData, err := d.store.Get(ctx, comm)
 	if err != nil {
-		if errors.Is(err, altda.ErrNotFound) {
+		// Record metrics for failed retrieval
+		if d.metrics != nil {
+			d.metrics.RecordRetrievalError()
+			d.metrics.RecordHTTPRequest("get", time.Since(start))
+		}
+
+		if isNotFoundError(err) {
+			d.log.Debug("Blob not found", "commitment", hex.EncodeToString(comm))
 			w.WriteHeader(http.StatusNotFound)
 		} else {
-			w.WriteHeader(http.StatusInternalServerError)
+			d.log.Error("Failed to retrieve blob", "commitment", hex.EncodeToString(comm), "err", err)
+			w.WriteHeader(http.StatusNotFound) // Return 404 on any error per requirements
 		}
 		return
 	}
 
-	if celestiaData != nil {
-		if _, err := w.Write(celestiaData); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+	if celestiaData == nil {
+		// Try fallback provider if enabled
+		if d.fallback.Available() && (d.fallbackMode == "read_fallback" || d.fallbackMode == "both") {
+			fbCtx, fbCancel := context.WithTimeout(r.Context(), d.fallback.Timeout())
+			defer fbCancel()
+			fbData, fbErr := d.fallback.Get(fbCtx, comm)
+			if fbErr == nil && fbData != nil {
+				d.log.Info("Served from fallback",
+					"provider", d.fallback.Name(),
+					"commitment", hex.EncodeToString(comm),
+					"size", len(fbData))
+				if d.metrics != nil {
+					d.metrics.RecordRetrieval(time.Since(start), len(fbData))
+					d.metrics.RecordHTTPRequest("get", time.Since(start))
+				}
+				if _, err := w.Write(fbData); err != nil {
+					d.log.Error("Failed to write fallback response", "err", err)
+				}
+				return
+			}
+			if fbErr != nil && fbErr != fallback.ErrNotFound {
+				d.log.Warn("Fallback read failed", "provider", d.fallback.Name(), "err", fbErr)
+			}
 		}
+
+		if d.metrics != nil {
+			d.metrics.RecordRetrievalError()
+			d.metrics.RecordHTTPRequest("get", time.Since(start))
+		}
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	// 3 fallback
-	if d.fallback {
-		fallbackData, fallbackErr := d.multiSourceRead(r.Context(), comm, d.store.Namespace, true)
-		if fallbackErr == nil && fallbackData != nil {
-			if _, err := w.Write(fallbackData); err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-			}
-			return
-		}
+
+	// Record metrics for successful retrieval
+	duration := time.Since(start)
+	if d.metrics != nil {
+		d.metrics.RecordRetrieval(duration, len(celestiaData))
+		d.metrics.RecordHTTPRequest("get", duration)
 	}
-	// if we goy here then no data was found
-	w.WriteHeader(http.StatusInternalServerError)
+
+	d.log.Info("Blob retrieved successfully",
+		"commitment", hex.EncodeToString(comm),
+		"size", len(celestiaData),
+		"duration", duration)
+
+	if _, err := w.Write(celestiaData); err != nil {
+		d.log.Error("Failed to write response", "err", err)
+	}
 }
 
+// HandlePut submits a blob to Celestia and returns the commitment.
+// Request: PUT /put with blob data in body
+// Response: GenericCommitment on success, 500 on error (let op-batcher retry).
 func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
-	if d.metricsEnabled {
-		timer := prometheus.NewTimer(requestDuration.WithLabelValues("put"))
-		defer timer.ObserveDuration()
-	}
-
+	start := time.Now()
 	d.log.Debug("PUT", "url", r.URL)
 
 	route := path.Base(r.URL.Path)
@@ -219,113 +259,111 @@ func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 
 	input, err := io.ReadAll(r.Body)
 	if err != nil {
+		d.log.Error("Failed to read request body", "err", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	commitment, blobData, err := d.store.Put(r.Context(), input)
-	if err != nil {
-		key := hexutil.Encode(commitment)
-		d.log.Info("Failed to store commitment to the DA server", "err", err, "key", key)
-		w.WriteHeader(http.StatusInternalServerError)
+	// Validate non-empty blob
+	if len(input) == 0 {
+		d.log.Warn("Empty blob rejected")
+		http.Error(w, "empty blob not allowed", http.StatusBadRequest)
 		return
 	}
 
-	// Observe metrics for blob size and height
-	if d.metricsEnabled {
-		blobSize.Observe(float64(len(input)))
-		var blobID CelestiaBlobID
-		// Skip first 2 bytes which are frame version and altda version
-		if err := blobID.UnmarshalBinary(commitment[2:]); err != nil {
-			d.log.Error("Failed to unmarshal blob ID", "err", err)
+	// Create context with configurable timeout
+	ctx, cancel := context.WithTimeout(r.Context(), d.submitTimeout)
+	defer cancel()
+
+	// Submit blob directly to Celestia (stateless - synchronous, blocks until confirmed)
+	commitment, _, err := d.store.Put(ctx, input)
+	if err != nil {
+		// Record metrics for failed submission
+		if d.metrics != nil {
+			d.metrics.RecordSubmissionError()
+			d.metrics.RecordHTTPRequest("put", time.Since(start))
 		}
-		inclusionHeight.Set(float64(blobID.Height))
+
+		d.log.Error("Failed to submit blob to Celestia",
+			"size", len(input),
+			"err", err)
+		// Return 500 with error message - let op-batcher retry
+		http.Error(w, fmt.Sprintf("submission failed: %v", err), http.StatusInternalServerError)
+		return
 	}
 
-	if d.cache || d.fallback {
-		err = d.handleRedundantWrites(r.Context(), commitment, blobData)
-		if err != nil {
-			d.log.Error("Failed to write to redundant backends", "err", err)
+	// Record metrics for successful submission
+	duration := time.Since(start)
+	if d.metrics != nil {
+		d.metrics.RecordSubmission(duration, len(input))
+		d.metrics.RecordHTTPRequest("put", duration)
+
+		// Parse blob ID to get height for metrics
+		var blobID CelestiaBlobID
+		// Skip first 2 bytes which are frame version and altda version
+		if err := blobID.UnmarshalBinary(commitment[2:]); err == nil {
+			d.metrics.SetInclusionHeight(blobID.Height)
 		}
+	}
+
+	d.log.Info("Blob submitted successfully",
+		"commitment", hex.EncodeToString(commitment),
+		"size", len(input),
+		"duration", duration)
+
+	// Write to fallback provider asynchronously (non-blocking)
+	if d.fallback.Available() && (d.fallbackMode == "write_through" || d.fallbackMode == "both") {
+		go func(comm []byte, data []byte) {
+			fbCtx, fbCancel := context.WithTimeout(context.Background(), d.fallback.Timeout())
+			defer fbCancel()
+			if err := d.fallback.Put(fbCtx, comm, data); err != nil {
+				d.log.Warn("Fallback write failed", "provider", d.fallback.Name(), "err", err)
+			} else {
+				d.log.Debug("Fallback write succeeded", "provider", d.fallback.Name())
+			}
+		}(commitment, input)
 	}
 
 	if _, err := w.Write(commitment); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+		d.log.Error("Failed to write response", "err", err)
 	}
 }
 
-func (b *CelestiaServer) Endpoint() string {
-	return b.listener.Addr().String()
+func (d *CelestiaServer) Endpoint() string {
+	return d.listener.Addr().String()
 }
 
-func (b *CelestiaServer) Stop() error {
+func (d *CelestiaServer) Stop() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = b.httpServer.Shutdown(ctx)
+	_ = d.httpServer.Shutdown(ctx)
 	return nil
 }
 
-// multiSourceRead ... reads from a set of backends and returns the first successfully read blob
-func (b *CelestiaServer) multiSourceRead(ctx context.Context, commitment []byte, namespace libshare.Namespace, fallback bool) ([]byte, error) {
-
-	if fallback {
-		b.fallbackLock.RLock()
-		defer b.fallbackLock.RUnlock()
-	} else {
-		b.cacheLock.RLock()
-		defer b.cacheLock.RUnlock()
+// isNotFoundError checks if the error indicates the blob was not found.
+func isNotFoundError(err error) bool {
+	if err == nil {
+		return false
 	}
-
-	var blobID CelestiaBlobID
-	// Skip first 2 bytes which are frame version and altda version
-	if err := blobID.UnmarshalBinary(commitment[2:]); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal blob ID: %w", err)
+	if err == altda.ErrNotFound {
+		return true
 	}
-
-	key := crypto.Keccak256(commitment)
-	b.log.Debug("s3 key", "key", hex.EncodeToString(key))
-	ctx, cancel := context.WithTimeout(ctx, b.s3Store.Timeout())
-	data, err := b.s3Store.Get(ctx, key)
-	defer cancel()
-	if err != nil {
-		b.log.Warn("Failed to read from redundant target S3", "err", err, "key", key)
-		return nil, errors.New("no data found in any redundant backend")
-	}
-
-	blob, err := blob.NewBlob(libshare.ShareVersionZero, namespace, data, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create blob: %w", err)
-	}
-
-	if err != nil || !bytes.Equal(blob.Commitment, blobID.Commitment) {
-		return nil, fmt.Errorf("celestia: invalid commitment in multiSourceRead: commit=%x commitment=%x err=%w", blob.Commitment, blobID.Commitment, err)
-	}
-
-	return data, nil
+	// Check for common "not found" error patterns
+	errStr := err.Error()
+	return contains(errStr, "not found") ||
+		contains(errStr, "blob not found") ||
+		contains(errStr, "no blob for commitment")
 }
 
-// handleRedundantWrites ... writes to both sets of backends (i.e, fallback, cache)
-// and returns an error if NONE of them succeed
-// NOTE: multi-target set writes are done at once to avoid re-invocation of the same write function at the same
-// caller step for different target sets vs. reading which is done conditionally to segment between a cached read type
-// vs a fallback read type
-func (b *CelestiaServer) handleRedundantWrites(ctx context.Context, commitment []byte, value []byte) error {
-	b.cacheLock.RLock()
-	b.fallbackLock.RLock()
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsAt(s, substr))
+}
 
-	defer func() {
-		b.cacheLock.RUnlock()
-		b.fallbackLock.RUnlock()
-	}()
-
-	ctx, cancel := context.WithTimeout(ctx, b.s3Store.Timeout())
-	key := crypto.Keccak256(commitment)
-	err := b.s3Store.Put(ctx, key, value)
-	defer cancel()
-	if err != nil {
-		b.log.Warn("Failed to write to redundant s3 target", "err", err, "timeout", b.s3Store.Timeout(), "key", key)
+func containsAt(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
 	}
-
-	return nil
+	return false
 }
