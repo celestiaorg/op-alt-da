@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/hex"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	celestia "github.com/celestiaorg/op-alt-da"
@@ -15,6 +17,11 @@ type Config struct {
 	Port      int    `toml:"port"`
 	LogLevel  string `toml:"log_level"`
 	LogFormat string `toml:"log_format"`
+
+	// HTTP server timeouts (protection against Slowloris and slow POST attacks)
+	HTTPReadTimeout  string `toml:"read_timeout"`  // Max time to read request headers + body
+	HTTPWriteTimeout string `toml:"write_timeout"` // Max time to write response
+	HTTPIdleTimeout  string `toml:"idle_timeout"`  // Max time for idle keep-alive connections
 
 	Celestia   CelestiaConfig   `toml:"celestia"`
 	Submission SubmissionConfig `toml:"submission"`
@@ -61,6 +68,10 @@ type SubmissionConfig struct {
 	// Transaction priority: 1=low, 2=medium, 3=high
 	// Higher priority = faster inclusion, higher gas cost
 	TxPriority int `toml:"tx_priority"`
+
+	// Maximum blob size accepted (protection against memory exhaustion)
+	// Supports human-readable formats: "2MB", "2097152", "1024KB", etc.
+	MaxBlobSize string `toml:"max_blob_size"`
 }
 
 // ReadConfig holds read settings for blob retrieval.
@@ -102,10 +113,13 @@ type S3Config struct {
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() Config {
 	return Config{
-		Addr:      "127.0.0.1",
-		Port:      3100,
-		LogLevel:  "info",
-		LogFormat: "text",
+		Addr:             "127.0.0.1",
+		Port:             3100,
+		LogLevel:         "info",
+		LogFormat:        "text",
+		HTTPReadTimeout:  "", // Will default to 30s in parser
+		HTTPWriteTimeout: "", // Will default to 120s in parser
+		HTTPIdleTimeout:  "", // Will default to 60s in parser
 		Celestia: CelestiaConfig{
 			Namespace:          "",
 			BlobIDCompact:      true,
@@ -121,8 +135,9 @@ func DefaultConfig() Config {
 			TxWorkerAccounts:   0,
 		},
 		Submission: SubmissionConfig{
-			Timeout:    "60s",
-			TxPriority: 2,
+			Timeout:     "60s",
+			TxPriority:  2,
+			MaxBlobSize: "", // Will default to 2MB in parser
 		},
 		Read: ReadConfig{
 			Timeout: "30s",
@@ -156,8 +171,23 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("celestia.namespace is required")
 	}
 
-	if _, err := hex.DecodeString(c.Celestia.Namespace); err != nil {
+	ns, err := hex.DecodeString(c.Celestia.Namespace)
+	if err != nil {
 		return fmt.Errorf("celestia.namespace must be valid hex: %w", err)
+	}
+	if len(ns) != 29 {
+		return fmt.Errorf("celestia.namespace must be 29 bytes (58 hex chars), got %d bytes", len(ns))
+	}
+
+	// Validate HTTP server timeouts
+	if _, err := c.GetHTTPReadTimeout(); err != nil {
+		return fmt.Errorf("read_timeout: %w", err)
+	}
+	if _, err := c.GetHTTPWriteTimeout(); err != nil {
+		return fmt.Errorf("write_timeout: %w", err)
+	}
+	if _, err := c.GetHTTPIdleTimeout(); err != nil {
+		return fmt.Errorf("idle_timeout: %w", err)
 	}
 
 	if _, err := c.GetSubmissionTimeout(); err != nil {
@@ -166,6 +196,10 @@ func (c *Config) Validate() error {
 
 	if _, err := c.GetReadTimeout(); err != nil {
 		return fmt.Errorf("read.timeout: %w", err)
+	}
+
+	if _, err := c.GetMaxBlobSize(); err != nil {
+		return fmt.Errorf("submission.max_blob_size: %w", err)
 	}
 
 	if c.Submission.TxPriority < 1 || c.Submission.TxPriority > 3 {
@@ -196,12 +230,70 @@ func (c *Config) GetSubmissionTimeout() (time.Duration, error) {
 	return time.ParseDuration(c.Submission.Timeout)
 }
 
-// GetReadTimeout parses and returns the read timeout duration.
+// GetReadTimeout parses and returns the read timeout duration for blob retrieval.
 func (c *Config) GetReadTimeout() (time.Duration, error) {
 	if c.Read.Timeout == "" {
 		return 30 * time.Second, nil
 	}
 	return time.ParseDuration(c.Read.Timeout)
+}
+
+// GetHTTPReadTimeout parses and returns the HTTP server read timeout.
+func (c *Config) GetHTTPReadTimeout() (time.Duration, error) {
+	if c.HTTPReadTimeout == "" {
+		return 30 * time.Second, nil
+	}
+	return time.ParseDuration(c.HTTPReadTimeout)
+}
+
+// GetHTTPWriteTimeout parses and returns the HTTP server write timeout.
+func (c *Config) GetHTTPWriteTimeout() (time.Duration, error) {
+	if c.HTTPWriteTimeout == "" {
+		return 120 * time.Second, nil
+	}
+	return time.ParseDuration(c.HTTPWriteTimeout)
+}
+
+// GetHTTPIdleTimeout parses and returns the HTTP server idle timeout.
+func (c *Config) GetHTTPIdleTimeout() (time.Duration, error) {
+	if c.HTTPIdleTimeout == "" {
+		return 60 * time.Second, nil
+	}
+	return time.ParseDuration(c.HTTPIdleTimeout)
+}
+
+// GetMaxBlobSize parses and returns the maximum blob size in bytes.
+func (c *Config) GetMaxBlobSize() (int64, error) {
+	if c.Submission.MaxBlobSize == "" {
+		return 2 * 1024 * 1024, nil // Default 2MB (Celestia max)
+	}
+	return parseByteSize(c.Submission.MaxBlobSize)
+}
+
+// parseByteSize parses human-readable byte sizes like "2MB", "1024KB", "2097152"
+func parseByteSize(s string) (int64, error) {
+	s = strings.TrimSpace(strings.ToUpper(s))
+
+	multipliers := map[string]int64{
+		"B":  1,
+		"KB": 1024,
+		"MB": 1024 * 1024,
+		"GB": 1024 * 1024 * 1024,
+	}
+
+	for suffix, mult := range multipliers {
+		if strings.HasSuffix(s, suffix) {
+			numStr := strings.TrimSuffix(s, suffix)
+			num, err := strconv.ParseInt(strings.TrimSpace(numStr), 10, 64)
+			if err != nil {
+				return 0, fmt.Errorf("invalid number in byte size: %w", err)
+			}
+			return num * mult, nil
+		}
+	}
+
+	// Plain number (bytes)
+	return strconv.ParseInt(s, 10, 64)
 }
 
 // TxClientEnabled returns true if the TX client (CoreGRPC) is configured.

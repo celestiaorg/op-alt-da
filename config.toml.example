@@ -19,6 +19,12 @@ log_level = "info"
 # Log format: text, terminal, logfmt, json, json-pretty
 log_format = "text"
 
+# HTTP server timeouts (protection against Slowloris/slow POST attacks)
+# These are critical for production deployments
+read_timeout = "30s"      # Max time to read request headers + body
+write_timeout = "120s"    # Max time to write response (Celestia can be slow)
+idle_timeout = "60s"      # Max time for idle keep-alive connections
+
 # ==============================================================================
 # CELESTIA CONFIGURATION
 # ==============================================================================
@@ -79,6 +85,11 @@ timeout = "60s"
 
 # Transaction priority: 1=low, 2=medium, 3=high
 tx_priority = 2
+
+# Maximum blob size accepted (protection against memory exhaustion)
+# Celestia's max blob size is ~2MB. Adjust based on your deployment.
+# Supports: "2MB", "2097152", "1024KB", etc.
+max_blob_size = "2MB"
 
 # ==============================================================================
 # READ CONFIGURATION
