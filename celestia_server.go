@@ -170,28 +170,17 @@ func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try to retrieve blob (Celestia first, then fallback)
+	// Retrieve blob from Celestia
 	ctx := r.Context()
-	data, fromFallback, err := d.getBlob(ctx, comm)
+	data, err := d.getCelestia(ctx, comm)
 	if err != nil {
 		d.handleGetError(w, comm, err, start)
 		return
 	}
 
-	// Success - record metrics
+	// Success
 	d.recordGetSuccess(start, len(data))
-
-	d.log.Info("Blob retrieved successfully",
-		"commitment", hex.EncodeToString(comm),
-		"size", len(data),
-		"fromFallback", fromFallback,
-		"duration", time.Since(start))
-
-	// Read-through: populate fallback with Celestia data for future requests
-	if !fromFallback && d.fallback.Available() {
-		d.wg.Add(1)
-		go d.putFallback(context.Background(), comm, data)
-	}
+	d.log.Info("Blob retrieved", "commitment", hex.EncodeToString(comm), "size", len(data), "duration", time.Since(start))
 
 	if _, err := w.Write(data); err != nil {
 		d.log.Error("Failed to write response", "err", err)
@@ -210,43 +199,42 @@ func (d *CelestiaServer) parseCommitment(urlPath string) ([]byte, error) {
 	return comm, nil
 }
 
-// getBlob retrieves blob data. Tries Celestia first, then fallback if not found.
-// Returns (data, fromFallback, error). fromFallback=false means data came from Celestia.
-func (d *CelestiaServer) getBlob(ctx context.Context, comm []byte) ([]byte, bool, error) {
-	// Try Celestia (default/primary source)
-	data, err := d.getCelestia(ctx, comm)
+// getCelestia retrieves blob from Celestia. If not found and fallback is available,
+// tries fallback. If found in Celestia and fallback is available, populates fallback (read-through).
+func (d *CelestiaServer) getCelestia(ctx context.Context, comm []byte) ([]byte, error) {
+	getCtx, cancel := context.WithTimeout(ctx, d.getTimeout)
+	defer cancel()
+
+	data, err := d.store.Get(getCtx, comm)
 	if err == nil {
-		return data, false, nil
+		// Success from Celestia - read-through to fallback for future requests
+		if d.fallback.Available() {
+			d.wg.Add(1)
+			go d.putFallback(ctx, comm, data)
+		}
+		return data, nil
 	}
 
-	// If actual error (not NotFound), don't try fallback
+	// If actual error (not NotFound), return it
 	if !isNotFoundError(err) {
-		return nil, false, err
+		return nil, err
 	}
 
-	// Celestia returned NotFound - try fallback if available
+	// NotFound - try fallback if available
 	if !d.fallback.Available() {
-		return nil, false, altda.ErrNotFound
+		return nil, altda.ErrNotFound
 	}
 
 	d.log.Debug("Blob not found in Celestia, trying fallback", "commitment", hex.EncodeToString(comm))
-
 	data, err = d.getFallback(ctx, comm)
 	if err != nil {
 		if !errors.Is(err, fallback.ErrNotFound) {
 			d.log.Warn("Fallback read failed", "provider", d.fallback.Name(), "err", err)
 		}
-		return nil, false, altda.ErrNotFound
+		return nil, altda.ErrNotFound
 	}
 
-	return data, true, nil
-}
-
-// getCelestia retrieves blob from Celestia with configured timeout.
-func (d *CelestiaServer) getCelestia(ctx context.Context, comm []byte) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, d.getTimeout)
-	defer cancel()
-	return d.store.Get(ctx, comm)
+	return data, nil
 }
 
 // handleGetError handles errors from getBlob and writes appropriate HTTP response.
