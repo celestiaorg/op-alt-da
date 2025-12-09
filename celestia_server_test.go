@@ -34,7 +34,7 @@ func createTestServer(t *testing.T, store *CelestiaStore) *CelestiaServer {
 		30*time.Second,
 		false, // metrics disabled for unit tests
 		0,
-		nil, // fallback provider (nil = NoOpProvider)
+		nil, // fallback provider (nil = NoopProvider)
 		"",  // fallback mode (empty = default "both")
 		logger,
 	)

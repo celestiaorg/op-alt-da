@@ -96,7 +96,7 @@ func StartDAServer(cliCtx *cli.Context) error {
 		}
 
 		// Initialize fallback provider (prefer TOML config, fall back to CLI flags)
-		var fallbackProvider fallback.Provider = &fallback.NoOpProvider{}
+		var fallbackProvider fallback.Provider = &fallback.NoopProvider{}
 		fallbackMode := cfg.Fallback.Mode
 		if fallbackMode == "" {
 			fallbackMode = cliCtx.String(FallbackModeFlagName)

@@ -65,9 +65,9 @@ func NewCelestiaServer(
 ) *CelestiaServer {
 	endpoint := net.JoinHostPort(host, strconv.Itoa(port))
 
-	// Default to NoOpProvider if nil
+	// Default to NoopProvider if nil
 	if fallbackProvider == nil {
-		fallbackProvider = &fallback.NoOpProvider{}
+		fallbackProvider = &fallback.NoopProvider{}
 	}
 
 	// Default fallback mode

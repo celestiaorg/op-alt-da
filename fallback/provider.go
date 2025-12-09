@@ -28,12 +28,13 @@ type Provider interface {
 	Timeout() time.Duration
 }
 
-// NoOpProvider is used when fallback is disabled.
-type NoOpProvider struct{}
+// NoopProvider is used when fallback is disabled.
+// Named "Noop" (not "NoOp") to avoid confusion with "OP" from OP Stack.
+type NoopProvider struct{}
 
-func (n *NoOpProvider) Name() string                                      { return "noop" }
-func (n *NoOpProvider) Put(ctx context.Context, c, d []byte) error        { return nil }
-func (n *NoOpProvider) Get(ctx context.Context, c []byte) ([]byte, error) { return nil, ErrNotFound }
-func (n *NoOpProvider) Available() bool                                   { return false }
-func (n *NoOpProvider) Timeout() time.Duration                            { return 0 }
+func (n *NoopProvider) Name() string                                      { return "noop" }
+func (n *NoopProvider) Put(ctx context.Context, c, d []byte) error        { return nil }
+func (n *NoopProvider) Get(ctx context.Context, c []byte) ([]byte, error) { return nil, ErrNotFound }
+func (n *NoopProvider) Available() bool                                   { return false }
+func (n *NoopProvider) Timeout() time.Duration                            { return 0 }
 
