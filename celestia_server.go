@@ -190,7 +190,7 @@ func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	// Read-through: populate fallback with Celestia data for future requests
 	if !fromFallback && d.fallback.Available() {
 		d.wg.Add(1)
-		go d.putFallback(comm, data)
+		go d.putFallback(context.Background(), comm, data)
 	}
 
 	if _, err := w.Write(data); err != nil {
@@ -344,7 +344,7 @@ func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 	// Write to fallback provider asynchronously (non-blocking)
 	if d.fallback.Available() {
 		d.wg.Add(1)
-		go d.putFallback(commitment, input)
+		go d.putFallback(context.Background(), commitment, input)
 	}
 
 	if _, err := w.Write(commitment); err != nil {
@@ -364,11 +364,11 @@ func (d *CelestiaServer) getFallback(ctx context.Context, commitment []byte) ([]
 }
 
 // putFallback writes to fallback provider. Must be called with `go` after `d.wg.Add(1)`.
-// Uses context.Background() since called async, independent of HTTP request lifecycle.
-func (d *CelestiaServer) putFallback(commitment []byte, data []byte) {
+// Caller provides parent context (typically context.Background() for async operations).
+func (d *CelestiaServer) putFallback(ctx context.Context, commitment []byte, data []byte) {
 	defer d.wg.Done()
 
-	ctx, cancel := context.WithTimeout(context.Background(), d.fallback.Timeout())
+	ctx, cancel := context.WithTimeout(ctx, d.fallback.Timeout())
 	defer cancel()
 
 	if err := d.fallback.Put(ctx, commitment, data); err != nil {
