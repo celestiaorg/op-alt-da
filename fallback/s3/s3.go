@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/celestiaorg/op-alt-da/fallback"
 	"github.com/ethereum/go-ethereum/crypto"
 )
@@ -177,19 +178,20 @@ func (p *S3Provider) makeKey(commitment []byte) string {
 }
 
 // isNotFoundError checks if the error indicates the object was not found.
+// Uses proper AWS SDK v2 error types instead of string matching.
 func isNotFoundError(err error) bool {
 	if err == nil {
 		return false
 	}
-	errStr := err.Error()
-	return contains(errStr, "NoSuchKey") || contains(errStr, "NotFound") || contains(errStr, "not found")
-}
-
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
+	// Check for NoSuchKey error type (AWS SDK v2)
+	var noSuchKey *types.NoSuchKey
+	if errors.As(err, &noSuchKey) {
+		return true
+	}
+	// Check for NotFound error type (AWS SDK v2)
+	var notFound *types.NotFound
+	if errors.As(err, &notFound) {
+		return true
 	}
 	return false
 }
