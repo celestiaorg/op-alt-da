@@ -45,14 +45,15 @@ func TestS3Provider_MakeKey(t *testing.T) {
 	commitment := []byte("test-commitment")
 	key := provider.makeKey(commitment)
 
-	// Key should be hex-encoded keccak256 hash (64 characters)
-	assert.Len(t, key, 64)
+	// Key should be hex-encoded commitment (2 hex chars per byte)
+	expectedLen := len(commitment) * 2
+	assert.Len(t, key, expectedLen)
 
 	// With prefix
 	provider.prefix = "blobs"
 	key = provider.makeKey(commitment)
 	assert.Contains(t, key, "blobs/")
-	assert.Len(t, key, 64+len("blobs/"))
+	assert.Len(t, key, expectedLen+len("blobs/"))
 }
 
 func TestS3Provider_Name(t *testing.T) {

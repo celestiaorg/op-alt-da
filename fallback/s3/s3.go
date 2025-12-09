@@ -15,7 +15,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/celestiaorg/op-alt-da/fallback"
-	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // Config holds S3 provider configuration.
@@ -166,15 +165,14 @@ func (p *S3Provider) Timeout() time.Duration {
 }
 
 // makeKey generates the S3 object key from a commitment.
-// Format: prefix/hex(keccak256(commitment))
+// Format: prefix/hex(commitment) - compatible with main branch format
 func (p *S3Provider) makeKey(commitment []byte) string {
-	hash := crypto.Keccak256(commitment)
-	hexHash := hex.EncodeToString(hash)
+	hexKey := hex.EncodeToString(commitment)
 
 	if p.prefix != "" {
-		return p.prefix + "/" + hexHash
+		return p.prefix + "/" + hexKey
 	}
-	return hexHash
+	return hexKey
 }
 
 // isNotFoundError checks if the error indicates the object was not found.
