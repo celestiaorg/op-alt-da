@@ -11,6 +11,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/celestiaorg/op-alt-da/fallback"
@@ -48,6 +49,9 @@ type CelestiaServer struct {
 	// Fallback provider (Agent F)
 	// When enabled, fallback performs both write-through (PUT) and read-fallback (GET)
 	fallback fallback.Provider
+
+	// Track pending async operations for graceful shutdown
+	wg sync.WaitGroup
 }
 
 // NewCelestiaServer creates a new stateless Celestia server.
@@ -166,25 +170,25 @@ func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try to retrieve blob
+	// Try to retrieve blob (Celestia first, then fallback)
 	ctx := r.Context()
-	data, source, err := d.getBlob(ctx, comm)
+	data, fromFallback, err := d.getBlob(ctx, comm)
 	if err != nil {
 		d.handleGetError(w, comm, err, start)
 		return
 	}
 
-	// Success - record metrics and respond
-	d.recordGetSuccess(start, len(data), source)
+	// Success - record metrics
+	d.recordGetSuccess(start, len(data))
 
 	d.log.Info("Blob retrieved successfully",
 		"commitment", hex.EncodeToString(comm),
 		"size", len(data),
-		"source", source,
+		"fromFallback", fromFallback,
 		"duration", time.Since(start))
 
-	// Read-through: if from Celestia, populate fallback async
-	if source == "celestia" && d.fallback.Available() {
+	// Read-through: populate fallback with Celestia data for future requests
+	if !fromFallback && d.fallback.Available() {
 		d.putFallbackAsync(comm, data)
 	}
 
@@ -205,35 +209,36 @@ func (d *CelestiaServer) parseCommitment(urlPath string) ([]byte, error) {
 	return comm, nil
 }
 
-// getBlob tries Celestia first, then fallback. Returns data and source ("celestia" or "fallback").
-func (d *CelestiaServer) getBlob(ctx context.Context, comm []byte) ([]byte, string, error) {
-	// Try Celestia first
+// getBlob retrieves blob data. Tries Celestia first, then fallback if not found.
+// Returns (data, fromFallback, error). fromFallback=false means data came from Celestia.
+func (d *CelestiaServer) getBlob(ctx context.Context, comm []byte) ([]byte, bool, error) {
+	// Try Celestia (default/primary source)
 	data, err := d.getCelestia(ctx, comm)
 	if err == nil {
-		return data, "celestia", nil
+		return data, false, nil
 	}
 
 	// If actual error (not NotFound), don't try fallback
 	if !isNotFoundError(err) {
-		return nil, "", err
+		return nil, false, err
+	}
+
+	// Celestia returned NotFound - try fallback if available
+	if !d.fallback.Available() {
+		return nil, false, altda.ErrNotFound
 	}
 
 	d.log.Debug("Blob not found in Celestia, trying fallback", "commitment", hex.EncodeToString(comm))
-
-	// Try fallback
-	if !d.fallback.Available() {
-		return nil, "", altda.ErrNotFound
-	}
 
 	data, err = d.getFallback(ctx, comm)
 	if err != nil {
 		if !errors.Is(err, fallback.ErrNotFound) {
 			d.log.Warn("Fallback read failed", "provider", d.fallback.Name(), "err", err)
 		}
-		return nil, "", altda.ErrNotFound
+		return nil, false, altda.ErrNotFound
 	}
 
-	return data, "fallback", nil
+	return data, true, nil
 }
 
 // getCelestia retrieves blob from Celestia with configured timeout.
@@ -260,7 +265,7 @@ func (d *CelestiaServer) handleGetError(w http.ResponseWriter, comm []byte, err 
 }
 
 // recordGetSuccess records metrics for successful blob retrieval.
-func (d *CelestiaServer) recordGetSuccess(start time.Time, size int, source string) {
+func (d *CelestiaServer) recordGetSuccess(start time.Time, size int) {
 	if d.metrics == nil {
 		return
 	}
@@ -358,13 +363,17 @@ func (d *CelestiaServer) getFallback(parent context.Context, commitment []byte) 
 
 // putFallbackAsync writes to fallback provider asynchronously with its own context.
 // Uses context.Background() since the operation should complete independently of the HTTP request.
+// Tracked by WaitGroup for graceful shutdown.
 func (d *CelestiaServer) putFallbackAsync(commitment []byte, data []byte) {
 	// Capture values needed by goroutine to avoid closure issues
 	provider := d.fallback
 	timeout := d.fallback.Timeout()
 	logger := d.log
 
+	d.wg.Add(1)
 	go func() {
+		defer d.wg.Done()
+
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
@@ -377,9 +386,25 @@ func (d *CelestiaServer) putFallbackAsync(commitment []byte, data []byte) {
 }
 
 func (d *CelestiaServer) Stop() error {
+	// Shutdown HTTP server
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = d.httpServer.Shutdown(ctx)
+
+	// Wait for pending async operations (fallback writes) to complete
+	done := make(chan struct{})
+	go func() {
+		d.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		d.log.Info("All pending fallback operations completed")
+	case <-time.After(10 * time.Second):
+		d.log.Warn("Timeout waiting for pending fallback operations")
+	}
+
 	return nil
 }
 
