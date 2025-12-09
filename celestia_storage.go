@@ -249,7 +249,7 @@ func initRPCClient(cfg RPCClientConfig) (blobAPI.Module, error) {
 
 func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	d.Log.Info("celestia: blob request", "id", hex.EncodeToString(key))
-	ctx, cancel := context.WithTimeout(context.Background(), d.GetTimeout)
+	ctx, cancel := context.WithTimeout(ctx, d.GetTimeout)
 	defer cancel()
 
 	var blobID CelestiaBlobID
