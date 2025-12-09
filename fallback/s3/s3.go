@@ -178,16 +178,8 @@ func isNotFoundError(err error) bool {
 	if err == nil {
 		return false
 	}
-	// Check for NoSuchKey error type (AWS SDK v2)
+	// Check for NoSuchKey or NotFound error types (AWS SDK v2)
 	var noSuchKey *types.NoSuchKey
-	if errors.As(err, &noSuchKey) {
-		return true
-	}
-	// Check for NotFound error type (AWS SDK v2)
 	var notFound *types.NotFound
-	if errors.As(err, &notFound) {
-		return true
-	}
-	return false
+	return errors.As(err, &noSuchKey) || errors.As(err, &notFound)
 }
-
