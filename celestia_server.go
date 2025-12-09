@@ -183,52 +183,49 @@ func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	// Read blob directly from Celestia (stateless - no caching)
 	celestiaData, err := d.store.Get(ctx, comm)
 	if err != nil {
-		// Record metrics for failed retrieval
-		if d.metrics != nil {
-			d.metrics.RecordRetrievalError()
-			d.metrics.RecordHTTPRequest("get", time.Since(start))
-		}
-
 		if isNotFoundError(err) {
-			d.log.Debug("Blob not found", "commitment", hex.EncodeToString(comm))
+			d.log.Debug("Blob not found in Celestia", "commitment", hex.EncodeToString(comm))
+
+			// Try fallback provider if enabled for reads
+			if d.fallback.Available() && (d.fallbackMode == "read_fallback" || d.fallbackMode == "both") {
+				fbCtx, fbCancel := context.WithTimeout(r.Context(), d.fallback.Timeout())
+				defer fbCancel()
+				fbData, fbErr := d.fallback.Get(fbCtx, comm)
+				if fbErr == nil && fbData != nil {
+					d.log.Info("Served from fallback",
+						"provider", d.fallback.Name(),
+						"commitment", hex.EncodeToString(comm),
+						"size", len(fbData))
+					if d.metrics != nil {
+						d.metrics.RecordRetrieval(time.Since(start), len(fbData))
+						d.metrics.RecordHTTPRequest("get", time.Since(start))
+					}
+					if _, err := w.Write(fbData); err != nil {
+						d.log.Error("Failed to write fallback response", "err", err)
+					}
+					return
+				}
+				if fbErr != nil && !errors.Is(fbErr, fallback.ErrNotFound) {
+					d.log.Warn("Fallback read failed", "provider", d.fallback.Name(), "err", fbErr)
+				}
+			}
+
+			// Record metrics and return 404
+			if d.metrics != nil {
+				d.metrics.RecordRetrievalError()
+				d.metrics.RecordHTTPRequest("get", time.Since(start))
+			}
 			w.WriteHeader(http.StatusNotFound)
-		} else {
-			d.log.Error("Failed to retrieve blob", "commitment", hex.EncodeToString(comm), "err", err)
-			w.WriteHeader(http.StatusNotFound) // Return 404 on any error per requirements
-		}
-		return
-	}
-
-	if celestiaData == nil {
-		// Try fallback provider if enabled
-		if d.fallback.Available() && (d.fallbackMode == "read_fallback" || d.fallbackMode == "both") {
-			fbCtx, fbCancel := context.WithTimeout(r.Context(), d.fallback.Timeout())
-			defer fbCancel()
-			fbData, fbErr := d.fallback.Get(fbCtx, comm)
-			if fbErr == nil && fbData != nil {
-				d.log.Info("Served from fallback",
-					"provider", d.fallback.Name(),
-					"commitment", hex.EncodeToString(comm),
-					"size", len(fbData))
-				if d.metrics != nil {
-					d.metrics.RecordRetrieval(time.Since(start), len(fbData))
-					d.metrics.RecordHTTPRequest("get", time.Since(start))
-				}
-				if _, err := w.Write(fbData); err != nil {
-					d.log.Error("Failed to write fallback response", "err", err)
-				}
-				return
-			}
-			if fbErr != nil && fbErr != fallback.ErrNotFound {
-				d.log.Warn("Fallback read failed", "provider", d.fallback.Name(), "err", fbErr)
-			}
+			return
 		}
 
+		// Actual error (not NotFound) - return 500
+		d.log.Error("Failed to retrieve blob", "commitment", hex.EncodeToString(comm), "err", err)
 		if d.metrics != nil {
 			d.metrics.RecordRetrievalError()
 			d.metrics.RecordHTTPRequest("get", time.Since(start))
 		}
-		w.WriteHeader(http.StatusNotFound)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
