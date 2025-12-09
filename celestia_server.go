@@ -234,6 +234,20 @@ func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		"size", len(celestiaData),
 		"duration", duration)
 
+	// Read-through: populate fallback with data from Celestia (async, non-blocking)
+	// This ensures blobs submitted before fallback was enabled get cached on first read
+	if d.fallback.Available() {
+		go func(commitment []byte, data []byte) {
+			fbCtx, fbCancel := context.WithTimeout(context.Background(), d.fallback.Timeout())
+			defer fbCancel()
+			if err := d.fallback.Put(fbCtx, commitment, data); err != nil {
+				d.log.Debug("Fallback read-through write failed", "provider", d.fallback.Name(), "err", err)
+			} else {
+				d.log.Debug("Fallback read-through write succeeded", "provider", d.fallback.Name())
+			}
+		}(comm, celestiaData)
+	}
+
 	if _, err := w.Write(celestiaData); err != nil {
 		d.log.Error("Failed to write response", "err", err)
 	}
