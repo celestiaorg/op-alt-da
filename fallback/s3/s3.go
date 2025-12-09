@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -168,11 +169,7 @@ func (p *S3Provider) Timeout() time.Duration {
 // Format: prefix/hex(commitment) - compatible with main branch format
 func (p *S3Provider) makeKey(commitment []byte) string {
 	hexKey := hex.EncodeToString(commitment)
-
-	if p.prefix != "" {
-		return p.prefix + "/" + hexKey
-	}
-	return hexKey
+	return path.Join(p.prefix, hexKey)
 }
 
 // isNotFoundError checks if the error indicates the object was not found.
