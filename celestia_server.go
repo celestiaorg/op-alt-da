@@ -24,7 +24,7 @@ import (
 )
 
 // CelestiaServer implements the HTTP server for the stateless DA server.
-// This is a simplified version without S3 caching/fallback, database, or workers.
+// Supports optional fallback provider for redundant storage.
 type CelestiaServer struct {
 	log      log.Logger
 	endpoint string
@@ -170,9 +170,9 @@ func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Retrieve blob from Celestia
+	// Retrieve blob (Celestia first, fallback if not found)
 	ctx := r.Context()
-	data, err := d.getCelestia(ctx, comm)
+	data, err := d.getBlob(ctx, comm)
 	if err != nil {
 		d.handleGetError(w, comm, err, start)
 		return
@@ -199,9 +199,9 @@ func (d *CelestiaServer) parseCommitment(urlPath string) ([]byte, error) {
 	return comm, nil
 }
 
-// getCelestia retrieves blob from Celestia. If not found and fallback is available,
+// getBlob retrieves blob from Celestia. If not found and fallback is available,
 // tries fallback. If found in Celestia and fallback is available, populates fallback (read-through).
-func (d *CelestiaServer) getCelestia(ctx context.Context, comm []byte) ([]byte, error) {
+func (d *CelestiaServer) getBlob(ctx context.Context, comm []byte) ([]byte, error) {
 	getCtx, cancel := context.WithTimeout(ctx, d.getTimeout)
 	defer cancel()
 
@@ -210,7 +210,7 @@ func (d *CelestiaServer) getCelestia(ctx context.Context, comm []byte) ([]byte, 
 		// Success from Celestia - read-through to fallback for future requests
 		if d.fallback.Available() {
 			d.wg.Add(1)
-			go d.putFallback(ctx, comm, data)
+			go d.putFallback(context.Background(), comm, data)
 		}
 		return data, nil
 	}
@@ -370,7 +370,10 @@ func (d *CelestiaServer) Stop() error {
 	// Shutdown HTTP server
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = d.httpServer.Shutdown(ctx)
+
+	if err := d.httpServer.Shutdown(ctx); err != nil {
+		d.log.Error("HTTP server shutdown error", "err", err)
+	}
 
 	// Wait for pending async operations (fallback writes) to complete
 	done := make(chan struct{})
@@ -382,11 +385,11 @@ func (d *CelestiaServer) Stop() error {
 	select {
 	case <-done:
 		d.log.Info("All pending fallback operations completed")
+		return nil
 	case <-time.After(10 * time.Second):
 		d.log.Warn("Timeout waiting for pending fallback operations")
+		return fmt.Errorf("timeout waiting for %d pending operations", 0) // WaitGroup doesn't expose count
 	}
-
-	return nil
 }
 
 // isNotFoundError checks if the error indicates the blob was not found.
