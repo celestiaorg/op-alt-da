@@ -284,10 +284,7 @@ func isBlobNotFoundError(err error) bool {
 }
 
 func (d *CelestiaStore) Put(ctx context.Context, data []byte) ([]byte, []byte, error) {
-	var submitFunc = func(ctx context.Context, client blobAPI.Module, b []*blob.Blob) (uint64, error) {
-		return d.Client.Submit(ctx, b, state.NewTxConfig())
-	}
-	id, blobData, err := submitAndCreateBlobID(ctx, d.Client, submitFunc, d.Namespace, data, d.CompactBlobID)
+	id, blobData, err := d.submitBlob(ctx, data)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -305,52 +302,36 @@ func (d *CelestiaStore) CreateCommitment(data []byte) ([]byte, error) {
 	return b.Commitment, nil
 }
 
-// submitAndCreateBlobID submits a blob to Celestia and creates a marshaled blob ID.
-// If compactBlobID is true, it re-fetches the blob to get its index and length.
-func submitAndCreateBlobID(
-	ctx context.Context,
-	client blobAPI.Module,
-	submitFunc func(context.Context, blobAPI.Module, []*blob.Blob) (uint64, error),
-	namespace libshare.Namespace,
-	data []byte,
-	compactBlobID bool,
-) ([]byte, []byte, error) {
-	b, err := blob.NewBlob(libshare.ShareVersionZero, namespace, data, nil)
+// submitBlob submits a blob to Celestia and returns the marshaled blob ID.
+func (d *CelestiaStore) submitBlob(ctx context.Context, data []byte) ([]byte, []byte, error) {
+	b, err := blob.NewBlob(libshare.ShareVersionZero, d.Namespace, data, nil)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	height, err := submitFunc(ctx, client, []*blob.Blob{b})
+	height, err := d.Client.Submit(ctx, []*blob.Blob{b}, state.NewTxConfig())
 	if err != nil {
 		return nil, nil, err
 	}
 
-	var blobID CelestiaBlobID
-	if compactBlobID {
-		// Re-fetch the blob to get its index and length
-		b, err = client.Get(ctx, height, namespace, b.Commitment)
+	blobID := CelestiaBlobID{
+		Height:     height,
+		Commitment: b.Commitment,
+		isCompact:  d.CompactBlobID,
+	}
+
+	// For compact format, re-fetch to get share index and size
+	if d.CompactBlobID {
+		b, err = d.Client.Get(ctx, height, d.Namespace, b.Commitment)
 		if err != nil {
 			return nil, nil, err
 		}
-
 		size, err := b.Length()
 		if err != nil {
 			return nil, nil, err
 		}
-
-		blobID = CelestiaBlobID{
-			Height:      height,
-			Commitment:  b.Commitment,
-			ShareOffset: uint32(b.Index()),
-			ShareSize:   uint32(size),
-			isCompact:   compactBlobID,
-		}
-	} else {
-		blobID = CelestiaBlobID{
-			Height:     height,
-			Commitment: b.Commitment,
-			isCompact:  compactBlobID,
-		}
+		blobID.ShareOffset = uint32(b.Index())
+		blobID.ShareSize = uint32(size)
 	}
 
 	id, err := blobID.MarshalBinary()
