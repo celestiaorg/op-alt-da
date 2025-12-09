@@ -26,7 +26,7 @@ type CelestiaMetrics struct {
 	RetrievalsTotal   prometheus.Counter
 	RetrievalErrors   prometheus.Counter
 
-	// Fallback metrics (M4)
+	// Fallback metrics
 	FallbackWritesTotal prometheus.Counter
 	FallbackWriteErrors prometheus.Counter
 }

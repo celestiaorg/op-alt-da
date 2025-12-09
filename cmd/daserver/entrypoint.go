@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 )
 
 type Server interface {
-	Start() error
+	Start(ctx context.Context) error
 	Stop() error
 }
 
@@ -60,7 +61,7 @@ func StartDAServer(cliCtx *cli.Context) error {
 		return fmt.Errorf("invalid read timeout: %w", err)
 	}
 
-	// Parse HTTP server timeouts (C2)
+	// Parse HTTP server timeouts
 	httpReadTimeout, err := cfg.GetHTTPReadTimeout()
 	if err != nil {
 		return fmt.Errorf("invalid http read timeout: %w", err)
@@ -76,7 +77,6 @@ func StartDAServer(cliCtx *cli.Context) error {
 		return fmt.Errorf("invalid http idle timeout: %w", err)
 	}
 
-	// Parse max blob size (C1)
 	maxBlobSize, err := cfg.GetMaxBlobSize()
 	if err != nil {
 		return fmt.Errorf("invalid max blob size: %w", err)
@@ -171,10 +171,10 @@ func StartDAServer(cliCtx *cli.Context) error {
 			store,
 			submitTimeout,
 			getTimeout,
-			httpReadTimeout,  // C2: HTTP server read timeout
-			httpWriteTimeout, // C2: HTTP server write timeout
-			httpIdleTimeout,  // C2: HTTP server idle timeout
-			maxBlobSize,      // C1: Max blob size
+			httpReadTimeout,
+			httpWriteTimeout,
+			httpIdleTimeout,
+			maxBlobSize,
 			cfg.Metrics.Enabled,
 			cfg.Metrics.Port,
 			fallbackProvider,
@@ -184,7 +184,7 @@ func StartDAServer(cliCtx *cli.Context) error {
 		return fmt.Errorf("celestia configuration is required")
 	}
 
-	if err := server.Start(); err != nil {
+	if err := server.Start(cliCtx.Context); err != nil {
 		return fmt.Errorf("failed to start the DA server: %w", err)
 	}
 	l.Info("Started DA Server")

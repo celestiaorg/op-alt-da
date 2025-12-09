@@ -23,7 +23,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// securityHeadersMiddleware adds security headers to all responses (M2)
+// securityHeadersMiddleware adds security headers to prevent MIME sniffing and clickjacking.
 func securityHeadersMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -32,15 +32,24 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// recoveryMiddleware recovers from panics and returns 500 instead of crashing (M5)
+// recoveryMiddleware recovers from panics to prevent server crashes.
+// Logs the panic with request context and returns 500 to the client.
 func recoveryMiddleware(next http.Handler, logger log.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
+				// Check if client disconnected (context cancelled)
+				if r.Context().Err() != nil {
+					logger.Debug("Client disconnected during panic recovery",
+						"path", r.URL.Path,
+						"method", r.Method)
+					return
+				}
 				logger.Error("Handler panic recovered",
 					"err", err,
 					"path", r.URL.Path,
-					"method", r.Method)
+					"method", r.Method,
+					"remote", r.RemoteAddr)
 				http.Error(w, "internal server error", http.StatusInternalServerError)
 			}
 		}()
@@ -48,7 +57,7 @@ func recoveryMiddleware(next http.Handler, logger log.Logger) http.Handler {
 	})
 }
 
-// CelestiaServer implements the HTTP server for the stateless DA server.
+// CelestiaServer implements the HTTP server for the DA server.
 // Supports optional fallback provider for redundant storage.
 type CelestiaServer struct {
 	log      log.Logger
@@ -61,39 +70,36 @@ type CelestiaServer struct {
 	// Timeouts and settings
 	submitTimeout time.Duration
 	getTimeout    time.Duration
-	maxBlobSize   int64 // Maximum blob size in bytes (C1)
+	maxBlobSize   int64 // DoS protection: limit request body size
 
 	// HTTP server
 	httpServer *http.Server
 	listener   net.Listener
 
-	// Metrics (from Agent C)
+	// Metrics
 	metricsEnabled bool
 	metricsPort    int
 	metrics        *metrics.CelestiaMetrics
+	metricsServer  *http.Server // Separate server for graceful shutdown
 
-	// Fallback provider (Agent F)
-	// When enabled, fallback performs both write-through (PUT) and read-fallback (GET)
+	// Fallback provider for write-through and read-fallback
 	fallback fallback.Provider
 
 	// Track pending async operations for graceful shutdown
 	wg sync.WaitGroup
-
-	// H2: Metrics server for proper shutdown
-	metricsServer *http.Server
 }
 
-// NewCelestiaServer creates a new stateless Celestia server.
+// NewCelestiaServer creates a new Celestia DA server.
 func NewCelestiaServer(
 	host string,
 	port int,
 	store *CelestiaStore,
 	submitTimeout time.Duration,
 	getTimeout time.Duration,
-	httpReadTimeout time.Duration, // C2: HTTP server read timeout
-	httpWriteTimeout time.Duration, // C2: HTTP server write timeout
-	httpIdleTimeout time.Duration, // C2: HTTP server idle timeout
-	maxBlobSize int64, // C1: Maximum blob size in bytes
+	httpReadTimeout time.Duration,
+	httpWriteTimeout time.Duration,
+	httpIdleTimeout time.Duration,
+	maxBlobSize int64,
 	metricsEnabled bool,
 	metricsPort int,
 	fallbackProvider fallback.Provider,
@@ -101,7 +107,6 @@ func NewCelestiaServer(
 ) *CelestiaServer {
 	endpoint := net.JoinHostPort(host, strconv.Itoa(port))
 
-	// Default to NoopProvider if nil
 	if fallbackProvider == nil {
 		fallbackProvider = &fallback.NoopProvider{}
 	}
@@ -113,20 +118,19 @@ func NewCelestiaServer(
 		store:          store,
 		submitTimeout:  submitTimeout,
 		getTimeout:     getTimeout,
-		maxBlobSize:    maxBlobSize, // C1
+		maxBlobSize:    maxBlobSize,
 		metricsEnabled: metricsEnabled,
 		metricsPort:    metricsPort,
 		fallback:       fallbackProvider,
 		httpServer: &http.Server{
 			Addr:           endpoint,
-			ReadTimeout:    httpReadTimeout,  // C2: From config
-			WriteTimeout:   httpWriteTimeout, // C2: From config
-			IdleTimeout:    httpIdleTimeout,  // C2: From config
-			MaxHeaderBytes: 1 << 16,          // 64KB hardcoded
+			ReadTimeout:    httpReadTimeout,
+			WriteTimeout:   httpWriteTimeout,
+			IdleTimeout:    httpIdleTimeout,
+			MaxHeaderBytes: 1 << 16, // 64KB max headers
 		},
 	}
 
-	// Initialize metrics if enabled
 	if metricsEnabled {
 		server.metrics = metrics.NewCelestiaMetrics(prometheus.DefaultRegisterer)
 	}
@@ -134,7 +138,7 @@ func NewCelestiaServer(
 	return server
 }
 
-func (d *CelestiaServer) Start() error {
+func (d *CelestiaServer) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/get/", d.HandleGet)
@@ -142,11 +146,8 @@ func (d *CelestiaServer) Start() error {
 	mux.HandleFunc("/put", d.HandlePut)
 	mux.HandleFunc("/health", d.HandleHealth)
 
-	// Wrap mux with middleware (order matters: recovery outermost)
-	var handler http.Handler = mux
-	handler = securityHeadersMiddleware(handler)
-	handler = recoveryMiddleware(handler, d.log)
-
+	// Middleware chain: recovery (outermost) -> security headers -> handler
+	handler := recoveryMiddleware(securityHeadersMiddleware(mux), d.log)
 	d.httpServer.Handler = handler
 
 	listener, err := net.Listen("tcp", d.endpoint)
@@ -154,16 +155,18 @@ func (d *CelestiaServer) Start() error {
 		return fmt.Errorf("failed to listen: %w", err)
 	}
 	d.listener = listener
-
 	d.endpoint = listener.Addr().String()
+
+	// Start main HTTP server
 	errCh := make(chan error, 1)
 	go func() {
-		if err := d.httpServer.Serve(d.listener); err != nil && err != http.ErrServerClosed {
+		d.log.Info("Starting HTTP server", "addr", d.endpoint)
+		if err := d.httpServer.Serve(d.listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()
 
-	// Start metrics server if enabled (H2: track for proper shutdown)
+	// Start metrics server if enabled
 	if d.metricsEnabled {
 		d.metricsServer = &http.Server{
 			Addr:    fmt.Sprintf(":%d", d.metricsPort),
@@ -171,20 +174,19 @@ func (d *CelestiaServer) Start() error {
 		}
 		go func() {
 			d.log.Info("Starting metrics server", "addr", d.metricsServer.Addr)
-			if err := d.metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			if err := d.metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				d.log.Error("Metrics server failed", "err", err)
 			}
 		}()
 	}
 
-	// Verify that the server comes up
-	tick := time.NewTimer(10 * time.Millisecond)
-	defer tick.Stop()
-
+	// Wait briefly to catch immediate startup errors
 	select {
 	case err := <-errCh:
 		return fmt.Errorf("http server failed: %w", err)
-	case <-tick.C:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(10 * time.Millisecond):
 		return nil
 	}
 }
@@ -199,7 +201,6 @@ func (d *CelestiaServer) HandleHealth(w http.ResponseWriter, r *http.Request) {
 // Request: GET /get/<hex-encoded-commitment>
 // Response: Raw blob data on success, 404 on not found, 500 on error.
 func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
-	// Validate HTTP method (M1)
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -319,7 +320,7 @@ func (d *CelestiaServer) recordGetSuccess(start time.Time, size int) {
 // Request: PUT /put with blob data in body
 // Response: GenericCommitment on success, 500 on error (let op-batcher retry).
 func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
-	// Validate HTTP method - accept both PUT and POST (M1)
+	// Accept both PUT and POST for compatibility
 	if r.Method != http.MethodPut && r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -334,12 +335,11 @@ func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// C1: Limit request body size using config value
+	// Limit request body to prevent memory exhaustion
 	r.Body = http.MaxBytesReader(w, r.Body, d.maxBlobSize)
 
 	input, err := io.ReadAll(r.Body)
 	if err != nil {
-		// C1: Check for body too large error
 		if err.Error() == "http: request body too large" {
 			d.log.Warn("Request body too large", "limit", d.maxBlobSize)
 			http.Error(w, "blob exceeds maximum size", http.StatusRequestEntityTooLarge)
@@ -430,13 +430,11 @@ func (d *CelestiaServer) putFallback(ctx context.Context, commitment []byte, dat
 
 	if err := d.fallback.Put(ctx, commitment, data); err != nil {
 		d.log.Warn("Fallback write failed", "provider", d.fallback.Name(), "err", err)
-		// Record metric (M4)
 		if d.metrics != nil {
 			d.metrics.RecordFallbackWriteError()
 		}
 	} else {
 		d.log.Debug("Fallback write succeeded", "provider", d.fallback.Name())
-		// Record metric (M4)
 		if d.metrics != nil {
 			d.metrics.RecordFallbackWrite()
 		}
@@ -455,7 +453,7 @@ func (d *CelestiaServer) Stop() error {
 		errs = append(errs, fmt.Errorf("http server shutdown: %w", err))
 	}
 
-	// H2: Shutdown metrics server if running
+	// Shutdown metrics server if running
 	if d.metricsServer != nil {
 		if err := d.metricsServer.Shutdown(ctx); err != nil {
 			d.log.Error("Metrics server shutdown error", "err", err)

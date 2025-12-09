@@ -171,13 +171,11 @@ func NewCelestiaStore(ctx context.Context, cfg RPCClientConfig) (*CelestiaStore,
 		blobClient, err = initRPCClient(ctx, cfg)
 	}
 	if err != nil {
-		// H4: Return error instead of log.Crit (which calls os.Exit)
 		return nil, fmt.Errorf("failed to initialize celestia client: %w", err)
 	}
 
 	namespace, err := libshare.NewNamespaceFromBytes(cfg.Namespace)
 	if err != nil {
-		// H4: Return error instead of log.Crit
 		return nil, fmt.Errorf("failed to parse namespace: %w", err)
 	}
 
@@ -257,12 +255,12 @@ func initRPCClient(ctx context.Context, cfg RPCClientConfig) (blobAPI.Module, er
 func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	d.Log.Info("celestia: blob request", "id", hex.EncodeToString(key))
 
-	// C3: Validate minimum length before slicing
+	// Validate minimum length before slicing
 	if len(key) < 2 {
 		return nil, fmt.Errorf("invalid commitment: too short (need at least 2 bytes, got %d)", len(key))
 	}
 
-	// M7: Validate version bytes
+	// Validate version bytes:
 	// key[0] = 0x01 (Generic Commitment type from optimism alt-da)
 	// key[1] = VersionByte (0x0c for Celestia)
 	if key[0] != 0x01 {
@@ -272,7 +270,6 @@ func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 		return nil, fmt.Errorf("unsupported DA version: 0x%02x (expected 0x%02x)", key[1], VersionByte)
 	}
 
-	// H3: Use incoming ctx as parent to propagate request cancellation
 	ctx, cancel := context.WithTimeout(ctx, d.GetTimeout)
 	defer cancel()
 

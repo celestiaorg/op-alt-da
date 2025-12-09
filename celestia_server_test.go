@@ -32,10 +32,10 @@ func createTestServer(t *testing.T, store *CelestiaStore) *CelestiaServer {
 		store,
 		30*time.Second,  // submitTimeout
 		30*time.Second,  // getTimeout
-		30*time.Second,  // httpReadTimeout (C2)
-		120*time.Second, // httpWriteTimeout (C2)
-		60*time.Second,  // httpIdleTimeout (C2)
-		2*1024*1024,     // maxBlobSize (2MB) (C1)
+		30*time.Second,  // httpReadTimeout
+		120*time.Second, // httpWriteTimeout
+		60*time.Second,  // httpIdleTimeout
+		2*1024*1024,     // maxBlobSize (2MB)
 		false,           // metrics disabled for unit tests
 		0,
 		nil, // fallback provider (nil = NoopProvider)
