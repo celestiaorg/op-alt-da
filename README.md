@@ -118,11 +118,11 @@ Or using a config file:
 |------|---------------------|---------|-------------|
 | `--fallback.enabled` | `OP_ALTDA_FALLBACK_ENABLED` | `false` | Enable fallback storage |
 | `--fallback.provider` | `OP_ALTDA_FALLBACK_PROVIDER` | `s3` | Fallback provider type |
-| `--fallback.mode` | `OP_ALTDA_FALLBACK_MODE` | `both` | Mode: write_through, read_fallback, both |
 | `--fallback.s3.bucket` | `OP_ALTDA_FALLBACK_S3_BUCKET` | | S3 bucket name |
 | `--fallback.s3.prefix` | `OP_ALTDA_FALLBACK_S3_PREFIX` | | S3 key prefix |
 | `--fallback.s3.endpoint` | `OP_ALTDA_FALLBACK_S3_ENDPOINT` | | S3 endpoint (for MinIO, etc.) |
 | `--fallback.s3.region` | `OP_ALTDA_FALLBACK_S3_REGION` | `us-east-1` | S3 region |
+| `--fallback.s3.credential-type` | `OP_ALTDA_FALLBACK_S3_CREDENTIAL_TYPE` | | Credential type: static, environment, iam |
 | `--fallback.s3.access-key-id` | `OP_ALTDA_FALLBACK_S3_ACCESS_KEY_ID` | | S3 access key |
 | `--fallback.s3.access-key-secret` | `OP_ALTDA_FALLBACK_S3_ACCESS_KEY_SECRET` | | S3 secret key |
 | `--fallback.s3.timeout` | `OP_ALTDA_FALLBACK_S3_TIMEOUT` | `30s` | S3 operation timeout |
@@ -220,11 +220,11 @@ curl http://localhost:3100/health
 
 ## Fallback Storage
 
-The server supports optional fallback storage for resilience. When enabled:
+The server supports optional fallback storage for resilience. When enabled, fallback always performs both:
 
-- **write_through**: After successful Celestia submission, blob is also written to fallback
-- **read_fallback**: If blob not found in Celestia, attempt to read from fallback
-- **both**: Enable both write-through and read-fallback (default)
+- **Write-through**: After successful Celestia submission, blob is also written to fallback asynchronously
+- **Read-fallback**: If blob not found in Celestia, attempt to read from fallback
+- **Read-through**: When blob is found in Celestia, it's also written to fallback for future requests
 
 Fallback failures are non-fatal and logged as warnings.
 
