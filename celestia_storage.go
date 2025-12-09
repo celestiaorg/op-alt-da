@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	txClient "github.com/celestiaorg/celestia-node/api/client"
@@ -259,12 +260,27 @@ func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	log.Debug("Retrieving blob with commitment", "blobID.Commitment", hex.EncodeToString(blobID.Commitment), "blobID.Height", blobID.Height)
 	blob, err := d.Client.Get(ctx, blobID.Height, d.Namespace, blobID.Commitment)
 	if err != nil {
+		// Check if error indicates blob not found
+		if isBlobNotFoundError(err) {
+			return nil, altda.ErrNotFound
+		}
 		return nil, fmt.Errorf("celestia: failed to resolve frame: %w", err)
 	}
 	if blob == nil {
-		return nil, fmt.Errorf("celestia: failed to resolve frame: nil blob")
+		return nil, altda.ErrNotFound
 	}
 	return blob.Data(), nil
+}
+
+// isBlobNotFoundError checks if the error from Celestia client indicates blob not found.
+func isBlobNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "blob: not found") ||
+		strings.Contains(errStr, "blob not found") ||
+		strings.Contains(errStr, "not found")
 }
 
 func (d *CelestiaStore) Put(ctx context.Context, data []byte) ([]byte, []byte, error) {

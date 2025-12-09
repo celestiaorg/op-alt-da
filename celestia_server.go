@@ -3,6 +3,7 @@ package celestia
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -349,25 +350,5 @@ func isNotFoundError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if err == altda.ErrNotFound {
-		return true
-	}
-	// Check for common "not found" error patterns
-	errStr := err.Error()
-	return contains(errStr, "not found") ||
-		contains(errStr, "blob not found") ||
-		contains(errStr, "no blob for commitment")
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsAt(s, substr))
-}
-
-func containsAt(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
+	return errors.Is(err, altda.ErrNotFound)
 }
