@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/celestiaorg/op-alt-da/fallback"
@@ -166,7 +167,10 @@ func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	key := path.Base(r.URL.Path)
 	comm, err := hexutil.Decode(key)
 	if err != nil {
-		d.log.Warn("Invalid commitment format", "key", key, "err", err)
+		// Sanitize key to prevent log injection attacks
+		safeKey := strings.ReplaceAll(key, "\n", "")
+		safeKey = strings.ReplaceAll(safeKey, "\r", "")
+		d.log.Warn("Invalid commitment format", "key", safeKey, "err", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
