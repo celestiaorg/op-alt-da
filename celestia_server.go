@@ -32,6 +32,13 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// sanitizeLogField removes newlines and carriage returns to prevent log injection.
+func sanitizeLogField(s string) string {
+	s = strings.ReplaceAll(s, "\n", "")
+	s = strings.ReplaceAll(s, "\r", "")
+	return s
+}
+
 // recoveryMiddleware recovers from panics to prevent server crashes.
 // Logs the panic with request context and returns 500 to the client.
 func recoveryMiddleware(next http.Handler, logger log.Logger) http.Handler {
@@ -41,13 +48,13 @@ func recoveryMiddleware(next http.Handler, logger log.Logger) http.Handler {
 				// Check if client disconnected (context cancelled)
 				if r.Context().Err() != nil {
 					logger.Debug("Client disconnected during panic recovery",
-						"path", r.URL.Path,
+						"path", sanitizeLogField(r.URL.Path),
 						"method", r.Method)
 					return
 				}
 				logger.Error("Handler panic recovered",
 					"err", err,
-					"path", r.URL.Path,
+					"path", sanitizeLogField(r.URL.Path),
 					"method", r.Method,
 					"remote", r.RemoteAddr)
 				http.Error(w, "internal server error", http.StatusInternalServerError)
