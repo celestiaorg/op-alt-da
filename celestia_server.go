@@ -152,95 +152,120 @@ func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	d.log.Debug("GET", "url", r.URL)
 
-	route := path.Dir(r.URL.Path)
-	if route != "/get" {
+	// Validate route
+	if path.Dir(r.URL.Path) != "/get" {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	key := path.Base(r.URL.Path)
-	comm, err := hexutil.Decode(key)
+	// Parse commitment
+	comm, err := d.parseCommitment(r.URL.Path)
 	if err != nil {
-		// Sanitize key to prevent log injection attacks
-		safeKey := strings.ReplaceAll(key, "\n", "")
-		safeKey = strings.ReplaceAll(safeKey, "\r", "")
-		d.log.Warn("Invalid commitment format", "key", safeKey, "err", err)
+		d.log.Warn("Invalid commitment format", "err", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	// Create context with configurable timeout
-	ctx, cancel := context.WithTimeout(r.Context(), d.getTimeout)
-	defer cancel()
-
-	// Read blob directly from Celestia (stateless - no caching)
-	celestiaData, err := d.store.Get(ctx, comm)
+	// Try to retrieve blob
+	ctx := r.Context()
+	data, source, err := d.getBlob(ctx, comm)
 	if err != nil {
-		if isNotFoundError(err) {
-			d.log.Debug("Blob not found in Celestia", "commitment", hex.EncodeToString(comm))
-
-			// Try fallback provider if enabled
-			if d.fallback.Available() {
-				fbData, fbErr := d.getFallback(r.Context(), comm)
-				if fbErr == nil && fbData != nil {
-					d.log.Info("Served from fallback",
-						"provider", d.fallback.Name(),
-						"commitment", hex.EncodeToString(comm),
-						"size", len(fbData))
-					if d.metrics != nil {
-						d.metrics.RecordRetrieval(time.Since(start), len(fbData))
-						d.metrics.RecordHTTPRequest("get", time.Since(start))
-					}
-					if _, err := w.Write(fbData); err != nil {
-						d.log.Error("Failed to write fallback response", "err", err)
-					}
-					return
-				}
-				if fbErr != nil && !errors.Is(fbErr, fallback.ErrNotFound) {
-					d.log.Warn("Fallback read failed", "provider", d.fallback.Name(), "err", fbErr)
-				}
-			}
-
-			// Record metrics and return 404
-			if d.metrics != nil {
-				d.metrics.RecordRetrievalError()
-				d.metrics.RecordHTTPRequest("get", time.Since(start))
-			}
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-
-		// Actual error (not NotFound) - return 500
-		d.log.Error("Failed to retrieve blob", "commitment", hex.EncodeToString(comm), "err", err)
-		if d.metrics != nil {
-			d.metrics.RecordRetrievalError()
-			d.metrics.RecordHTTPRequest("get", time.Since(start))
-		}
-		w.WriteHeader(http.StatusInternalServerError)
+		d.handleGetError(w, comm, err, start)
 		return
 	}
 
-	// Record metrics for successful retrieval
-	duration := time.Since(start)
-	if d.metrics != nil {
-		d.metrics.RecordRetrieval(duration, len(celestiaData))
-		d.metrics.RecordHTTPRequest("get", duration)
-	}
+	// Success - record metrics and respond
+	d.recordGetSuccess(start, len(data), source)
 
 	d.log.Info("Blob retrieved successfully",
 		"commitment", hex.EncodeToString(comm),
-		"size", len(celestiaData),
-		"duration", duration)
+		"size", len(data),
+		"source", source,
+		"duration", time.Since(start))
 
-	// Read-through: populate fallback with data from Celestia (async, non-blocking)
-	// This ensures blobs submitted before fallback was enabled get cached on first read
-	if d.fallback.Available() {
-		d.putFallbackAsync(comm, celestiaData)
+	// Read-through: if from Celestia, populate fallback async
+	if source == "celestia" && d.fallback.Available() {
+		d.putFallbackAsync(comm, data)
 	}
 
-	if _, err := w.Write(celestiaData); err != nil {
+	if _, err := w.Write(data); err != nil {
 		d.log.Error("Failed to write response", "err", err)
 	}
+}
+
+// parseCommitment extracts and validates commitment from URL path.
+func (d *CelestiaServer) parseCommitment(urlPath string) ([]byte, error) {
+	key := path.Base(urlPath)
+	comm, err := hexutil.Decode(key)
+	if err != nil {
+		// Sanitize for logging
+		safeKey := strings.ReplaceAll(strings.ReplaceAll(key, "\n", ""), "\r", "")
+		return nil, fmt.Errorf("invalid hex %q: %w", safeKey, err)
+	}
+	return comm, nil
+}
+
+// getBlob tries Celestia first, then fallback. Returns data and source ("celestia" or "fallback").
+func (d *CelestiaServer) getBlob(ctx context.Context, comm []byte) ([]byte, string, error) {
+	// Try Celestia first
+	data, err := d.getCelestia(ctx, comm)
+	if err == nil {
+		return data, "celestia", nil
+	}
+
+	// If actual error (not NotFound), don't try fallback
+	if !isNotFoundError(err) {
+		return nil, "", err
+	}
+
+	d.log.Debug("Blob not found in Celestia, trying fallback", "commitment", hex.EncodeToString(comm))
+
+	// Try fallback
+	if !d.fallback.Available() {
+		return nil, "", altda.ErrNotFound
+	}
+
+	data, err = d.getFallback(ctx, comm)
+	if err != nil {
+		if !errors.Is(err, fallback.ErrNotFound) {
+			d.log.Warn("Fallback read failed", "provider", d.fallback.Name(), "err", err)
+		}
+		return nil, "", altda.ErrNotFound
+	}
+
+	return data, "fallback", nil
+}
+
+// getCelestia retrieves blob from Celestia with configured timeout.
+func (d *CelestiaServer) getCelestia(ctx context.Context, comm []byte) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, d.getTimeout)
+	defer cancel()
+	return d.store.Get(ctx, comm)
+}
+
+// handleGetError handles errors from getBlob and writes appropriate HTTP response.
+func (d *CelestiaServer) handleGetError(w http.ResponseWriter, comm []byte, err error, start time.Time) {
+	if d.metrics != nil {
+		d.metrics.RecordRetrievalError()
+		d.metrics.RecordHTTPRequest("get", time.Since(start))
+	}
+
+	if isNotFoundError(err) {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	d.log.Error("Failed to retrieve blob", "commitment", hex.EncodeToString(comm), "err", err)
+	w.WriteHeader(http.StatusInternalServerError)
+}
+
+// recordGetSuccess records metrics for successful blob retrieval.
+func (d *CelestiaServer) recordGetSuccess(start time.Time, size int, source string) {
+	if d.metrics == nil {
+		return
+	}
+	d.metrics.RecordRetrieval(time.Since(start), size)
+	d.metrics.RecordHTTPRequest("get", time.Since(start))
 }
 
 // HandlePut submits a blob to Celestia and returns the commitment.
