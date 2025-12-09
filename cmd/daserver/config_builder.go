@@ -129,6 +129,41 @@ func BuildConfigFromCLI(ctx *cli.Context) (*Config, error) {
 		cfg.Metrics.Port = ctx.Int(MetricsPortFlagName)
 	}
 
+	// Fallback flags
+	if ctx.IsSet(FallbackEnabledFlagName) {
+		cfg.Fallback.Enabled = ctx.Bool(FallbackEnabledFlagName)
+	}
+	if ctx.IsSet(FallbackProviderFlagName) {
+		cfg.Fallback.Provider = ctx.String(FallbackProviderFlagName)
+	}
+	if ctx.IsSet(FallbackModeFlagName) {
+		cfg.Fallback.Mode = ctx.String(FallbackModeFlagName)
+	}
+	if ctx.IsSet(FallbackS3BucketFlagName) {
+		cfg.Fallback.S3.Bucket = ctx.String(FallbackS3BucketFlagName)
+	}
+	if ctx.IsSet(FallbackS3PrefixFlagName) {
+		cfg.Fallback.S3.Prefix = ctx.String(FallbackS3PrefixFlagName)
+	}
+	if ctx.IsSet(FallbackS3EndpointFlagName) {
+		cfg.Fallback.S3.Endpoint = ctx.String(FallbackS3EndpointFlagName)
+	}
+	if ctx.IsSet(FallbackS3RegionFlagName) {
+		cfg.Fallback.S3.Region = ctx.String(FallbackS3RegionFlagName)
+	}
+	if ctx.IsSet(FallbackS3CredTypeFlagName) {
+		cfg.Fallback.S3.CredentialType = ctx.String(FallbackS3CredTypeFlagName)
+	}
+	if ctx.IsSet(FallbackS3AccessKeyFlagName) {
+		cfg.Fallback.S3.AccessKeyID = ctx.String(FallbackS3AccessKeyFlagName)
+	}
+	if ctx.IsSet(FallbackS3SecretKeyFlagName) {
+		cfg.Fallback.S3.AccessKeySecret = ctx.String(FallbackS3SecretKeyFlagName)
+	}
+	if ctx.IsSet(FallbackS3TimeoutFlagName) {
+		cfg.Fallback.S3.Timeout = ctx.Duration(FallbackS3TimeoutFlagName).String()
+	}
+
 	return cfg, nil
 }
 
