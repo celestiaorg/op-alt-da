@@ -37,9 +37,9 @@ const (
 	MetricsPortFlagName    = "metrics.port"
 
 	// fallback provider flags
-	FallbackEnabledFlagName  = "fallback.enabled"
-	FallbackProviderFlagName = "fallback.provider"
-	FallbackS3BucketFlagName = "fallback.s3.bucket"
+	FallbackEnabledFlagName     = "fallback.enabled"
+	FallbackProviderFlagName    = "fallback.provider"
+	FallbackS3BucketFlagName    = "fallback.s3.bucket"
 	FallbackS3PrefixFlagName    = "fallback.s3.prefix"
 	FallbackS3EndpointFlagName  = "fallback.s3.endpoint"
 	FallbackS3RegionFlagName    = "fallback.s3.region"
@@ -130,7 +130,7 @@ var (
 	}
 	CelestiaP2PNetworkFlag = &cli.StringFlag{
 		Name:    CelestiaP2PNetworkFlagName,
-		Usage:   "celestia tx client p2p network (mocha-4, arabica-11, mainnet)",
+		Usage:   "celestia tx client p2p network (mocha-4, arabica-11, celestia)",
 		Value:   "mocha-4",
 		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_P2P_NETWORK"),
 	}
