@@ -189,7 +189,11 @@ func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 
 	// Read-through: populate fallback with Celestia data for future requests
 	if !fromFallback && d.fallback.Available() {
-		d.runAsync(func() { d.putFallback(comm, data) })
+		d.wg.Add(1)
+		go func() {
+			defer d.wg.Done()
+			d.putFallback(comm, data)
+		}()
 	}
 
 	if _, err := w.Write(data); err != nil {
@@ -342,7 +346,11 @@ func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 
 	// Write to fallback provider asynchronously (non-blocking)
 	if d.fallback.Available() {
-		d.runAsync(func() { d.putFallback(commitment, input) })
+		d.wg.Add(1)
+		go func() {
+			defer d.wg.Done()
+			d.putFallback(commitment, input)
+		}()
 	}
 
 	if _, err := w.Write(commitment); err != nil {
@@ -352,15 +360,6 @@ func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 
 func (d *CelestiaServer) Endpoint() string {
 	return d.listener.Addr().String()
-}
-
-// runAsync executes fn in a tracked goroutine. Tracked by WaitGroup for graceful shutdown.
-func (d *CelestiaServer) runAsync(fn func()) {
-	d.wg.Add(1)
-	go func() {
-		defer d.wg.Done()
-		fn()
-	}()
 }
 
 // getFallback retrieves data from fallback provider (synchronous).
