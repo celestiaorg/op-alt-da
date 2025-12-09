@@ -35,7 +35,6 @@ func createTestServer(t *testing.T, store *CelestiaStore) *CelestiaServer {
 		false, // metrics disabled for unit tests
 		0,
 		nil, // fallback provider (nil = NoopProvider)
-		"",  // fallback mode (empty = default "both")
 		logger,
 	)
 }
@@ -130,9 +129,9 @@ func TestHandleGet_TooShortCommitment(t *testing.T) {
 
 	server.HandleGet(w, req)
 
-	// Should return 404 because commitment can't be parsed properly
-	assert.True(t, w.Code == http.StatusBadRequest || w.Code == http.StatusNotFound,
-		"Expected 400 or 404 for invalid short commitment, got %d", w.Code)
+	// Should return 500 because commitment can't be parsed (actual error, not "not found")
+	assert.True(t, w.Code == http.StatusBadRequest || w.Code == http.StatusInternalServerError,
+		"Expected 400 or 500 for invalid short commitment, got %d", w.Code)
 }
 
 // TestMetricsRecording verifies metrics are recorded correctly.

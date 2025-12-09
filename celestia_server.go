@@ -46,8 +46,8 @@ type CelestiaServer struct {
 	metrics        *metrics.CelestiaMetrics
 
 	// Fallback provider (Agent F)
-	fallback     fallback.Provider
-	fallbackMode string // "write_through", "read_fallback", "both"
+	// When enabled, fallback performs both write-through (PUT) and read-fallback (GET)
+	fallback fallback.Provider
 }
 
 // NewCelestiaServer creates a new stateless Celestia server.
@@ -60,7 +60,6 @@ func NewCelestiaServer(
 	metricsEnabled bool,
 	metricsPort int,
 	fallbackProvider fallback.Provider,
-	fallbackMode string,
 	log log.Logger,
 ) *CelestiaServer {
 	endpoint := net.JoinHostPort(host, strconv.Itoa(port))
@@ -68,11 +67,6 @@ func NewCelestiaServer(
 	// Default to NoopProvider if nil
 	if fallbackProvider == nil {
 		fallbackProvider = &fallback.NoopProvider{}
-	}
-
-	// Default fallback mode
-	if fallbackMode == "" {
-		fallbackMode = "both"
 	}
 
 	server := &CelestiaServer{
@@ -85,7 +79,6 @@ func NewCelestiaServer(
 		metricsEnabled: metricsEnabled,
 		metricsPort:    metricsPort,
 		fallback:       fallbackProvider,
-		fallbackMode:   fallbackMode,
 		httpServer: &http.Server{
 			Addr: endpoint,
 		},
@@ -186,8 +179,8 @@ func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 		if isNotFoundError(err) {
 			d.log.Debug("Blob not found in Celestia", "commitment", hex.EncodeToString(comm))
 
-			// Try fallback provider if enabled for reads
-			if d.fallback.Available() && (d.fallbackMode == "read_fallback" || d.fallbackMode == "both") {
+			// Try fallback provider if enabled
+			if d.fallback.Available() {
 				fbCtx, fbCancel := context.WithTimeout(r.Context(), d.fallback.Timeout())
 				defer fbCancel()
 				fbData, fbErr := d.fallback.Get(fbCtx, comm)
@@ -314,7 +307,7 @@ func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 		"duration", duration)
 
 	// Write to fallback provider asynchronously (non-blocking)
-	if d.fallback.Available() && (d.fallbackMode == "write_through" || d.fallbackMode == "both") {
+	if d.fallback.Available() {
 		go func(comm []byte, data []byte) {
 			fbCtx, fbCancel := context.WithTimeout(context.Background(), d.fallback.Timeout())
 			defer fbCancel()

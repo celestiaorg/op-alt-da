@@ -136,9 +136,6 @@ func BuildConfigFromCLI(ctx *cli.Context) (*Config, error) {
 	if ctx.IsSet(FallbackProviderFlagName) {
 		cfg.Fallback.Provider = ctx.String(FallbackProviderFlagName)
 	}
-	if ctx.IsSet(FallbackModeFlagName) {
-		cfg.Fallback.Mode = ctx.String(FallbackModeFlagName)
-	}
 	if ctx.IsSet(FallbackS3BucketFlagName) {
 		cfg.Fallback.S3.Bucket = ctx.String(FallbackS3BucketFlagName)
 	}

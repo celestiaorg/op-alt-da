@@ -37,10 +37,9 @@ const (
 	MetricsPortFlagName    = "metrics.port"
 
 	// fallback provider flags
-	FallbackEnabledFlagName     = "fallback.enabled"
-	FallbackProviderFlagName    = "fallback.provider"
-	FallbackModeFlagName        = "fallback.mode"
-	FallbackS3BucketFlagName    = "fallback.s3.bucket"
+	FallbackEnabledFlagName  = "fallback.enabled"
+	FallbackProviderFlagName = "fallback.provider"
+	FallbackS3BucketFlagName = "fallback.s3.bucket"
 	FallbackS3PrefixFlagName    = "fallback.s3.prefix"
 	FallbackS3EndpointFlagName  = "fallback.s3.endpoint"
 	FallbackS3RegionFlagName    = "fallback.s3.region"
@@ -161,12 +160,6 @@ var (
 		Value:   "s3",
 		EnvVars: prefixEnvVars("FALLBACK_PROVIDER"),
 	}
-	FallbackModeFlag = &cli.StringFlag{
-		Name:    FallbackModeFlagName,
-		Usage:   "Fallback mode: write_through (write to fallback on PUT), read_fallback (read from fallback on GET miss), both",
-		Value:   "both",
-		EnvVars: prefixEnvVars("FALLBACK_MODE"),
-	}
 	FallbackS3BucketFlag = &cli.StringFlag{
 		Name:    FallbackS3BucketFlagName,
 		Usage:   "S3 bucket name for fallback storage",
@@ -240,7 +233,6 @@ var optionalFlags = []cli.Flag{
 	// Fallback flags
 	FallbackEnabledFlag,
 	FallbackProviderFlag,
-	FallbackModeFlag,
 	FallbackS3BucketFlag,
 	FallbackS3PrefixFlag,
 	FallbackS3EndpointFlag,
@@ -263,7 +255,6 @@ func init() {
 type CLIFallbackConfig struct {
 	Enabled  bool
 	Provider string
-	Mode     string
 	S3       s3.Config
 }
 
@@ -315,7 +306,6 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 		Fallback: CLIFallbackConfig{
 			Enabled:  ctx.Bool(FallbackEnabledFlagName),
 			Provider: ctx.String(FallbackProviderFlagName),
-			Mode:     ctx.String(FallbackModeFlagName),
 			S3: s3.Config{
 				Bucket:          ctx.String(FallbackS3BucketFlagName),
 				Prefix:          ctx.String(FallbackS3PrefixFlagName),

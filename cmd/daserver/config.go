@@ -83,9 +83,6 @@ type FallbackConfig struct {
 	// Provider type: "s3"
 	Provider string `toml:"provider"`
 
-	// Mode: "write_through", "read_fallback", or "both"
-	Mode string `toml:"mode"`
-
 	// S3 configuration (when provider = "s3")
 	S3 S3Config `toml:"s3"`
 }
@@ -137,7 +134,6 @@ func DefaultConfig() Config {
 		Fallback: FallbackConfig{
 			Enabled:  false,
 			Provider: "s3",
-			Mode:     "both",
 			S3: S3Config{
 				Region:  "us-east-1",
 				Timeout: "30s",
