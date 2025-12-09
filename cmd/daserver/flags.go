@@ -8,9 +8,8 @@ import (
 
 	"github.com/urfave/cli/v2"
 
-	s3 "github.com/celestiaorg/op-alt-da/s3"
-
 	celestia "github.com/celestiaorg/op-alt-da"
+	"github.com/celestiaorg/op-alt-da/fallback/s3"
 	opservice "github.com/ethereum-optimism/optimism/op-service"
 	oplog "github.com/ethereum-optimism/optimism/op-service/log"
 )
@@ -33,20 +32,21 @@ const (
 
 	CelestiaCompactBlobIDFlagName = "celestia.compact-blobid"
 
-	//s3
-	S3CredentialTypeFlagName  = "s3.credential-type" // #nosec G101
-	S3BucketFlagName          = "s3.bucket"          // #nosec G101
-	S3PathFlagName            = "s3.path"
-	S3EndpointFlagName        = "s3.endpoint"
-	S3AccessKeyIDFlagName     = "s3.access-key-id"     // #nosec G101
-	S3AccessKeySecretFlagName = "s3.access-key-secret" // #nosec G101
-	S3TimeoutFlagName         = "s3.timeout"
-	FallbackFlagName          = "routing.fallback"
-	CacheFlagName             = "routing.cache"
-
 	// metrics
 	MetricsEnabledFlagName = "metrics.enabled"
 	MetricsPortFlagName    = "metrics.port"
+
+	// fallback provider flags
+	FallbackEnabledFlagName     = "fallback.enabled"
+	FallbackProviderFlagName    = "fallback.provider"
+	FallbackS3BucketFlagName    = "fallback.s3.bucket"
+	FallbackS3PrefixFlagName    = "fallback.s3.prefix"
+	FallbackS3EndpointFlagName  = "fallback.s3.endpoint"
+	FallbackS3RegionFlagName    = "fallback.s3.region"
+	FallbackS3CredTypeFlagName  = "fallback.s3.credential-type"
+	FallbackS3AccessKeyFlagName = "fallback.s3.access-key-id"
+	FallbackS3SecretKeyFlagName = "fallback.s3.access-key-secret"
+	FallbackS3TimeoutFlagName   = "fallback.s3.timeout"
 )
 
 const EnvVarPrefix = "OP_ALTDA"
@@ -70,7 +70,7 @@ var (
 	}
 	CelestiaServerFlag = &cli.StringFlag{
 		Name:    CelestiaServerFlagName,
-		Usage:   "celestia rpc endpoint",
+		Usage:   "celestia rpc endpoint (bridge node for reads)",
 		Value:   "http://localhost:26658",
 		EnvVars: prefixEnvVars("CELESTIA_SERVER"),
 	}
@@ -78,7 +78,7 @@ var (
 		Name:    CelestiaTLSEnabledFlagName,
 		Usage:   "celestia rpc TLS",
 		EnvVars: prefixEnvVars("CELESTIA_TLS_ENABLED"),
-		Value:   true,
+		Value:   false,
 	}
 	CelestiaAuthTokenFlag = &cli.StringFlag{
 		Name:    CelestiaAuthTokenFlagName,
@@ -88,13 +88,13 @@ var (
 	}
 	CelestiaNamespaceFlag = &cli.StringFlag{
 		Name:    CelestiaNamespaceFlagName,
-		Usage:   "celestia namespace",
+		Usage:   "celestia namespace (29 bytes hex)",
 		Value:   "",
 		EnvVars: prefixEnvVars("CELESTIA_NAMESPACE"),
 	}
 	CelestiaBlobIDCompactFlag = &cli.BoolFlag{
 		Name:    CelestiaCompactBlobIDFlagName,
-		Usage:   "enable compact celestia blob IDs. false indicates share offset and size will be included in the blob ID",
+		Usage:   "enable compact celestia blob IDs (height + commitment only)",
 		Value:   true,
 		EnvVars: prefixEnvVars("CELESTIA_BLOBID_COMPACT"),
 	}
@@ -112,8 +112,8 @@ var (
 	}
 	CelestiaCoreGRPCAddrFlag = &cli.StringFlag{
 		Name:    CelestiaCoreGRPCAddrFlagName,
-		Usage:   "celestia tx client core grpc addr",
-		Value:   "http://localhost:9090",
+		Usage:   "celestia tx client core grpc addr (for blob submission)",
+		Value:   "",
 		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_CORE_GRPC_ADDR"),
 	}
 	CelestiaCoreGRPCTLSEnabledFlag = &cli.BoolFlag{
@@ -130,60 +130,9 @@ var (
 	}
 	CelestiaP2PNetworkFlag = &cli.StringFlag{
 		Name:    CelestiaP2PNetworkFlagName,
-		Usage:   "celestia tx client p2p network",
+		Usage:   "celestia tx client p2p network (mocha-4, arabica-11, celestia)",
 		Value:   "mocha-4",
 		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_P2P_NETWORK"),
-	}
-	S3CredentialTypeFlag = &cli.StringFlag{
-		Name:    S3CredentialTypeFlagName,
-		Usage:   "The way to authenticate to S3, options are [iam, static]",
-		EnvVars: prefixEnvVars("S3_CREDENTIAL_TYPE"),
-	}
-	S3BucketFlag = &cli.StringFlag{
-		Name:    S3BucketFlagName,
-		Usage:   "bucket name for S3 storage",
-		EnvVars: prefixEnvVars("S3_BUCKET"),
-	}
-	S3PathFlag = &cli.StringFlag{
-		Name:    S3PathFlagName,
-		Usage:   "path for S3 storage",
-		EnvVars: prefixEnvVars("S3_PATH"),
-	}
-	S3EndpointFlag = &cli.StringFlag{
-		Name:    S3EndpointFlagName,
-		Usage:   "endpoint for S3 storage",
-		Value:   "",
-		EnvVars: prefixEnvVars("S3_ENDPOINT"),
-	}
-	S3AccessKeyIDFlag = &cli.StringFlag{
-		Name:    S3AccessKeyIDFlagName,
-		Usage:   "access key id for S3 storage",
-		Value:   "",
-		EnvVars: prefixEnvVars("S3_ACCESS_KEY_ID"),
-	}
-	S3AccessKeySecretFlag = &cli.StringFlag{
-		Name:    S3AccessKeySecretFlagName,
-		Usage:   "access key secret for S3 storage",
-		Value:   "",
-		EnvVars: prefixEnvVars("S3_ACCESS_KEY_SECRET"),
-	}
-	S3TimeoutFlag = &cli.DurationFlag{
-		Name:    S3TimeoutFlagName,
-		Usage:   "S3 timeout",
-		Value:   5 * time.Second,
-		EnvVars: prefixEnvVars("S3_TIMEOUT"),
-	}
-	FallbackFlag = &cli.BoolFlag{
-		Name:    FallbackFlagName,
-		Usage:   "Enable fallback",
-		Value:   false,
-		EnvVars: prefixEnvVars("FALLBACK"),
-	}
-	CacheFlag = &cli.BoolFlag{
-		Name:    CacheFlagName,
-		Usage:   "Enable cache.",
-		Value:   false,
-		EnvVars: prefixEnvVars("CACHE"),
 	}
 	MetricsEnabledFlag = &cli.BoolFlag{
 		Name:    MetricsEnabledFlagName,
@@ -197,12 +146,76 @@ var (
 		Value:   6060,
 		EnvVars: prefixEnvVars("METRICS_PORT"),
 	}
+
+	// Fallback provider flags
+	FallbackEnabledFlag = &cli.BoolFlag{
+		Name:    FallbackEnabledFlagName,
+		Usage:   "Enable fallback storage provider",
+		Value:   false,
+		EnvVars: prefixEnvVars("FALLBACK_ENABLED"),
+	}
+	FallbackProviderFlag = &cli.StringFlag{
+		Name:    FallbackProviderFlagName,
+		Usage:   "Fallback provider type (s3)",
+		Value:   "s3",
+		EnvVars: prefixEnvVars("FALLBACK_PROVIDER"),
+	}
+	FallbackS3BucketFlag = &cli.StringFlag{
+		Name:    FallbackS3BucketFlagName,
+		Usage:   "S3 bucket name for fallback storage",
+		Value:   "",
+		EnvVars: prefixEnvVars("FALLBACK_S3_BUCKET"),
+	}
+	FallbackS3PrefixFlag = &cli.StringFlag{
+		Name:    FallbackS3PrefixFlagName,
+		Usage:   "S3 key prefix for fallback storage",
+		Value:   "",
+		EnvVars: prefixEnvVars("FALLBACK_S3_PREFIX"),
+	}
+	FallbackS3EndpointFlag = &cli.StringFlag{
+		Name:    FallbackS3EndpointFlagName,
+		Usage:   "S3 endpoint URL (for S3-compatible services like MinIO)",
+		Value:   "",
+		EnvVars: prefixEnvVars("FALLBACK_S3_ENDPOINT"),
+	}
+	FallbackS3RegionFlag = &cli.StringFlag{
+		Name:    FallbackS3RegionFlagName,
+		Usage:   "S3 region",
+		Value:   "us-east-1",
+		EnvVars: prefixEnvVars("FALLBACK_S3_REGION"),
+	}
+	FallbackS3CredTypeFlag = &cli.StringFlag{
+		Name:    FallbackS3CredTypeFlagName,
+		Usage:   "S3 credential type: static, environment, iam",
+		Value:   "",
+		EnvVars: prefixEnvVars("FALLBACK_S3_CREDENTIAL_TYPE"),
+	}
+	FallbackS3AccessKeyFlag = &cli.StringFlag{
+		Name:    FallbackS3AccessKeyFlagName,
+		Usage:   "S3 access key ID",
+		Value:   "",
+		EnvVars: prefixEnvVars("FALLBACK_S3_ACCESS_KEY_ID"),
+	}
+	FallbackS3SecretKeyFlag = &cli.StringFlag{
+		Name:    FallbackS3SecretKeyFlagName,
+		Usage:   "S3 secret access key",
+		Value:   "",
+		EnvVars: prefixEnvVars("FALLBACK_S3_ACCESS_KEY_SECRET"),
+	}
+	FallbackS3TimeoutFlag = &cli.DurationFlag{
+		Name:    FallbackS3TimeoutFlagName,
+		Usage:   "S3 operation timeout",
+		Value:   30 * time.Second,
+		EnvVars: prefixEnvVars("FALLBACK_S3_TIMEOUT"),
+	}
 )
+
 var requiredFlags = []cli.Flag{
 	CelestiaNamespaceFlag,
 }
 
 var optionalFlags = []cli.Flag{
+	ConfigFileFlag,
 	ListenAddrFlag,
 	PortFlag,
 	CelestiaServerFlag,
@@ -215,17 +228,19 @@ var optionalFlags = []cli.Flag{
 	CelestiaCoreGRPCTLSEnabledFlag,
 	CelestiaCoreGRPCAuthTokenFlag,
 	CelestiaP2PNetworkFlag,
-	S3CredentialTypeFlag,
-	S3BucketFlag,
-	S3PathFlag,
-	S3EndpointFlag,
-	S3AccessKeyIDFlag,
-	S3AccessKeySecretFlag,
-	S3TimeoutFlag,
-	FallbackFlag,
-	CacheFlag,
 	MetricsEnabledFlag,
 	MetricsPortFlag,
+	// Fallback flags
+	FallbackEnabledFlag,
+	FallbackProviderFlag,
+	FallbackS3BucketFlag,
+	FallbackS3PrefixFlag,
+	FallbackS3EndpointFlag,
+	FallbackS3RegionFlag,
+	FallbackS3CredTypeFlag,
+	FallbackS3AccessKeyFlag,
+	FallbackS3SecretKeyFlag,
+	FallbackS3TimeoutFlag,
 }
 
 // Flags contains the list of configuration options available to the binary.
@@ -236,22 +251,43 @@ func init() {
 	Flags = append(requiredFlags, optionalFlags...)
 }
 
+// CLIFallbackConfig holds the CLI configuration for fallback storage providers.
+type CLIFallbackConfig struct {
+	Enabled  bool
+	Provider string
+	S3       s3.Config
+}
+
+// CLIConfig holds the configuration for the stateless DA server.
+// This is a simplified config without batch, worker, backfill, or S3 sections.
 type CLIConfig struct {
+	// Server settings
+	Addr string
+	Port int
+
+	// Celestia settings
 	CelestiaEndpoint      string
 	CelestiaTLSEnabled    bool
 	CelestiaAuthToken     string
 	CelestiaNamespace     string
 	CelestiaCompactBlobID bool
-	TxClientConfig        celestia.TxClientConfig
-	S3Config              s3.S3Config
-	Fallback              bool
-	Cache                 bool
-	MetricsEnabled        bool
-	MetricsPort           int
+
+	// TX client settings (for clientTX architecture)
+	TxClientConfig celestia.TxClientConfig
+
+	// Metrics settings
+	MetricsEnabled bool
+	MetricsPort    int
+
+	// Fallback settings
+	Fallback CLIFallbackConfig
 }
 
+// ReadCLIConfig reads CLI flags into a CLIConfig struct.
 func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 	return CLIConfig{
+		Addr:                  ctx.String(ListenAddrFlagName),
+		Port:                  ctx.Int(PortFlagName),
 		CelestiaEndpoint:      ctx.String(CelestiaServerFlagName),
 		CelestiaTLSEnabled:    ctx.Bool(CelestiaTLSEnabledFlagName),
 		CelestiaAuthToken:     ctx.String(CelestiaAuthTokenFlagName),
@@ -265,26 +301,31 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 			CoreGRPCAuthToken:  ctx.String(CelestiaCoreGRPCAuthTokenFlagName),
 			P2PNetwork:         ctx.String(CelestiaP2PNetworkFlagName),
 		},
-		S3Config: s3.S3Config{
-			S3CredentialType: toS3CredentialType(ctx.String(S3CredentialTypeFlagName)),
-			Bucket:           ctx.String(S3BucketFlagName),
-			Path:             ctx.String(S3PathFlagName),
-			Endpoint:         ctx.String(S3EndpointFlagName),
-			AccessKeyID:      ctx.String(S3AccessKeyIDFlagName),
-			AccessKeySecret:  ctx.String(S3AccessKeySecretFlagName),
-			Timeout:          ctx.Duration(S3TimeoutFlagName),
-		},
-		Fallback:       ctx.Bool(FallbackFlagName),
-		Cache:          ctx.Bool(CacheFlagName),
 		MetricsEnabled: ctx.Bool(MetricsEnabledFlagName),
 		MetricsPort:    ctx.Int(MetricsPortFlagName),
+		Fallback: CLIFallbackConfig{
+			Enabled:  ctx.Bool(FallbackEnabledFlagName),
+			Provider: ctx.String(FallbackProviderFlagName),
+			S3: s3.Config{
+				Bucket:          ctx.String(FallbackS3BucketFlagName),
+				Prefix:          ctx.String(FallbackS3PrefixFlagName),
+				Endpoint:        ctx.String(FallbackS3EndpointFlagName),
+				Region:          ctx.String(FallbackS3RegionFlagName),
+				CredentialType:  ctx.String(FallbackS3CredTypeFlagName),
+				AccessKeyID:     ctx.String(FallbackS3AccessKeyFlagName),
+				AccessKeySecret: ctx.String(FallbackS3SecretKeyFlagName),
+				Timeout:         ctx.Duration(FallbackS3TimeoutFlagName),
+			},
+		},
 	}
 }
 
+// TxClientEnabled returns true if the TX client (CoreGRPC) is enabled.
 func (c CLIConfig) TxClientEnabled() bool {
 	return c.TxClientConfig.KeyringPath != "" || c.TxClientConfig.CoreGRPCAuthToken != ""
 }
 
+// Check validates the CLI configuration.
 func (c CLIConfig) Check() error {
 	if c.TxClientEnabled() {
 		// If tx client is enabled, ensure tx client flags are set
@@ -305,19 +346,10 @@ func (c CLIConfig) Check() error {
 		return fmt.Errorf("celestia namespace: %w", err)
 	}
 
-	// S3 config validation (existing logic)
-	if c.S3Config.S3CredentialType != s3.S3CredentialUnknown && c.S3Config.Bucket == "" {
-		return errors.New("s3: bucket must be set when S3 is enabled")
-	}
-	if c.S3Config.S3CredentialType == s3.S3CredentialStatic {
-		if c.S3Config.AccessKeyID == "" || c.S3Config.AccessKeySecret == "" {
-			return errors.New("s3 static credentials: access key ID and secret must be set")
-		}
-	}
-
 	return nil
 }
 
+// CelestiaConfig converts CLIConfig to celestia.RPCClientConfig.
 func (c CLIConfig) CelestiaConfig() celestia.RPCClientConfig {
 	ns, _ := hex.DecodeString(c.CelestiaNamespace)
 	var cfg *celestia.TxClientConfig
@@ -334,28 +366,17 @@ func (c CLIConfig) CelestiaConfig() celestia.RPCClientConfig {
 	}
 }
 
+// CelestiaRPCClientEnabled returns true if Celestia RPC client should be used.
 func (c CLIConfig) CelestiaRPCClientEnabled() bool {
 	return !(c.CelestiaEndpoint == "" && c.CelestiaAuthToken == "" && c.CelestiaNamespace == "")
 }
 
-func (c CLIConfig) CacheEnabled() bool {
-	return c.Cache
-}
-
-func (c CLIConfig) FallbackEnabled() bool {
-	return c.Fallback
-}
-
-func toS3CredentialType(s string) s3.S3CredentialType {
-	if s == string(s3.S3CredentialStatic) {
-		return s3.S3CredentialStatic
-	} else if s == string(s3.S3CredentialIAM) {
-		return s3.S3CredentialIAM
-	}
-	return s3.S3CredentialUnknown
-}
-
+// CheckRequired verifies all required flags are set.
 func CheckRequired(ctx *cli.Context) error {
+	// If config file is provided, namespace can come from there
+	if ctx.IsSet(ConfigFileFlagName) {
+		return nil
+	}
 	for _, f := range requiredFlags {
 		if !ctx.IsSet(f.Names()[0]) {
 			return fmt.Errorf("flag %s is required", f.Names()[0])

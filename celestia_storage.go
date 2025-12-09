@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	txClient "github.com/celestiaorg/celestia-node/api/client"
@@ -19,6 +20,23 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 )
 
+// CelestiaBlobID field sizes in bytes.
+const (
+	// HeightSize is the size of the Height field (uint64).
+	HeightSize = 8
+	// CommitmentSize is the size of the Commitment field (shares commitment hash).
+	CommitmentSize = 32
+	// ShareOffsetSize is the size of the ShareOffset field (uint32).
+	ShareOffsetSize = 4
+	// ShareSizeSize is the size of the ShareSize field (uint32).
+	ShareSizeSize = 4
+
+	// CompactBlobIDSize is the total size of a compact blob ID (height + commitment).
+	CompactBlobIDSize = HeightSize + CommitmentSize // 40 bytes
+	// FullBlobIDSize is the total size of a full blob ID (height + commitment + offset + size).
+	FullBlobIDSize = HeightSize + CommitmentSize + ShareOffsetSize + ShareSizeSize // 48 bytes
+)
+
 // CelestiaBlobID represents the on-chain identifier for a Celestia blob.
 type CelestiaBlobID struct {
 	isCompact   bool
@@ -28,48 +46,85 @@ type CelestiaBlobID struct {
 	ShareSize   uint32
 }
 
+// SetCompact sets whether the blob ID should use compact format.
+func (c *CelestiaBlobID) SetCompact(compact bool) {
+	c.isCompact = compact
+}
+
+// IsCompact returns whether the blob ID uses compact format.
+func (c *CelestiaBlobID) IsCompact() bool {
+	return c.isCompact
+}
+
+// Validate checks that the CelestiaBlobID has valid field values.
+func (c *CelestiaBlobID) Validate() error {
+	if c.Commitment == nil {
+		return fmt.Errorf("commitment cannot be nil")
+	}
+	if len(c.Commitment) != CommitmentSize {
+		return fmt.Errorf("commitment must be %d bytes, got %d", CommitmentSize, len(c.Commitment))
+	}
+	// Height of 0 is technically valid (genesis), so we don't validate it
+	return nil
+}
+
 // MarshalBinary serializes the CelestiaBlobID struct into a byte slice.
+// Returns an error if validation fails.
 func (c *CelestiaBlobID) MarshalBinary() ([]byte, error) {
+	// Validate before marshaling to catch errors early
+	if err := c.Validate(); err != nil {
+		return nil, fmt.Errorf("marshal validation failed: %w", err)
+	}
+
 	if c.isCompact {
-		id := make([]byte, 8+32)
-		binary.LittleEndian.PutUint64(id[0:8], c.Height)
-		copy(id[8:40], c.Commitment)
+		id := make([]byte, CompactBlobIDSize)
+		binary.LittleEndian.PutUint64(id[0:HeightSize], c.Height)
+		copy(id[HeightSize:HeightSize+CommitmentSize], c.Commitment)
 		return id, nil
 	}
 
-	// Calculate the total length of the marshaled ID
-	// 8 bytes for Height + 32 bytes for Commitment + 4 bytes for ShareOffset + 4 bytes for ShareSize
-	id := make([]byte, 8+32+4+4)
+	// Full format includes ShareOffset and ShareSize
+	id := make([]byte, FullBlobIDSize)
 
-	binary.LittleEndian.PutUint64(id[0:8], c.Height)
-	copy(id[8:40], c.Commitment) // Commitment is 32 bytes
-	binary.LittleEndian.PutUint32(id[40:44], c.ShareOffset)
-	binary.LittleEndian.PutUint32(id[44:48], c.ShareSize)
+	binary.LittleEndian.PutUint64(id[0:HeightSize], c.Height)
+	copy(id[HeightSize:HeightSize+CommitmentSize], c.Commitment)
+	binary.LittleEndian.PutUint32(id[HeightSize+CommitmentSize:HeightSize+CommitmentSize+ShareOffsetSize], c.ShareOffset)
+	binary.LittleEndian.PutUint32(id[HeightSize+CommitmentSize+ShareOffsetSize:FullBlobIDSize], c.ShareSize)
 
 	return id, nil
 }
 
 // UnmarshalBinary deserializes a byte slice into a CelestiaBlobID struct.
+// Supports both compact (40 bytes) and full (48 bytes) formats.
 func (c *CelestiaBlobID) UnmarshalBinary(data []byte) error {
-	// Expected length: 8 bytes for Height + 32 bytes for Commitment + 4 bytes for ShareOffset + 4 bytes for ShareSize
-	expectedLen := 8 + 32 + 4 + 4
-	if len(data) < expectedLen {
-		// Expected length: 8 bytes for Height + 32 bytes for Commitment
-		expectedLen = 8 + 32
-		if len(data) < expectedLen {
-			return fmt.Errorf("invalid ID length: expected at least %d bytes, got %d", expectedLen, len(data))
-		}
-		c.Height = binary.LittleEndian.Uint64(data[0:8])
-		c.Commitment = make([]byte, 32)
-		copy(c.Commitment, data[8:40]) // Commitment is 32 bytes
-		return nil
+	// Check minimum length for compact format
+	if len(data) < CompactBlobIDSize {
+		return fmt.Errorf("invalid ID length: expected at least %d bytes (compact format), got %d", CompactBlobIDSize, len(data))
 	}
 
-	c.Height = binary.LittleEndian.Uint64(data[0:8])
-	c.Commitment = make([]byte, 32)
-	copy(c.Commitment, data[8:40]) // Commitment is 32 bytes
-	c.ShareOffset = binary.LittleEndian.Uint32(data[40:44])
-	c.ShareSize = binary.LittleEndian.Uint32(data[44:48])
+	// Parse height
+	c.Height = binary.LittleEndian.Uint64(data[0:HeightSize])
+
+	// Parse commitment
+	c.Commitment = make([]byte, CommitmentSize)
+	copy(c.Commitment, data[HeightSize:HeightSize+CommitmentSize])
+
+	// Check if we have full format data
+	if len(data) >= FullBlobIDSize {
+		c.ShareOffset = binary.LittleEndian.Uint32(data[HeightSize+CommitmentSize : HeightSize+CommitmentSize+ShareOffsetSize])
+		c.ShareSize = binary.LittleEndian.Uint32(data[HeightSize+CommitmentSize+ShareOffsetSize : FullBlobIDSize])
+		c.isCompact = false
+	} else {
+		// Compact format - no share offset/size
+		c.ShareOffset = 0
+		c.ShareSize = 0
+		c.isCompact = true
+	}
+
+	// Validate the unmarshaled data
+	if err := c.Validate(); err != nil {
+		return fmt.Errorf("unmarshal validation failed: %w", err)
+	}
 
 	return nil
 }
@@ -83,6 +138,7 @@ type TxClientConfig struct {
 	CoreGRPCTLSEnabled bool
 	CoreGRPCAuthToken  string
 	P2PNetwork         string
+	TxWorkerAccounts   int // 0=immediate, 1=queued single, >1=parallel workers
 }
 
 type RPCClientConfig struct {
@@ -143,6 +199,10 @@ func initTxClient(cfg RPCClientConfig) (blobAPI.Module, error) {
 	}
 
 	// Configure client
+	// TxWorkerAccounts controls parallel transaction submission:
+	//   - 0: Immediate submission (no queue, default)
+	//   - 1: Synchronous submission (queued, single signer)
+	//   - >1: Parallel submission (queued, multiple worker accounts)
 	config := txClient.Config{
 		ReadConfig: txClient.ReadConfig{
 			BridgeDAAddr: cfg.URL,
@@ -150,14 +210,25 @@ func initTxClient(cfg RPCClientConfig) (blobAPI.Module, error) {
 			EnableDATLS:  cfg.TLSEnabled,
 		},
 		SubmitConfig: txClient.SubmitConfig{
-			DefaultKeyName: cfg.TxClientConfig.DefaultKeyName,
-			Network:        p2p.Network(cfg.TxClientConfig.P2PNetwork),
+			DefaultKeyName:   cfg.TxClientConfig.DefaultKeyName,
+			Network:          p2p.Network(cfg.TxClientConfig.P2PNetwork),
+			TxWorkerAccounts: cfg.TxClientConfig.TxWorkerAccounts,
 			CoreGRPCConfig: txClient.CoreGRPCConfig{
 				Addr:       cfg.TxClientConfig.CoreGRPCAddr,
 				TLSEnabled: cfg.TxClientConfig.CoreGRPCTLSEnabled,
 				AuthToken:  cfg.TxClientConfig.CoreGRPCAuthToken,
 			},
 		},
+	}
+
+	// Log submission mode
+	switch {
+	case cfg.TxClientConfig.TxWorkerAccounts > 1:
+		log.Info("Parallel submission mode enabled", "tx_worker_accounts", cfg.TxClientConfig.TxWorkerAccounts)
+	case cfg.TxClientConfig.TxWorkerAccounts == 1:
+		log.Info("Synchronous submission mode enabled (queued, single signer)")
+	default:
+		log.Info("Immediate submission mode (default, no queue)")
 	}
 	ctx := context.Background()
 	celestiaClient, err := txClient.New(ctx, config, kr)
@@ -178,7 +249,7 @@ func initRPCClient(cfg RPCClientConfig) (blobAPI.Module, error) {
 
 func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	d.Log.Info("celestia: blob request", "id", hex.EncodeToString(key))
-	ctx, cancel := context.WithTimeout(context.Background(), d.GetTimeout)
+	ctx, cancel := context.WithTimeout(ctx, d.GetTimeout)
 	defer cancel()
 
 	var blobID CelestiaBlobID
@@ -189,19 +260,31 @@ func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	log.Debug("Retrieving blob with commitment", "blobID.Commitment", hex.EncodeToString(blobID.Commitment), "blobID.Height", blobID.Height)
 	blob, err := d.Client.Get(ctx, blobID.Height, d.Namespace, blobID.Commitment)
 	if err != nil {
+		// Check if error indicates blob not found
+		if isBlobNotFoundError(err) {
+			return nil, altda.ErrNotFound
+		}
 		return nil, fmt.Errorf("celestia: failed to resolve frame: %w", err)
 	}
 	if blob == nil {
-		return nil, fmt.Errorf("celestia: failed to resolve frame: nil blob")
+		return nil, altda.ErrNotFound
 	}
 	return blob.Data(), nil
 }
 
-func (d *CelestiaStore) Put(ctx context.Context, data []byte) ([]byte, []byte, error) {
-	var submitFunc = func(ctx context.Context, client blobAPI.Module, b []*blob.Blob) (uint64, error) {
-		return d.Client.Submit(ctx, b, state.NewTxConfig())
+// isBlobNotFoundError checks if the error from Celestia client indicates blob not found.
+func isBlobNotFoundError(err error) bool {
+	if err == nil {
+		return false
 	}
-	id, blobData, err := submitAndCreateBlobID(ctx, d.Client, submitFunc, d.Namespace, data, d.CompactBlobID)
+	errStr := err.Error()
+	return strings.Contains(errStr, "blob: not found") ||
+		strings.Contains(errStr, "blob not found") ||
+		strings.Contains(errStr, "not found")
+}
+
+func (d *CelestiaStore) Put(ctx context.Context, data []byte) ([]byte, []byte, error) {
+	id, blobData, err := d.submitBlob(ctx, data)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -219,52 +302,36 @@ func (d *CelestiaStore) CreateCommitment(data []byte) ([]byte, error) {
 	return b.Commitment, nil
 }
 
-// submitAndCreateBlobID submits a blob to Celestia and creates a marshaled blob ID.
-// If compactBlobID is true, it re-fetches the blob to get its index and length.
-func submitAndCreateBlobID(
-	ctx context.Context,
-	client blobAPI.Module,
-	submitFunc func(context.Context, blobAPI.Module, []*blob.Blob) (uint64, error),
-	namespace libshare.Namespace,
-	data []byte,
-	compactBlobID bool,
-) ([]byte, []byte, error) {
-	b, err := blob.NewBlob(libshare.ShareVersionZero, namespace, data, nil)
+// submitBlob submits a blob to Celestia and returns the marshaled blob ID.
+func (d *CelestiaStore) submitBlob(ctx context.Context, data []byte) ([]byte, []byte, error) {
+	b, err := blob.NewBlob(libshare.ShareVersionZero, d.Namespace, data, nil)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	height, err := submitFunc(ctx, client, []*blob.Blob{b})
+	height, err := d.Client.Submit(ctx, []*blob.Blob{b}, state.NewTxConfig())
 	if err != nil {
 		return nil, nil, err
 	}
 
-	var blobID CelestiaBlobID
-	if compactBlobID {
-		// Re-fetch the blob to get its index and length
-		b, err = client.Get(ctx, height, namespace, b.Commitment)
+	blobID := CelestiaBlobID{
+		Height:     height,
+		Commitment: b.Commitment,
+		isCompact:  d.CompactBlobID,
+	}
+
+	// For compact format, re-fetch to get share index and size
+	if d.CompactBlobID {
+		b, err = d.Client.Get(ctx, height, d.Namespace, b.Commitment)
 		if err != nil {
 			return nil, nil, err
 		}
-
 		size, err := b.Length()
 		if err != nil {
 			return nil, nil, err
 		}
-
-		blobID = CelestiaBlobID{
-			Height:      height,
-			Commitment:  b.Commitment,
-			ShareOffset: uint32(b.Index()),
-			ShareSize:   uint32(size),
-			isCompact:   compactBlobID,
-		}
-	} else {
-		blobID = CelestiaBlobID{
-			Height:     height,
-			Commitment: b.Commitment,
-			isCompact:  compactBlobID,
-		}
+		blobID.ShareOffset = uint32(b.Index())
+		blobID.ShareSize = uint32(size)
 	}
 
 	id, err := blobID.MarshalBinary()

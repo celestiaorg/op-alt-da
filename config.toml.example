@@ -1,0 +1,158 @@
+# ==============================================================================
+# Stateless DA Server Configuration
+# ==============================================================================
+#
+# This server submits blobs directly to Celestia and retrieves them on demand.
+# No local database, no batching, no background workers - fully stateless.
+#
+# ==============================================================================
+
+# Server listening address
+addr = "127.0.0.1"
+
+# Server listening port
+port = 3100
+
+# Log level: debug, info, warn, error
+log_level = "info"
+
+# Log format: text, terminal, logfmt, json, json-pretty
+log_format = "text"
+
+# ==============================================================================
+# CELESTIA CONFIGURATION
+# ==============================================================================
+
+[celestia]
+# Celestia namespace (29 bytes hex, version 0 requires 18 leading zeros)
+# Generate with: 00000000000000000000000000000000000000$(openssl rand -hex 10)
+namespace = "00000000000000000000000000000000000000000000000000000000acfe"
+
+# Use compact blob IDs (height + commitment only, recommended)
+blobid_compact = true
+
+# ------------------------------------------------------------------------------
+# Bridge Node (for reading blobs)
+# ------------------------------------------------------------------------------
+# RPC endpoint for blob retrieval. Can be a local light/bridge node
+# or a service provider endpoint.
+
+bridge_addr = "http://localhost:26658"
+bridge_auth_token = ""
+bridge_tls_enabled = false
+
+# ------------------------------------------------------------------------------
+# Core gRPC (for submitting blobs)
+# ------------------------------------------------------------------------------
+# gRPC endpoint for transaction submission to consensus.
+# Examples:
+#   - Local: localhost:9090
+#   - Mocha: consensus-full-mocha-4.celestia-mocha.com:9090
+
+core_grpc_addr = "consensus-full-mocha-4.celestia-mocha.com:9090"
+core_grpc_auth_token = ""
+core_grpc_tls_enabled = true
+
+# ------------------------------------------------------------------------------
+# Keyring (for signing transactions)
+# ------------------------------------------------------------------------------
+# Setup:
+#   1. Initialize: celestia light init --p2p.network mocha-4
+#   2. Create key: celestia-appd keys add my_celes_key --keyring-backend test \
+#                  --home ~/.celestia-light-mocha-4
+#   3. Fund the address with TIA
+
+keyring_path = "~/.celestia-light-mocha-4/keys"
+default_key_name = "my_celes_key"
+p2p_network = "mocha-4"
+
+# Parallel submission (0 = immediate, 1 = queued, >1 = parallel workers)
+tx_worker_accounts = 0
+
+# ==============================================================================
+# SUBMISSION CONFIGURATION
+# ==============================================================================
+
+[submission]
+# Timeout for blob submission (server fails immediately if exceeded)
+timeout = "60s"
+
+# Transaction priority: 1=low, 2=medium, 3=high
+tx_priority = 2
+
+# ==============================================================================
+# READ CONFIGURATION
+# ==============================================================================
+
+[read]
+# Timeout for blob retrieval from Celestia
+timeout = "30s"
+
+# ==============================================================================
+# METRICS CONFIGURATION
+# ==============================================================================
+
+[metrics]
+# Enable Prometheus metrics server
+enabled = true
+
+# Prometheus metrics server port
+port = 6060
+
+# ==============================================================================
+# FALLBACK STORAGE CONFIGURATION (Optional)
+# ==============================================================================
+# Fallback storage provides redundancy by storing blobs in S3 (or compatible).
+# This is useful for:
+#   - Disaster recovery if Celestia data is pruned
+#   - Faster reads during Celestia network issues
+#   - Data archival requirements
+
+[fallback]
+# Enable fallback storage provider
+enabled = false
+
+# Provider type: "s3" (more providers coming)
+provider = "s3"
+
+# Fallback mode:
+#   - "write_through": Write to fallback after successful Celestia submission
+#   - "read_fallback": Read from fallback if Celestia retrieval fails
+#   - "both": Enable both write_through and read_fallback (recommended)
+mode = "both"
+
+# ------------------------------------------------------------------------------
+# S3 Configuration (when provider = "s3")
+# ------------------------------------------------------------------------------
+# Works with AWS S3, MinIO, Cloudflare R2, and other S3-compatible services.
+
+[fallback.s3]
+# S3 bucket name (required when fallback is enabled)
+bucket = ""
+
+# Key prefix for blob storage (optional)
+# Example: "op-alt-da/blobs/" -> s3://bucket/op-alt-da/blobs/<commitment>
+prefix = ""
+
+# S3 endpoint URL (optional, for S3-compatible services)
+# Examples:
+#   - MinIO: http://localhost:9000
+#   - Cloudflare R2: https://<account>.r2.cloudflarestorage.com
+#   - Leave empty for AWS S3
+endpoint = ""
+
+# AWS region
+region = "us-east-1"
+
+# Credential type: "static", "environment", or "iam"
+#   - "static": Use access_key_id and access_key_secret below
+#   - "environment": Use AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY env vars
+#   - "iam": Use IAM role (EC2, ECS, Lambda)
+credential_type = "environment"
+
+# Static credentials (when credential_type = "static")
+access_key_id = ""
+access_key_secret = ""
+
+# Operation timeout
+timeout = "30s"
