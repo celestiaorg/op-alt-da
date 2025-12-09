@@ -181,9 +181,7 @@ func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 
 			// Try fallback provider if enabled
 			if d.fallback.Available() {
-				fbCtx, fbCancel := context.WithTimeout(r.Context(), d.fallback.Timeout())
-				defer fbCancel()
-				fbData, fbErr := d.fallback.Get(fbCtx, comm)
+				fbData, fbErr := d.getFallback(r.Context(), comm)
 				if fbErr == nil && fbData != nil {
 					d.log.Info("Served from fallback",
 						"provider", d.fallback.Name(),
@@ -237,15 +235,7 @@ func (d *CelestiaServer) HandleGet(w http.ResponseWriter, r *http.Request) {
 	// Read-through: populate fallback with data from Celestia (async, non-blocking)
 	// This ensures blobs submitted before fallback was enabled get cached on first read
 	if d.fallback.Available() {
-		go func(commitment []byte, data []byte) {
-			fbCtx, fbCancel := context.WithTimeout(context.Background(), d.fallback.Timeout())
-			defer fbCancel()
-			if err := d.fallback.Put(fbCtx, commitment, data); err != nil {
-				d.log.Debug("Fallback read-through write failed", "provider", d.fallback.Name(), "err", err)
-			} else {
-				d.log.Debug("Fallback read-through write succeeded", "provider", d.fallback.Name())
-			}
-		}(comm, celestiaData)
+		d.putFallbackAsync(comm, celestiaData)
 	}
 
 	if _, err := w.Write(celestiaData); err != nil {
@@ -322,15 +312,7 @@ func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 
 	// Write to fallback provider asynchronously (non-blocking)
 	if d.fallback.Available() {
-		go func(comm []byte, data []byte) {
-			fbCtx, fbCancel := context.WithTimeout(context.Background(), d.fallback.Timeout())
-			defer fbCancel()
-			if err := d.fallback.Put(fbCtx, comm, data); err != nil {
-				d.log.Warn("Fallback write failed", "provider", d.fallback.Name(), "err", err)
-			} else {
-				d.log.Debug("Fallback write succeeded", "provider", d.fallback.Name())
-			}
-		}(commitment, input)
+		d.putFallbackAsync(commitment, input)
 	}
 
 	if _, err := w.Write(commitment); err != nil {
@@ -340,6 +322,33 @@ func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 
 func (d *CelestiaServer) Endpoint() string {
 	return d.listener.Addr().String()
+}
+
+// getFallback retrieves data from fallback provider with proper context management.
+func (d *CelestiaServer) getFallback(parent context.Context, commitment []byte) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(parent, d.fallback.Timeout())
+	defer cancel()
+	return d.fallback.Get(ctx, commitment)
+}
+
+// putFallbackAsync writes to fallback provider asynchronously with its own context.
+// Uses context.Background() since the operation should complete independently of the HTTP request.
+func (d *CelestiaServer) putFallbackAsync(commitment []byte, data []byte) {
+	// Capture values needed by goroutine to avoid closure issues
+	provider := d.fallback
+	timeout := d.fallback.Timeout()
+	logger := d.log
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+
+		if err := provider.Put(ctx, commitment, data); err != nil {
+			logger.Warn("Fallback write failed", "provider", provider.Name(), "err", err)
+		} else {
+			logger.Debug("Fallback write succeeded", "provider", provider.Name())
+		}
+	}()
 }
 
 func (d *CelestiaServer) Stop() error {
