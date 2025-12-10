@@ -91,55 +91,55 @@ Or using a config file:
 
 ### CLI Flags
 
-| Flag | Environment Variable | Default | Description |
-|------|---------------------|---------|-------------|
-| `--addr` | `OP_ALTDA_ADDR` | `127.0.0.1` | Server listening address |
-| `--port` | `OP_ALTDA_PORT` | `3100` | Server listening port |
-| `--celestia.server` | `OP_ALTDA_CELESTIA_SERVER` | `http://localhost:26658` | Bridge node RPC endpoint |
-| `--celestia.namespace` | `OP_ALTDA_CELESTIA_NAMESPACE` | (required) | Celestia namespace (29 bytes hex) |
-| `--celestia.auth-token` | `OP_ALTDA_CELESTIA_AUTH_TOKEN` | | Bridge node auth token |
-| `--celestia.tls-enabled` | `OP_ALTDA_CELESTIA_TLS_ENABLED` | `false` | Enable TLS for bridge RPC |
-| `--celestia.compact-blobid` | `OP_ALTDA_CELESTIA_BLOBID_COMPACT` | `true` | Use compact blob IDs |
+| Flag                        | Environment Variable               | Default                  | Description                       |
+| --------------------------- | ---------------------------------- | ------------------------ | --------------------------------- |
+| `--addr`                    | `OP_ALTDA_ADDR`                    | `127.0.0.1`              | Server listening address          |
+| `--port`                    | `OP_ALTDA_PORT`                    | `3100`                   | Server listening port             |
+| `--celestia.server`         | `OP_ALTDA_CELESTIA_SERVER`         | `http://localhost:26658` | Bridge node RPC endpoint          |
+| `--celestia.namespace`      | `OP_ALTDA_CELESTIA_NAMESPACE`      | (required)               | Celestia namespace (29 bytes hex) |
+| `--celestia.auth-token`     | `OP_ALTDA_CELESTIA_AUTH_TOKEN`     |                          | Bridge node auth token            |
+| `--celestia.tls-enabled`    | `OP_ALTDA_CELESTIA_TLS_ENABLED`    | `false`                  | Enable TLS for bridge RPC         |
+| `--celestia.compact-blobid` | `OP_ALTDA_CELESTIA_BLOBID_COMPACT` | `true`                   | Use compact blob IDs              |
 
 #### Transaction Client (Required for Writes)
 
-| Flag | Environment Variable | Default | Description |
-|------|---------------------|---------|-------------|
-| `--celestia.tx-client.key-name` | `OP_ALTDA_CELESTIA_TX_CLIENT_KEY_NAME` | `my_celes_key` | Key name in keyring |
-| `--celestia.tx-client.keyring-path` | `OP_ALTDA_CELESTIA_TX_CLIENT_KEYRING_PATH` | **(required)** | Path to keyring directory |
-| `--celestia.tx-client.core-grpc.addr` | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_ADDR` | **(required)** | CoreGRPC endpoint |
-| `--celestia.tx-client.core-grpc.tls-enabled` | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_TLS_ENABLED` | `true` | Enable TLS for CoreGRPC |
-| `--celestia.tx-client.core-grpc.auth-token` | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_AUTH_TOKEN` | | CoreGRPC auth token |
-| `--celestia.tx-client.p2p-network` | `OP_ALTDA_CELESTIA_TX_CLIENT_P2P_NETWORK` | `mocha-4` | Network: mocha-4, arabica-11, celestia |
+| Flag                                         | Environment Variable                                | Default        | Description                            |
+| -------------------------------------------- | --------------------------------------------------- | -------------- | -------------------------------------- |
+| `--celestia.tx-client.key-name`              | `OP_ALTDA_CELESTIA_TX_CLIENT_KEY_NAME`              | `my_celes_key` | Key name in keyring                    |
+| `--celestia.tx-client.keyring-path`          | `OP_ALTDA_CELESTIA_TX_CLIENT_KEYRING_PATH`          | **(required)** | Path to keyring directory              |
+| `--celestia.tx-client.core-grpc.addr`        | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_ADDR`        | **(required)** | CoreGRPC endpoint                      |
+| `--celestia.tx-client.core-grpc.tls-enabled` | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_TLS_ENABLED` | `true`         | Enable TLS for CoreGRPC                |
+| `--celestia.tx-client.core-grpc.auth-token`  | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_AUTH_TOKEN`  |                | CoreGRPC auth token                    |
+| `--celestia.tx-client.p2p-network`           | `OP_ALTDA_CELESTIA_TX_CLIENT_P2P_NETWORK`           | `mocha-4`      | Network: mocha-4, arabica-11, celestia |
 
 #### Fallback Storage (Optional)
 
-| Flag | Environment Variable | Default | Description |
-|------|---------------------|---------|-------------|
-| `--fallback.enabled` | `OP_ALTDA_FALLBACK_ENABLED` | `false` | Enable fallback storage |
-| `--fallback.provider` | `OP_ALTDA_FALLBACK_PROVIDER` | `s3` | Fallback provider type |
-| `--fallback.s3.bucket` | `OP_ALTDA_FALLBACK_S3_BUCKET` | | S3 bucket name |
-| `--fallback.s3.prefix` | `OP_ALTDA_FALLBACK_S3_PREFIX` | | S3 key prefix |
-| `--fallback.s3.endpoint` | `OP_ALTDA_FALLBACK_S3_ENDPOINT` | | S3 endpoint (for MinIO, etc.) |
-| `--fallback.s3.region` | `OP_ALTDA_FALLBACK_S3_REGION` | `us-east-1` | S3 region |
-| `--fallback.s3.credential-type` | `OP_ALTDA_FALLBACK_S3_CREDENTIAL_TYPE` | | Credential type: static, environment, iam |
-| `--fallback.s3.access-key-id` | `OP_ALTDA_FALLBACK_S3_ACCESS_KEY_ID` | | S3 access key |
-| `--fallback.s3.access-key-secret` | `OP_ALTDA_FALLBACK_S3_ACCESS_KEY_SECRET` | | S3 secret key |
-| `--fallback.s3.timeout` | `OP_ALTDA_FALLBACK_S3_TIMEOUT` | `30s` | S3 operation timeout |
+| Flag                              | Environment Variable                     | Default     | Description                              |
+| --------------------------------- | ---------------------------------------- | ----------- | ---------------------------------------- |
+| `--fallback.enabled`              | `OP_ALTDA_FALLBACK_ENABLED`              | `false`     | Enable fallback storage                  |
+| `--fallback.provider`             | `OP_ALTDA_FALLBACK_PROVIDER`             | `s3`        | Fallback provider type                   |
+| `--fallback.s3.bucket`            | `OP_ALTDA_FALLBACK_S3_BUCKET`            |             | S3 bucket name                           |
+| `--fallback.s3.prefix`            | `OP_ALTDA_FALLBACK_S3_PREFIX`            |             | S3 key prefix                            |
+| `--fallback.s3.endpoint`          | `OP_ALTDA_FALLBACK_S3_ENDPOINT`          |             | S3 endpoint (for MinIO, etc.)            |
+| `--fallback.s3.region`            | `OP_ALTDA_FALLBACK_S3_REGION`            | `us-east-1` | S3 region                                |
+| `--fallback.s3.credential-type`   | `OP_ALTDA_FALLBACK_S3_CREDENTIAL_TYPE`   |             | Credential type: static, environment, iam |
+| `--fallback.s3.access-key-id`     | `OP_ALTDA_FALLBACK_S3_ACCESS_KEY_ID`     |             | S3 access key                            |
+| `--fallback.s3.access-key-secret` | `OP_ALTDA_FALLBACK_S3_ACCESS_KEY_SECRET` |             | S3 secret key                            |
+| `--fallback.s3.timeout`           | `OP_ALTDA_FALLBACK_S3_TIMEOUT`           | `30s`       | S3 operation timeout                     |
 
 #### Metrics
 
-| Flag | Environment Variable | Default | Description |
-|------|---------------------|---------|-------------|
+| Flag                | Environment Variable       | Default | Description               |
+| ------------------- | -------------------------- | ------- | ------------------------- |
 | `--metrics.enabled` | `OP_ALTDA_METRICS_ENABLED` | `false` | Enable Prometheus metrics |
-| `--metrics.port` | `OP_ALTDA_METRICS_PORT` | `6060` | Prometheus metrics port |
+| `--metrics.port`    | `OP_ALTDA_METRICS_PORT`    | `6060`  | Prometheus metrics port   |
 
 #### Logging
 
-| Flag | Environment Variable | Default | Description |
-|------|---------------------|---------|-------------|
-| `--log.level` | `OP_ALTDA_LOG_LEVEL` | `INFO` | Log level (DEBUG, INFO, WARN, ERROR) |
-| `--log.format` | `OP_ALTDA_LOG_FORMAT` | `text` | Log format (text, terminal, logfmt, json) |
+| Flag           | Environment Variable  | Default | Description                               |
+| -------------- | --------------------- | ------- | ----------------------------------------- |
+| `--log.level`  | `OP_ALTDA_LOG_LEVEL`  | `INFO`  | Log level (DEBUG, INFO, WARN, ERROR)      |
+| `--log.format` | `OP_ALTDA_LOG_FORMAT` | `text`  | Log format (text, terminal, logfmt, json) |
 
 ### TOML Configuration
 
@@ -196,11 +196,11 @@ See [API.md](./API.md) for detailed API documentation.
 
 ### Quick Reference
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/put` | PUT | Submit blob to Celestia |
-| `/get/:commitment` | GET | Retrieve blob by commitment |
-| `/health` | GET | Health check endpoint |
+| Endpoint           | Method | Description                 |
+| ------------------ | ------ | --------------------------- |
+| `/put`             | PUT    | Submit blob to Celestia     |
+| `/get/:commitment` | GET    | Retrieve blob by commitment |
+| `/health`          | GET    | Health check endpoint       |
 
 ### Example Usage
 
@@ -246,17 +246,17 @@ When enabled (`--metrics.enabled=true`), Prometheus metrics are available at `ht
 
 ### Available Metrics
 
-| Metric | Type | Description |
-|--------|------|-------------|
-| `op_altda_request_duration_seconds` | Histogram | HTTP request duration by method |
-| `op_altda_blob_size_bytes` | Histogram | Size of submitted/retrieved blobs |
-| `op_altda_inclusion_height` | Gauge | Latest Celestia inclusion height |
-| `celestia_submission_duration_seconds` | Histogram | Time to submit blob to Celestia |
-| `celestia_submissions_total` | Counter | Total blob submissions |
-| `celestia_submission_errors_total` | Counter | Failed blob submissions |
-| `celestia_retrieval_duration_seconds` | Histogram | Time to retrieve blob from Celestia |
-| `celestia_retrievals_total` | Counter | Total blob retrievals |
-| `celestia_retrieval_errors_total` | Counter | Failed blob retrievals |
+| Metric                                 | Type      | Description                         |
+| -------------------------------------- | --------- | ----------------------------------- |
+| `op_altda_request_duration_seconds`    | Histogram | HTTP request duration by method     |
+| `op_altda_blob_size_bytes`             | Histogram | Size of submitted/retrieved blobs   |
+| `op_altda_inclusion_height`            | Gauge     | Latest Celestia inclusion height    |
+| `celestia_submission_duration_seconds` | Histogram | Time to submit blob to Celestia     |
+| `celestia_submissions_total`           | Counter   | Total blob submissions              |
+| `celestia_submission_errors_total`     | Counter   | Failed blob submissions             |
+| `celestia_retrieval_duration_seconds`  | Histogram | Time to retrieve blob from Celestia |
+| `celestia_retrievals_total`            | Counter   | Total blob retrievals               |
+| `celestia_retrieval_errors_total`      | Counter   | Failed blob retrievals              |
 
 ## Testing
 

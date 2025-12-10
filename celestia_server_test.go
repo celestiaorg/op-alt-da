@@ -2,6 +2,9 @@ package celestia
 
 import (
 	"bytes"
+	"context"
+	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,34 +12,68 @@ import (
 	"time"
 
 	"github.com/celestiaorg/op-alt-da/metrics"
+	altda "github.com/ethereum-optimism/optimism/op-alt-da"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// mockCelestiaStore is a mock implementation of the storage layer for testing.
+// mockStore is a mock implementation of the Store interface for testing.
 // It allows testing server handlers without actual Celestia network calls.
-type mockCelestiaStore struct {
-	putFunc func(data []byte) ([]byte, []byte, error)
-	getFunc func(key []byte) ([]byte, error)
+type mockStore struct {
+	getFunc func(ctx context.Context, key []byte) ([]byte, error)
+	putFunc func(ctx context.Context, data []byte) ([]byte, []byte, error)
+}
+
+func (m *mockStore) Get(ctx context.Context, key []byte) ([]byte, error) {
+	if m.getFunc != nil {
+		return m.getFunc(ctx, key)
+	}
+	return nil, errors.New("mock: Get not implemented")
+}
+
+func (m *mockStore) Put(ctx context.Context, data []byte) ([]byte, []byte, error) {
+	if m.putFunc != nil {
+		return m.putFunc(ctx, data)
+	}
+	return nil, nil, errors.New("mock: Put not implemented")
 }
 
 // createTestServer creates a CelestiaServer for testing with mocked storage.
-func createTestServer(t *testing.T, store *CelestiaStore) *CelestiaServer {
+func createTestServer(t *testing.T, store Store) *CelestiaServer {
 	logger := log.New()
 
 	return NewCelestiaServer(
 		"127.0.0.1",
-		0, // port 0 = let OS assign
+		0,               // port 0 = let OS assign
 		store,
-		30*time.Second,
-		30*time.Second,
-		false, // metrics disabled for unit tests
+		30*time.Second,  // submitTimeout
+		30*time.Second,  // getTimeout
+		30*time.Second,  // httpReadTimeout
+		120*time.Second, // httpWriteTimeout
+		60*time.Second,  // httpIdleTimeout
+		2*1024*1024,     // maxBlobSize (2MB)
+		false,           // metrics disabled for unit tests
 		0,
 		nil, // fallback provider (nil = NoopProvider)
 		logger,
 	)
+}
+
+// validCommitment creates a valid commitment for testing.
+// Format: 0x01 (generic) + 0x0c (celestia version) + BlobID
+func validCommitment() string {
+	// Create a valid compact BlobID (40 bytes):
+	// 8 bytes height + 32 bytes commitment
+	blobID := make([]byte, 40)
+	blobID[0] = 0x01 // height byte 1
+	for i := 8; i < 40; i++ {
+		blobID[i] = byte(i) // fake commitment
+	}
+	// Full commitment: 0x01 (generic) + 0x0c (version) + blobID
+	comm := append([]byte{0x01, VersionByte}, blobID...)
+	return "0x" + hex.EncodeToString(comm)
 }
 
 // TestHandleHealth verifies the health endpoint returns 200 OK.
@@ -59,6 +96,7 @@ func TestHandlePut_EmptyBlob(t *testing.T) {
 	server := &CelestiaServer{
 		log:           log.New(),
 		submitTimeout: 30 * time.Second,
+		maxBlobSize:   2 * 1024 * 1024, // 2MB
 	}
 
 	// Test empty body
@@ -74,7 +112,8 @@ func TestHandlePut_EmptyBlob(t *testing.T) {
 // TestHandlePut_WrongRoute verifies that wrong PUT routes return 400.
 func TestHandlePut_WrongRoute(t *testing.T) {
 	server := &CelestiaServer{
-		log: log.New(),
+		log:         log.New(),
+		maxBlobSize: 2 * 1024 * 1024, // 2MB
 	}
 
 	req := httptest.NewRequest(http.MethodPut, "/put/extra/path", bytes.NewReader([]byte("data")))
@@ -115,13 +154,14 @@ func TestHandleGet_WrongRoute(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// TestHandleGet_TooShortCommitment verifies short commitments return 400.
+// TestHandleGet_TooShortCommitment verifies short commitments return error.
 func TestHandleGet_TooShortCommitment(t *testing.T) {
-	server := &CelestiaServer{
-		log:        log.New(),
-		getTimeout: 30 * time.Second,
-		store:      &CelestiaStore{Log: log.New()},
+	store := &mockStore{
+		getFunc: func(ctx context.Context, key []byte) ([]byte, error) {
+			return nil, errors.New("should not be called for short commitment")
+		},
 	}
+	server := createTestServer(t, store)
 
 	// Test commitment that's too short (less than 40 bytes = minimum BlobID)
 	req := httptest.NewRequest(http.MethodGet, "/get/0x0102030405", nil)
@@ -132,6 +172,98 @@ func TestHandleGet_TooShortCommitment(t *testing.T) {
 	// Should return 500 because commitment can't be parsed (actual error, not "not found")
 	assert.True(t, w.Code == http.StatusBadRequest || w.Code == http.StatusInternalServerError,
 		"Expected 400 or 500 for invalid short commitment, got %d", w.Code)
+}
+
+// TestHandleGet_Success verifies successful blob retrieval returns 200.
+func TestHandleGet_Success(t *testing.T) {
+	expectedData := []byte("hello world blob data")
+	store := &mockStore{
+		getFunc: func(ctx context.Context, key []byte) ([]byte, error) {
+			return expectedData, nil
+		},
+	}
+	server := createTestServer(t, store)
+
+	req := httptest.NewRequest(http.MethodGet, "/get/"+validCommitment(), nil)
+	w := httptest.NewRecorder()
+
+	server.HandleGet(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, expectedData, w.Body.Bytes())
+	assert.Equal(t, "application/octet-stream", w.Header().Get("Content-Type"))
+}
+
+// TestHandleGet_NotFound verifies missing blob returns 404.
+func TestHandleGet_NotFound(t *testing.T) {
+	store := &mockStore{
+		getFunc: func(ctx context.Context, key []byte) ([]byte, error) {
+			return nil, altda.ErrNotFound
+		},
+	}
+	server := createTestServer(t, store)
+
+	req := httptest.NewRequest(http.MethodGet, "/get/"+validCommitment(), nil)
+	w := httptest.NewRecorder()
+
+	server.HandleGet(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestHandleGet_InternalError verifies server errors return 500.
+func TestHandleGet_InternalError(t *testing.T) {
+	store := &mockStore{
+		getFunc: func(ctx context.Context, key []byte) ([]byte, error) {
+			return nil, errors.New("connection to celestia failed")
+		},
+	}
+	server := createTestServer(t, store)
+
+	req := httptest.NewRequest(http.MethodGet, "/get/"+validCommitment(), nil)
+	w := httptest.NewRecorder()
+
+	server.HandleGet(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// TestHandlePut_Success verifies successful blob submission returns 200.
+func TestHandlePut_Success(t *testing.T) {
+	expectedCommitment := []byte{0x01, 0x0c, 0xde, 0xad, 0xbe, 0xef}
+	store := &mockStore{
+		putFunc: func(ctx context.Context, data []byte) ([]byte, []byte, error) {
+			return expectedCommitment, data, nil
+		},
+	}
+	server := createTestServer(t, store)
+
+	blobData := []byte("test blob data to submit")
+	req := httptest.NewRequest(http.MethodPut, "/put", bytes.NewReader(blobData))
+	w := httptest.NewRecorder()
+
+	server.HandlePut(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, expectedCommitment, w.Body.Bytes())
+}
+
+// TestHandlePut_InternalError verifies submission errors return 500.
+func TestHandlePut_InternalError(t *testing.T) {
+	store := &mockStore{
+		putFunc: func(ctx context.Context, data []byte) ([]byte, []byte, error) {
+			return nil, nil, errors.New("celestia submission failed")
+		},
+	}
+	server := createTestServer(t, store)
+
+	blobData := []byte("test blob data")
+	req := httptest.NewRequest(http.MethodPut, "/put", bytes.NewReader(blobData))
+	w := httptest.NewRecorder()
+
+	server.HandlePut(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 // TestMetricsRecording verifies metrics are recorded correctly.
@@ -181,6 +313,7 @@ func TestServerEndpoints(t *testing.T) {
 		endpoint:      "127.0.0.1:0",
 		submitTimeout: 30 * time.Second,
 		getTimeout:    30 * time.Second,
+		maxBlobSize:   2 * 1024 * 1024, // 2MB
 		httpServer:    &http.Server{},
 	}
 

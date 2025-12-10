@@ -15,7 +15,7 @@ import (
 )
 
 type Server interface {
-	Start() error
+	Start(ctx context.Context) error
 	Stop() error
 }
 
@@ -50,15 +50,36 @@ func StartDAServer(cliCtx *cli.Context) error {
 		return fmt.Errorf("invalid config: %w", err)
 	}
 
-	// Parse timeouts
+	// Parse Celestia operation timeouts
 	submitTimeout, err := cfg.GetSubmissionTimeout()
 	if err != nil {
 		return fmt.Errorf("invalid submission timeout: %w", err)
 	}
 
-	readTimeout, err := cfg.GetReadTimeout()
+	getTimeout, err := cfg.GetReadTimeout()
 	if err != nil {
 		return fmt.Errorf("invalid read timeout: %w", err)
+	}
+
+	// Parse HTTP server timeouts
+	httpReadTimeout, err := cfg.GetHTTPReadTimeout()
+	if err != nil {
+		return fmt.Errorf("invalid http read timeout: %w", err)
+	}
+
+	httpWriteTimeout, err := cfg.GetHTTPWriteTimeout()
+	if err != nil {
+		return fmt.Errorf("invalid http write timeout: %w", err)
+	}
+
+	httpIdleTimeout, err := cfg.GetHTTPIdleTimeout()
+	if err != nil {
+		return fmt.Errorf("invalid http idle timeout: %w", err)
+	}
+
+	maxBlobSize, err := cfg.GetMaxBlobSize()
+	if err != nil {
+		return fmt.Errorf("invalid max blob size: %w", err)
 	}
 
 	// For backward compatibility, also check CLI-only config
@@ -75,7 +96,10 @@ func StartDAServer(cliCtx *cli.Context) error {
 
 	if celestiaRPCConfig.URL != "" || len(celestiaRPCConfig.Namespace) > 0 {
 		l.Info("Using celestia storage", "url", celestiaRPCConfig.URL)
-		store := celestia.NewCelestiaStore(celestiaRPCConfig)
+		store, err := celestia.NewCelestiaStore(cliCtx.Context, celestiaRPCConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create celestia store: %w", err)
+		}
 
 		// Use config values, with CLI flags as fallback
 		addr := cfg.Addr
@@ -91,8 +115,8 @@ func StartDAServer(cliCtx *cli.Context) error {
 		if submitTimeout == 0 {
 			submitTimeout = 60 * time.Second
 		}
-		if readTimeout == 0 {
-			readTimeout = 30 * time.Second
+		if getTimeout == 0 {
+			getTimeout = 30 * time.Second
 		}
 
 		// Initialize fallback provider (prefer TOML config, fall back to CLI flags)
@@ -127,7 +151,7 @@ func StartDAServer(cliCtx *cli.Context) error {
 					return fmt.Errorf("fallback.s3.bucket is required when fallback is enabled with s3 provider")
 				}
 
-				s3Provider, err := s3.NewS3Provider(context.Background(), s3Cfg)
+				s3Provider, err := s3.NewS3Provider(cliCtx.Context, s3Cfg)
 				if err != nil {
 					return fmt.Errorf("failed to initialize S3 fallback provider: %w", err)
 				}
@@ -146,7 +170,11 @@ func StartDAServer(cliCtx *cli.Context) error {
 			port,
 			store,
 			submitTimeout,
-			readTimeout,
+			getTimeout,
+			httpReadTimeout,
+			httpWriteTimeout,
+			httpIdleTimeout,
+			maxBlobSize,
 			cfg.Metrics.Enabled,
 			cfg.Metrics.Port,
 			fallbackProvider,
@@ -156,7 +184,7 @@ func StartDAServer(cliCtx *cli.Context) error {
 		return fmt.Errorf("celestia configuration is required")
 	}
 
-	if err := server.Start(); err != nil {
+	if err := server.Start(cliCtx.Context); err != nil {
 		return fmt.Errorf("failed to start the DA server: %w", err)
 	}
 	l.Info("Started DA Server")

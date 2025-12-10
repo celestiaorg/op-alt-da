@@ -25,6 +25,10 @@ type CelestiaMetrics struct {
 	RetrievalDuration prometheus.Histogram
 	RetrievalsTotal   prometheus.Counter
 	RetrievalErrors   prometheus.Counter
+
+	// Fallback metrics
+	FallbackWritesTotal prometheus.Counter
+	FallbackWriteErrors prometheus.Counter
 }
 
 // NewCelestiaMetrics creates a new CelestiaMetrics instance registered with the given registry.
@@ -80,6 +84,16 @@ func NewCelestiaMetrics(registry prometheus.Registerer) *CelestiaMetrics {
 			Name: "celestia_retrieval_errors_total",
 			Help: "Total number of failed blob retrievals",
 		}),
+
+		FallbackWritesTotal: factory.NewCounter(prometheus.CounterOpts{
+			Name: "celestia_fallback_writes_total",
+			Help: "Total number of fallback write attempts",
+		}),
+
+		FallbackWriteErrors: factory.NewCounter(prometheus.CounterOpts{
+			Name: "celestia_fallback_write_errors_total",
+			Help: "Total number of failed fallback writes",
+		}),
 	}
 }
 
@@ -119,5 +133,16 @@ func (m *CelestiaMetrics) RecordRetrieval(duration time.Duration, size int) {
 // RecordRetrievalError records a failed blob retrieval.
 func (m *CelestiaMetrics) RecordRetrievalError() {
 	m.RetrievalErrors.Inc()
+}
+
+// RecordFallbackWrite records a successful fallback write.
+func (m *CelestiaMetrics) RecordFallbackWrite() {
+	m.FallbackWritesTotal.Inc()
+}
+
+// RecordFallbackWriteError records a failed fallback write.
+func (m *CelestiaMetrics) RecordFallbackWriteError() {
+	m.FallbackWritesTotal.Inc()
+	m.FallbackWriteErrors.Inc()
 }
 
