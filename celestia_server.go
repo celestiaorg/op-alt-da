@@ -64,6 +64,13 @@ func recoveryMiddleware(next http.Handler, logger log.Logger) http.Handler {
 	})
 }
 
+// Store defines the interface for blob storage operations.
+// This allows mocking the storage layer in tests.
+type Store interface {
+	Get(ctx context.Context, key []byte) ([]byte, error)
+	Put(ctx context.Context, data []byte) ([]byte, []byte, error)
+}
+
 // CelestiaServer implements the HTTP server for the DA server.
 // Supports optional fallback provider for redundant storage.
 type CelestiaServer struct {
@@ -72,7 +79,7 @@ type CelestiaServer struct {
 	host     string
 
 	// Celestia storage layer
-	store *CelestiaStore
+	store Store
 
 	// Timeouts and settings
 	submitTimeout time.Duration
@@ -100,7 +107,7 @@ type CelestiaServer struct {
 func NewCelestiaServer(
 	host string,
 	port int,
-	store *CelestiaStore,
+	store Store,
 	submitTimeout time.Duration,
 	getTimeout time.Duration,
 	httpReadTimeout time.Duration,
