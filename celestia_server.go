@@ -483,10 +483,7 @@ func (d *CelestiaServer) Stop() error {
 		errs = append(errs, fmt.Errorf("timeout waiting for pending fallback operations"))
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // isNotFoundError checks if the error indicates the blob was not found.
