@@ -272,6 +272,11 @@ func (c *Config) GetMaxBlobSize() (int64, error) {
 
 // parseByteSize parses human-readable byte sizes like "2MB", "1024KB", "2097152"
 func parseByteSize(s string) (int64, error) {
+	const (
+		base    = 10 // decimal
+		bitSize = 64 // int64
+	)
+
 	s = strings.TrimSpace(strings.ToUpper(s))
 
 	units := []struct {
@@ -287,7 +292,7 @@ func parseByteSize(s string) (int64, error) {
 	for _, u := range units {
 		if strings.HasSuffix(s, u.suffix) {
 			numStr := strings.TrimSuffix(s, u.suffix)
-			num, err := strconv.ParseInt(strings.TrimSpace(numStr), 10, 64)
+			num, err := strconv.ParseInt(strings.TrimSpace(numStr), base, bitSize)
 			if err != nil {
 				return 0, fmt.Errorf("invalid number in byte size: %w", err)
 			}
@@ -296,7 +301,7 @@ func parseByteSize(s string) (int64, error) {
 	}
 
 	// Plain number (bytes)
-	return strconv.ParseInt(s, 10, 64)
+	return strconv.ParseInt(s, base, bitSize)
 }
 
 // TxClientEnabled returns true if the TX client (CoreGRPC) is configured.
@@ -330,4 +335,3 @@ func (c *Config) ToCelestiaRPCConfig() celestia.RPCClientConfig {
 		TxClientConfig: txCfg,
 	}
 }
-
