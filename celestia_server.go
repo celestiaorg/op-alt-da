@@ -262,12 +262,13 @@ func (d *CelestiaServer) parseCommitment(urlPath string) ([]byte, error) {
 
 // getBlob retrieves blob from Celestia. If not found and fallback is available,
 // tries fallback. If found in Celestia and fallback is available, populates fallback (read-through).
+// Also tries fallback on any Celestia error (timeout, connection error, etc.) for resilience.
 func (d *CelestiaServer) getBlob(ctx context.Context, comm []byte) ([]byte, error) {
 	getCtx, cancel := context.WithTimeout(ctx, d.getTimeout)
 	defer cancel()
 
-	data, err := d.store.Get(getCtx, comm)
-	if err == nil {
+	data, celestiaErr := d.store.Get(getCtx, comm)
+	if celestiaErr == nil {
 		// Success from Celestia - read-through to fallback for future requests
 		if d.fallback.Available() {
 			d.wg.Add(1)
@@ -276,25 +277,30 @@ func (d *CelestiaServer) getBlob(ctx context.Context, comm []byte) ([]byte, erro
 		return data, nil
 	}
 
-	// If actual error (not NotFound), return it
-	if !isNotFoundError(err) {
-		return nil, err
-	}
-
-	// NotFound - try fallback if available
+	// Celestia failed - try fallback if available
 	if !d.fallback.Available() {
-		return nil, altda.ErrNotFound
-	}
-
-	d.log.Debug("Blob not found in Celestia, trying fallback", "commitment", hex.EncodeToString(comm))
-	data, err = d.getFallback(ctx, comm)
-	if err != nil {
-		if !errors.Is(err, fallback.ErrNotFound) {
-			d.log.Warn("Fallback read failed", "provider", d.fallback.Name(), "err", err)
+		d.log.Warn("Celestia failed and no fallback available", "err", celestiaErr)
+		// No fallback configured, return original error
+		if isNotFoundError(celestiaErr) {
+			return nil, altda.ErrNotFound
 		}
-		return nil, altda.ErrNotFound
+		return nil, celestiaErr
 	}
 
+	// Log that we're falling back (INFO level so it's visible)
+	d.log.Info("Celestia failed, trying S3 fallback", "commitment", hex.EncodeToString(comm), "celestia_err", celestiaErr)
+
+	data, err := d.getFallback(ctx, comm)
+	if err != nil {
+		d.log.Warn("Fallback read also failed", "provider", d.fallback.Name(), "fallback_err", err, "original_celestia_err", celestiaErr)
+		// If fallback also failed, return the original Celestia error for non-NotFound cases
+		if isNotFoundError(celestiaErr) {
+			return nil, altda.ErrNotFound
+		}
+		return nil, celestiaErr
+	}
+
+	d.log.Info("Blob retrieved from fallback", "provider", d.fallback.Name(), "commitment", hex.EncodeToString(comm))
 	return data, nil
 }
 
