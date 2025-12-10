@@ -4,11 +4,12 @@ This guide helps operators upgrade from v0.9.x to v0.10.0.
 
 ## Summary
 
-| Change                | Impact              | Action Required                    |
-| --------------------- | ------------------- | ---------------------------------- |
-| TxClient now required | **Breaking**        | Configure keyring and CoreGRPC     |
-| S3 flags restructured | Backward compatible | Update flag names                  |
-| config.toml support   | New feature         | Optional: migrate from CLI to TOML |
+| Change                | Impact              | Action Required                         |
+| --------------------- | ------------------- | --------------------------------------- |
+| TxClient now required | **Breaking**        | Configure keyring and CoreGRPC          |
+| S3 flags restructured | Backward compatible | Update flag names                       |
+| S3 key format changed | Backward compatible | Auto-handled; optional migration script |
+| config.toml support   | New feature         | Optional: migrate from CLI to TOML      |
 
 ---
 
@@ -139,15 +140,106 @@ Fallback behavior is unchanged:
 - **Write-through**: Blobs written to S3 after Celestia submission
 - **Read-fallback**: S3 used if Celestia retrieval fails
 
-### Data Compatibility
+---
 
-**Your existing S3 data is fully compatible.** The key format remains:
+## S3 Key Format Change
+
+### What Changed
+
+v0.9.0 and v0.10.0 use **different S3 key formats**:
+
+| Version | S3 Key Format           | Example                               |
+| ------- | ----------------------- | ------------------------------------- |
+| v0.9.0  | `keccak256(commitment)` | `da8c378d97500f3b28c583d68e3320bb...` |
+| v0.10.0 | `hex(commitment)`       | `010cf6d68b00000000004524c1442b02...` |
+
+### Backwards Compatibility (Automatic)
+
+v0.10.0 includes **legacy key lookup** that automatically tries both formats when reading:
+
+1. First tries v0.10.0 format: `hex(commitment)`
+2. Falls back to v0.9.0 format: `hex(keccak256(commitment))`
+
+**Your existing S3 data works without migration.** Reads will automatically use the legacy format.
+
+### Improved Fallback Behavior
+
+v0.10.0 also improves fallback resilience:
+
+- **Fallback on any Celestia error** - Not just "not found", but also timeouts, connection errors, etc.
+- **Better logging** - Logs when falling back and why
+
+### Permanent Migration (Optional but Recommended)
+
+To migrate S3 keys to the new format and remove legacy code dependency, use the `s3migrate` tool:
+
+```bash
+# Build the migration tool
+make s3migrate
+
+# Migrate within same bucket (different prefix)
+./bin/s3migrate \
+  --src-bucket my-bucket --src-prefix old-blobs/ \
+  --dst-bucket my-bucket --dst-prefix blobs/ \
+  --region eu-west-1 \
+  --commitments commitments.txt \
+  --dry-run -v
+
+# Migrate to different bucket
+./bin/s3migrate \
+  --src-bucket old-bucket --src-prefix blobs/ \
+  --dst-bucket new-bucket --dst-prefix blobs/ \
+  --region eu-west-1 \
+  --commitments commitments.txt
+
+# Migrate and delete source objects
+./bin/s3migrate \
+  --src-bucket my-bucket --src-prefix old/ \
+  --dst-bucket my-bucket --dst-prefix new/ \
+  --commitments commitments.txt \
+  --delete-src
+```
+
+#### s3migrate Flags
+
+| Flag                  | Default     | Description                             |
+| --------------------- | ----------- | --------------------------------------- |
+| `--src-bucket`        | (required)  | Source S3 bucket (v0.9.0 format)        |
+| `--src-prefix`        | `""`        | Source S3 prefix                        |
+| `--dst-bucket`        | (required)  | Destination S3 bucket (v0.10.0 format)  |
+| `--dst-prefix`        | `""`        | Destination S3 prefix                   |
+| `--region`            | `us-east-1` | AWS region                              |
+| `--access-key-id`     | env         | AWS access key (or `AWS_ACCESS_KEY_ID`) |
+| `--access-key-secret` | env         | AWS secret (or `AWS_SECRET_ACCESS_KEY`) |
+| `--commitments`       | stdin       | Commitments file (or pipe to stdin)     |
+| `--delete-src`        | `false`     | Delete source objects after copying     |
+| `--dry-run`           | `false`     | Preview without making changes          |
+| `-v`                  | `false`     | Verbose output                          |
+
+#### Commitments Input
+
+The tool accepts commitments in multiple formats:
+
+**Plain text (one commitment per line):**
 
 ```
-{prefix}/{hex-encoded-commitment}
+010cf6d68b00000000004524c1442b028c0b31d9fc82acac41b9f0728c83be85bd81647a5c673a3471d2
+010cf8d68b000000000018baf303adafc7b0088ac78d89d34013b662487d1cc2ebcd54fef83ce6089c74
 ```
 
-No data migration required.
+**JSON format (from migration test):**
+
+```json
+{
+  "blobs": [{ "commitment": "010cf6d68b00000000004524c1442b..." }]
+}
+```
+
+**Pipe from stdin:**
+
+```bash
+cat commitments.txt | ./bin/s3migrate --src-bucket ... --dst-bucket ...
+```
 
 ---
 
