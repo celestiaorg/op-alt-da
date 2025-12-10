@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/celestiaorg/op-alt-da/fallback"
 	"github.com/celestiaorg/op-alt-da/metrics"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/prometheus/client_golang/prometheus"
@@ -127,6 +128,7 @@ func TestHandleGet_TooShortCommitment(t *testing.T) {
 		log:        log.New(),
 		getTimeout: 30 * time.Second,
 		store:      &CelestiaStore{Log: log.New()},
+		fallback:   &fallback.NoopProvider{},
 	}
 
 	// Test commitment that's too short (less than 40 bytes = minimum BlobID)
