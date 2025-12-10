@@ -274,21 +274,24 @@ func (c *Config) GetMaxBlobSize() (int64, error) {
 func parseByteSize(s string) (int64, error) {
 	s = strings.TrimSpace(strings.ToUpper(s))
 
-	multipliers := map[string]int64{
-		"B":  1,
-		"KB": 1024,
-		"MB": 1024 * 1024,
-		"GB": 1024 * 1024 * 1024,
+	units := []struct {
+		suffix string
+		mult   int64
+	}{
+		{"GB", 1024 * 1024 * 1024},
+		{"MB", 1024 * 1024},
+		{"KB", 1024},
+		{"B", 1},
 	}
 
-	for suffix, mult := range multipliers {
-		if strings.HasSuffix(s, suffix) {
-			numStr := strings.TrimSuffix(s, suffix)
+	for _, u := range units {
+		if strings.HasSuffix(s, u.suffix) {
+			numStr := strings.TrimSuffix(s, u.suffix)
 			num, err := strconv.ParseInt(strings.TrimSpace(numStr), 10, 64)
 			if err != nil {
 				return 0, fmt.Errorf("invalid number in byte size: %w", err)
 			}
-			return num * mult, nil
+			return num * u.mult, nil
 		}
 	}
 
