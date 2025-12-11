@@ -132,29 +132,15 @@ func (p *S3Provider) Put(ctx context.Context, commitment []byte, data []byte) er
 }
 
 // Get retrieves blob data by commitment.
-// Tries multiple key formats for backwards compatibility with v0.9.0.
 func (p *S3Provider) Get(ctx context.Context, commitment []byte) ([]byte, error) {
-	// Try all possible key formats
-	keysToTry := p.makeLegacyKeys(commitment)
-
-	var lastErr error
-	for _, key := range keysToTry {
-		data, err := p.getObject(ctx, key)
-		if err == nil {
-			return data, nil
+	data, err := p.getObject(ctx, p.makeKey(commitment))
+	if err != nil {
+		if isNotFoundError(err) {
+			return nil, fallback.ErrNotFound
 		}
-		if !isNotFoundError(err) {
-			// Real error, not just "not found"
-			return nil, err
-		}
-		lastErr = err
+		return nil, err
 	}
-
-	// None of the key formats worked
-	if lastErr != nil && isNotFoundError(lastErr) {
-		return nil, fallback.ErrNotFound
-	}
-	return nil, lastErr
+	return data, nil
 }
 
 // getObject retrieves an object by key.
@@ -186,42 +172,11 @@ func (p *S3Provider) Timeout() time.Duration {
 	return p.timeout
 }
 
-// makeKey generates the S3 object key from a commitment.
-// Format: prefix/hex(commitment) - v0.10.0+ format
+// makeKey generates the canonical S3 object key from a commitment.
+// Format: prefix/hex(keccak256(commitment))
 func (p *S3Provider) makeKey(commitment []byte) string {
-	hexKey := hex.EncodeToString(commitment)
-	return path.Join(p.prefix, hexKey)
-}
-
-// makeLegacyKeys generates all possible S3 keys to try for backwards compatibility.
-// Returns keys in order of preference (newest format first).
-//
-// Commitment format (v0.10.0):
-//   - Byte 0: Generic commitment version (0x01)
-//   - Bytes 1-8: Height (uint64 little endian)
-//   - Byte 9: Namespace version (0x00)
-//   - Bytes 10-41: Share commitment (32 bytes)
-//
-// v0.9.0 used: keccak256(commitment) as the key
-func (p *S3Provider) makeLegacyKeys(commitment []byte) []string {
-	keys := make([]string, 0, 3)
-
-	// Format 1: Full commitment hex (v0.10.0+ format)
-	keys = append(keys, p.makeKey(commitment))
-
-	// Format 2: Keccak256 hash of commitment (v0.9.0 format)
-	// v0.9.0 used: key := crypto.Keccak256(commitment)
 	keccakKey := crypto.Keccak256(commitment)
-	keys = append(keys, path.Join(p.prefix, hex.EncodeToString(keccakKey)))
-
-	// Format 3: Just the share commitment (bytes 10-41, 32 bytes)
-	// In case some version used raw share commitment
-	if len(commitment) >= 42 {
-		shareCommitment := commitment[10:42]
-		keys = append(keys, path.Join(p.prefix, hex.EncodeToString(shareCommitment)))
-	}
-
-	return keys
+	return path.Join(p.prefix, hex.EncodeToString(keccakKey))
 }
 
 // isNotFoundError checks if the error indicates the object was not found.
