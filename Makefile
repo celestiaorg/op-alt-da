@@ -10,10 +10,7 @@ LDFLAGS := -ldflags "$(LDFLAGSSTRING)"
 da-server:
 	env GO111MODULE=on GOOS=$(TARGETOS) GOARCH=$(TARGETARCH) go build -v $(LDFLAGS) -o ./bin/da-server ./cmd/daserver
 
-s3migrate:
-	env GO111MODULE=on GOOS=$(TARGETOS) GOARCH=$(TARGETARCH) go build -v -o ./bin/s3migrate ./cmd/s3migrate
-
-build: da-server s3migrate
+build: da-server
 
 lint:
 	golangci-lint run
@@ -47,7 +44,6 @@ test-all: test test-integration
 
 .PHONY: \
 	da-server \
-	s3migrate \
 	build \
 	lint \
 	fmt \

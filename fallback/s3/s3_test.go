@@ -2,9 +2,11 @@ package s3
 
 import (
 	"context"
+	"encoding/hex"
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,17 +45,13 @@ func TestS3Provider_MakeKey(t *testing.T) {
 	}
 
 	commitment := []byte("test-commitment")
+	expectedHash := hex.EncodeToString(crypto.Keccak256(commitment))
 	key := provider.makeKey(commitment)
-
-	// Key should be hex-encoded commitment (2 hex chars per byte)
-	expectedLen := len(commitment) * 2
-	assert.Len(t, key, expectedLen)
+	assert.Equal(t, expectedHash, key)
 
 	// With prefix
 	provider.prefix = "blobs"
-	key = provider.makeKey(commitment)
-	assert.Contains(t, key, "blobs/")
-	assert.Len(t, key, expectedLen+len("blobs/"))
+	assert.Equal(t, "blobs/"+expectedHash, provider.makeKey(commitment))
 }
 
 func TestS3Provider_Name(t *testing.T) {
@@ -111,4 +109,3 @@ func TestConfig_Defaults(t *testing.T) {
 	assert.Equal(t, "test-bucket", provider.bucket)
 	assert.Equal(t, 60*time.Second, provider.timeout)
 }
-
