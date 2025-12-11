@@ -3,5 +3,7 @@
 !/*.go
 !/cmd
 !/s3
+!/fallback
+!/metrics
 !/go.mod
 !/go.sum

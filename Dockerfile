@@ -1,4 +1,4 @@
-FROM golang:1.24-alpine3.22 as builder
+FROM golang:1.25-alpine3.22 AS builder
 
 WORKDIR /
 COPY . op-alt-da
