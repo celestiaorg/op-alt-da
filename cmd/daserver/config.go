@@ -58,6 +58,21 @@ type CelestiaConfig struct {
 	// 1 = synchronous submission (queued, single signer)
 	// >1 = parallel submission (multiple worker accounts)
 	TxWorkerAccounts int `toml:"tx_worker_accounts"`
+
+	// Optional AWS KMS-backed keyring configuration
+	KMS CelestiaKMSConfig `toml:"kms"`
+}
+
+// CelestiaKMSConfig configures the optional AWS KMS backend for signing.
+type CelestiaKMSConfig struct {
+	Enabled     bool   `toml:"enabled"`
+	Region      string `toml:"region"`
+	Endpoint    string `toml:"endpoint"`
+	AliasPrefix string `toml:"alias_prefix"`
+
+	// Import configuration - specify a key to import on startup
+	ImportKeyName string `toml:"import_key_name"`
+	ImportKeyHex  string `toml:"import_key_hex"`
 }
 
 // SubmissionConfig holds submission settings for blob writes.
@@ -133,6 +148,9 @@ func DefaultConfig() Config {
 			DefaultKeyName:     "my_celes_key",
 			P2PNetwork:         "mocha-4",
 			TxWorkerAccounts:   0,
+			KMS: CelestiaKMSConfig{
+				AliasPrefix: "alias/op-alt-da/",
+			},
 		},
 		Submission: SubmissionConfig{
 			Timeout:     "60s",
@@ -206,16 +224,46 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("submission.tx_priority must be 1 (low), 2 (medium), or 3 (high)")
 	}
 
-	// If CoreGRPC is configured, keyring settings are required
+	// If CoreGRPC is configured, signing settings are required
 	if c.Celestia.CoreGRPCAddr != "" {
-		if c.Celestia.KeyringPath == "" {
-			return fmt.Errorf("celestia.keyring_path is required when core_grpc_addr is set")
+		signingConfigured := c.Celestia.KeyringPath != "" || c.Celestia.KMS.Enabled
+		if !signingConfigured {
+			return fmt.Errorf("configure either celestia.keyring_path or celestia.kms when core_grpc_addr is set")
 		}
 		if c.Celestia.DefaultKeyName == "" {
 			return fmt.Errorf("celestia.default_key_name is required when core_grpc_addr is set")
 		}
 		if c.Celestia.P2PNetwork == "" {
 			return fmt.Errorf("celestia.p2p_network is required when core_grpc_addr is set")
+		}
+
+		if c.Celestia.KMS.Enabled {
+			if c.Celestia.KMS.Region == "" {
+				return fmt.Errorf("celestia.kms.region is required when kms is enabled")
+			}
+			if c.Celestia.KMS.AliasPrefix == "" {
+				return fmt.Errorf("celestia.kms.alias_prefix is required when kms is enabled")
+			}
+
+			// Validate import configuration
+			hasImportName := c.Celestia.KMS.ImportKeyName != ""
+			hasImportHex := c.Celestia.KMS.ImportKeyHex != ""
+
+			if hasImportName != hasImportHex {
+				return fmt.Errorf("celestia.kms: both import_key_name and import_key_hex must be specified together, or neither")
+			}
+
+			if hasImportHex {
+				// Validate hex format
+				keyHex := strings.TrimPrefix(c.Celestia.KMS.ImportKeyHex, "0x")
+				if _, err := hex.DecodeString(keyHex); err != nil {
+					return fmt.Errorf("celestia.kms.import_key_hex: invalid hex format: %w", err)
+				}
+				// Validate length (32 bytes = 64 hex chars)
+				if len(keyHex) != 64 {
+					return fmt.Errorf("celestia.kms.import_key_hex must be 32 bytes (64 hex characters), got %d", len(keyHex))
+				}
+			}
 		}
 	}
 
@@ -306,7 +354,13 @@ func parseByteSize(s string) (int64, error) {
 
 // TxClientEnabled returns true if the TX client (CoreGRPC) is configured.
 func (c *Config) TxClientEnabled() bool {
-	return c.Celestia.CoreGRPCAddr != "" && c.Celestia.KeyringPath != ""
+	if c.Celestia.CoreGRPCAddr == "" {
+		return false
+	}
+	if c.Celestia.KeyringPath != "" {
+		return true
+	}
+	return c.Celestia.KMS.Enabled
 }
 
 // ToCelestiaRPCConfig converts the Config to a celestia.RPCClientConfig.
@@ -323,6 +377,19 @@ func (c *Config) ToCelestiaRPCConfig() celestia.RPCClientConfig {
 			CoreGRPCAuthToken:  c.Celestia.CoreGRPCAuthToken,
 			P2PNetwork:         c.Celestia.P2PNetwork,
 			TxWorkerAccounts:   c.Celestia.TxWorkerAccounts,
+		}
+		if c.Celestia.KMS.Enabled {
+			aliasPrefix := c.Celestia.KMS.AliasPrefix
+			if aliasPrefix == "" {
+				aliasPrefix = "alias/op-alt-da/"
+			}
+			txCfg.KMS = &celestia.KMSConfig{
+				Region:        c.Celestia.KMS.Region,
+				Endpoint:      c.Celestia.KMS.Endpoint,
+				AliasPrefix:   aliasPrefix,
+				ImportKeyName: c.Celestia.KMS.ImportKeyName,
+				ImportKeyHex:  c.Celestia.KMS.ImportKeyHex,
+			}
 		}
 	}
 

@@ -4,13 +4,16 @@ go 1.25.1
 
 require (
 	github.com/BurntSushi/toml v1.5.0
+	github.com/MetaMask/go-did-it v1.0.0-pre1
 	github.com/aws/aws-sdk-go-v2 v1.39.6
 	github.com/aws/aws-sdk-go-v2/config v1.31.17
 	github.com/aws/aws-sdk-go-v2/credentials v1.18.21
+	github.com/aws/aws-sdk-go-v2/service/kms v1.34.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.90.0
 	github.com/celestiaorg/celestia-node v0.28.4
 	github.com/celestiaorg/go-square/v3 v3.0.2
 	github.com/cosmos/cosmos-sdk v0.50.13
+	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0
 	github.com/ethereum-optimism/optimism v1.16.2
 	github.com/ethereum/go-ethereum v1.16.3
 	github.com/prometheus/client_golang v1.23.2
@@ -120,7 +123,6 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/davidlazar/go-crypto v0.0.0-20200604182044-b73af7476f6c // indirect
 	github.com/deckarep/golang-set/v2 v2.6.0 // indirect
-	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0 // indirect
 	github.com/desertbit/timer v1.0.1 // indirect
 	github.com/dgraph-io/badger/v4 v4.6.0 // indirect
 	github.com/dgraph-io/ristretto/v2 v2.1.0 // indirect
@@ -326,6 +328,7 @@ require (
 	github.com/tklauser/go-sysconf v0.3.15 // indirect
 	github.com/tklauser/numcpus v0.10.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
+	github.com/ucan-wg/go-varsig v1.0.0 // indirect
 	github.com/ulikunitz/xz v0.5.14 // indirect
 	github.com/whyrusleeping/go-keyspace v0.0.0-20160322163242-5b898ac5add1 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect

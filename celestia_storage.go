@@ -139,6 +139,18 @@ type TxClientConfig struct {
 	CoreGRPCAuthToken  string
 	P2PNetwork         string
 	TxWorkerAccounts   int // 0=immediate, 1=queued single, >1=parallel workers
+	KMS                *KMSConfig
+}
+
+// KMSConfig configures an AWS KMS-backed keyring using aliases.
+type KMSConfig struct {
+	Region      string
+	Endpoint    string
+	AliasPrefix string
+
+	// Import configuration - specify a key to import on startup
+	ImportKeyName string
+	ImportKeyHex  string
 }
 
 type RPCClientConfig struct {
@@ -195,10 +207,16 @@ func initTxClient(ctx context.Context, cfg RPCClientConfig) (blobAPI.Module, err
 	if keyname == "" {
 		keyname = "my_celes_key"
 	}
-	kr, err := txClient.KeyringWithNewKey(txClient.KeyringConfig{
-		KeyName:     keyname,
-		BackendName: keyring.BackendTest,
-	}, cfg.TxClientConfig.KeyringPath)
+	var kr keyring.Keyring
+	var err error
+	if cfg.TxClientConfig.KMS != nil {
+		kr, err = newKMSKeyring(ctx, keyname, *cfg.TxClientConfig.KMS)
+	} else {
+		kr, err = txClient.KeyringWithNewKey(txClient.KeyringConfig{
+			KeyName:     keyname,
+			BackendName: keyring.BackendTest,
+		}, cfg.TxClientConfig.KeyringPath)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create keyring: %w", err)
 	}

@@ -37,6 +37,8 @@ The DA server signs transactions locally using a Celestia keyring. This means:
 
 **The server will not work without a properly configured local keyring.**
 
+🚀 Prefer not to store keys on disk? Enable the optional AWS KMS backend via `[celestia.kms]` and map each signer to a KMS alias (`alias/op-alt-da/<key_name>`). The server will connect to AWS (or Localstack) and sign via KMS instead of the local keyring.
+
 ## Quick Start
 
 ### 1. Set Up Celestia Keyring
@@ -106,7 +108,7 @@ Or using a config file:
 | Flag                                         | Environment Variable                                | Default        | Description                            |
 | -------------------------------------------- | --------------------------------------------------- | -------------- | -------------------------------------- |
 | `--celestia.tx-client.key-name`              | `OP_ALTDA_CELESTIA_TX_CLIENT_KEY_NAME`              | `my_celes_key` | Key name in keyring                    |
-| `--celestia.tx-client.keyring-path`          | `OP_ALTDA_CELESTIA_TX_CLIENT_KEYRING_PATH`          | **(required)** | Path to keyring directory              |
+| `--celestia.tx-client.keyring-path`          | `OP_ALTDA_CELESTIA_TX_CLIENT_KEYRING_PATH`          | **(required)** | Path to keyring directory (omit when using KMS) |
 | `--celestia.tx-client.core-grpc.addr`        | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_ADDR`        | **(required)** | CoreGRPC endpoint                      |
 | `--celestia.tx-client.core-grpc.tls-enabled` | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_TLS_ENABLED` | `true`         | Enable TLS for CoreGRPC                |
 | `--celestia.tx-client.core-grpc.auth-token`  | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_AUTH_TOKEN`  |                | CoreGRPC auth token                    |
@@ -169,6 +171,13 @@ keyring_path = "~/.celestia-light-mocha-4/keys"
 default_key_name = "my_celes_key"
 p2p_network = "mocha-4"
 
+# Optional AWS KMS keyring (alias/op-alt-da/<key_name>)
+[celestia.kms]
+enabled = false
+region = "us-east-1"
+endpoint = ""
+alias_prefix = "alias/op-alt-da/"
+
 [submission]
 timeout = "60s"
 tx_priority = 2  # 1=low, 2=medium, 3=high
@@ -180,6 +189,16 @@ timeout = "30s"
 enabled = true
 port = 6060
 ```
+
+### AWS KMS Keyring (Optional)
+
+You can offload signing to AWS KMS (or Localstack) instead of storing private keys locally.
+
+1. Create (or import) a secp256k1 key per signer in KMS and attach an alias `alias/op-alt-da/<key_name>` e.g.: `aws kms create-alias --alias-name alias/op-alt-da/my_celes_key --target-key-id <key-id>`
+2. Populate `[celestia.kms]` in your config with the AWS region, optional endpoint (e.g., `http://localhost:4566` for Localstack), and alias prefix.
+3. Optionally import a hex encoded private key exported from node keystore e.g.: `cel-key export --unarmored-hex --unsafe my_celes_key`
+
+When enabled, the DA server enumerates matching aliases, fetches public keys via `GetPublicKey`, and signs transactions via the KMS `Sign` API.
 
 ### Generating a Namespace
 
