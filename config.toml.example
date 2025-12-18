@@ -60,7 +60,18 @@ core_grpc_auth_token = ""
 core_grpc_tls_enabled = true
 
 # ------------------------------------------------------------------------------
-# Keyring (for signing transactions)
+# Signer Mode
+# ------------------------------------------------------------------------------
+# Choose between local filesystem keyring or remote POPSigner service.
+#
+# Options:
+#   - "local" (default): Use local keyring files from keyring_path
+#   - "remote": Use POPSigner remote signing service
+
+signer_mode = "local"
+
+# ------------------------------------------------------------------------------
+# Local Keyring (when signer_mode = "local")
 # ------------------------------------------------------------------------------
 # Setup:
 #   1. Initialize: celestia light init --p2p.network mocha-4
@@ -83,6 +94,27 @@ keyring_backend = "test"
 keyring_path = "~/.celestia-light-mocha-4/keys"
 default_key_name = "my_celes_key"
 p2p_network = "mocha-4"
+
+# ------------------------------------------------------------------------------
+# Remote Signer / POPSigner (when signer_mode = "remote")
+# ------------------------------------------------------------------------------
+# POPSigner provides secure remote key management for Celestia transactions.
+#
+# Setup:
+#   1. Create a POPSigner account at https://popsigner.io (or your provider)
+#   2. Generate an API key
+#   3. Create a Celestia key and note the key_id (UUID)
+#   4. Fund the key's Celestia address with TIA
+#
+# API key can be set via:
+#   - This config file: remote_signer_api_key = "your-api-key"
+#   - Environment variable: POPSIGNER_API_KEY=your-api-key
+#
+# Using env var is recommended for production to avoid storing secrets in config.
+
+# remote_signer_api_key = ""  # Prefer using POPSIGNER_API_KEY env var
+# remote_signer_key_id = "00000000-0000-0000-0000-000000000000"  # Your key UUID
+# remote_signer_base_url = ""  # Optional: custom POPSigner API endpoint
 
 # Parallel submission (0 = immediate, 1 = queued, >1 = parallel workers)
 tx_worker_accounts = 0

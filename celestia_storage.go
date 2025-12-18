@@ -9,6 +9,7 @@ import (
 	"time"
 
 	awskeyring "github.com/celestiaorg/aws-kms-keyring"
+	popsigner "github.com/Bidon15/popsigner/sdk-go"
 	txClient "github.com/celestiaorg/celestia-node/api/client"
 	"github.com/celestiaorg/celestia-node/api/rpc/client"
 	"github.com/celestiaorg/celestia-node/blob"
@@ -144,6 +145,13 @@ type TxClientConfig struct {
 
 	// Keyring backend-specific configuration
 	AWSKMSConfig *awskeyring.Config
+	KeyringBackend string // Backend type: remote - "awskms", local - "test", "file", "os", "kwallet", "pass", "keychain", "memory"
+
+	// Remote signer configuration (POPSigner)
+	SignerMode          string // "local" or "remote" (default: "local")
+	RemoteSignerAPIKey  string // API key for POPSigner
+	RemoteSignerKeyID   string // UUID of the key to use
+	RemoteSignerBaseURL string // Optional custom API endpoint
 }
 
 type RPCClientConfig struct {
@@ -193,7 +201,8 @@ func NewCelestiaStore(ctx context.Context, cfg RPCClientConfig) (*CelestiaStore,
 	}, nil
 }
 
-func initKeyring(ctx context.Context, cfg *RPCClientConfig) (keyring.Keyring, error) {
+// initLocalKeyring creates a local keyring from the filesystem.
+func initLocalKeyring(ctx context.Context, cfg RPCClientConfig) (keyring.Keyring, error) {
 	keyname := cfg.TxClientConfig.DefaultKeyName
 	if keyname == "" {
 		keyname = "my_celes_key"
@@ -223,12 +232,52 @@ func initKeyring(ctx context.Context, cfg *RPCClientConfig) (keyring.Keyring, er
 	return kr, err
 }
 
+// initRemoteSignerKeyring creates a remote keyring using POPSigner SDK.
+func initRemoteSignerKeyring(cfg TxClientConfig) (keyring.Keyring, error) {
+	if cfg.RemoteSignerAPIKey == "" {
+		return nil, fmt.Errorf("remote_signer_api_key is required for remote signer mode (or set POPSIGNER_API_KEY env var)")
+	}
+	if cfg.RemoteSignerKeyID == "" {
+		return nil, fmt.Errorf("remote_signer_key_id is required for remote signer mode")
+	}
+
+	opts := []popsigner.CelestiaKeyringOption{}
+	if cfg.RemoteSignerBaseURL != "" {
+		opts = append(opts, popsigner.WithCelestiaBaseURL(cfg.RemoteSignerBaseURL))
+	}
+
+	kr, err := popsigner.NewCelestiaKeyring(cfg.RemoteSignerAPIKey, cfg.RemoteSignerKeyID, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create remote signer keyring: %w", err)
+	}
+
+	return kr, nil
+}
+
 // initTxClient initializes a transaction client for Celestia.
 // The provided context is used for client initialization and allows cancellation during startup.
 func initTxClient(ctx context.Context, cfg RPCClientConfig) (blobAPI.Module, error) {
-	kr, err := initKeyring(ctx, &cfg)
+	// Determine signer mode (default to "local" for backward compatibility)
+	signerMode := cfg.TxClientConfig.SignerMode
+	if signerMode == "" {
+		signerMode = "local"
+	}
+
+	var kr keyring.Keyring
+	var err error
+
+	switch signerMode {
+	case "local":
+		log.Info("Using local keyring signer", "keyring_path", cfg.TxClientConfig.KeyringPath)
+		kr, err = initLocalKeyring(ctx, cfg)
+	case "remote":
+		log.Info("Using remote POPSigner", "key_id", cfg.TxClientConfig.RemoteSignerKeyID)
+		kr, err = initRemoteSignerKeyring(*cfg.TxClientConfig)
+	default:
+		return nil, fmt.Errorf("invalid signer_mode: %s (must be 'local' or 'remote')", signerMode)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize keyring: %w", err)
+		return nil, err
 	}
 
 	// Configure client
