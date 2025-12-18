@@ -194,7 +194,7 @@ port = 6060
 
 You can offload signing to AWS KMS (or Localstack) instead of storing private keys locally.
 
-1. Create (or import) a secp256k1 key per signer in KMS and attach an alias `alias/op-alt-da/<key_name>` e.g.: aws kms create-alias --alias-name alias/op-alt-da/my_celes_key --target-key-id <key-id>
+1. Create (or import) a secp256k1 key per signer in KMS and attach an alias `alias/op-alt-da/<key_name>` e.g.: `aws kms create-alias --alias-name alias/op-alt-da/my_celes_key --target-key-id <key-id>`
 2. Populate `[celestia.kms]` in your config with the AWS region, optional endpoint (e.g., `http://localhost:4566` for Localstack), and alias prefix.
 3. Keep `tx_worker_accounts` at `0` or `1` — parallel submission requires local key material.
 
