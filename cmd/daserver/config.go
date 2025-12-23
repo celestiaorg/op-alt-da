@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	awskeyring "github.com/celestiaorg/aws-kms-keyring"
 	celestia "github.com/celestiaorg/op-alt-da"
+	"github.com/celestiaorg/op-alt-da/signer"
 )
 
 // Config represents the simplified application configuration for stateless DA.
@@ -50,20 +50,8 @@ type CelestiaConfig struct {
 	CoreGRPCAuthToken  string `toml:"core_grpc_auth_token"`
 	CoreGRPCTLSEnabled bool   `toml:"core_grpc_tls_enabled"`
 
-	// Signer mode: "local" (default) or "remote"
-	SignerMode string `toml:"signer_mode"`
-
-	// Local keyring settings (for signing transactions when signer_mode = "local")
-	KeyringBackend string `toml:"keyring_backend"`
-	KeyringPath    string `toml:"keyring_path"`
-	DefaultKeyName string `toml:"default_key_name"`
-	P2PNetwork     string `toml:"p2p_network"`
-
-	// Remote signer settings (POPSigner, when signer_mode = "remote")
-	// API key can be set via config or POPSIGNER_API_KEY env var
-	RemoteSignerAPIKey  string `toml:"remote_signer_api_key"`
-	RemoteSignerKeyID   string `toml:"remote_signer_key_id"`
-	RemoteSignerBaseURL string `toml:"remote_signer_base_url"`
+	// P2P network (mocha-4, arabica-11, celestia)
+	P2PNetwork string `toml:"p2p_network"`
 
 	// Parallel submission settings
 	// 0 = immediate submission (no queue, default)
@@ -71,22 +59,17 @@ type CelestiaConfig struct {
 	// >1 = parallel submission (multiple worker accounts)
 	TxWorkerAccounts int `toml:"tx_worker_accounts"`
 
-	// Keyring backend configuration sections
-	AWSKMS CelestiaAWSKMSConfig `toml:"awskms"`
-}
+	// New nested signer configuration
+	Signer signer.Config `toml:"signer"`
 
-// CelestiaAWSKMSConfig configures the AWS KMS backend for signing.
-type CelestiaAWSKMSConfig struct {
-	Region      string `toml:"region"`
-	Endpoint    string `toml:"endpoint"`
-	AliasPrefix string `toml:"alias_prefix"`
-
-	// Import configuration - specify a key to import on startup
-	ImportKeyName string `toml:"import_key_name"`
-	ImportKeyHex  string `toml:"import_key_hex"`
-
-	// AutoCreate enables automatic creation of missing keys
-	AutoCreate bool `toml:"auto_create"`
+	// Legacy flat config fields (for backwards compatibility)
+	// These are deprecated and will be migrated to Signer config
+	SignerMode          string `toml:"signer_mode"`           // Deprecated: use signer.mode
+	KeyringPath         string `toml:"keyring_path"`          // Deprecated: use signer.local.keyring_path
+	DefaultKeyName      string `toml:"default_key_name"`      // Deprecated: use signer.local.key_name
+	RemoteSignerAPIKey  string `toml:"remote_signer_api_key"` // Deprecated: use signer.popsigner.api_key
+	RemoteSignerKeyID   string `toml:"remote_signer_key_id"`  // Deprecated: use signer.popsigner.key_id
+	RemoteSignerBaseURL string `toml:"remote_signer_base_url"`// Deprecated: use signer.popsigner.base_url
 }
 
 // SubmissionConfig holds submission settings for blob writes.
@@ -150,26 +133,21 @@ func DefaultConfig() Config {
 		HTTPWriteTimeout: "", // Will default to 120s in parser
 		HTTPIdleTimeout:  "", // Will default to 60s in parser
 		Celestia: CelestiaConfig{
-			Namespace:           "",
-			BlobIDCompact:       true,
-			BridgeAddr:          "http://localhost:26658",
-			BridgeAuthToken:     "",
-			BridgeTLSEnabled:    false,
-			CoreGRPCAddr:        "",
-			CoreGRPCAuthToken:   "",
-			CoreGRPCTLSEnabled:  true,
-			SignerMode:          "local", // Default to local for backward compatibility
-			KeyringBackend:      "test",
-			KeyringPath:         "",
-			DefaultKeyName:      "my_celes_key",
-			P2PNetwork:          "mocha-4",
-			RemoteSignerAPIKey:  "",
-			RemoteSignerKeyID:   "",
-			RemoteSignerBaseURL: "",
-			TxWorkerAccounts:    0,
-			AWSKMS: CelestiaAWSKMSConfig{
-				AliasPrefix: "alias/op-alt-da/",
-			},
+			Namespace:          "",
+			BlobIDCompact:      true,
+			BridgeAddr:         "http://localhost:26658",
+			BridgeAuthToken:    "",
+			BridgeTLSEnabled:   false,
+			CoreGRPCAddr:       "",
+			CoreGRPCAuthToken:  "",
+			CoreGRPCTLSEnabled: true,
+			P2PNetwork:         "mocha-4",
+			TxWorkerAccounts:   0,
+			Signer:             signer.DefaultConfig(),
+			// Legacy fields (for backwards compatibility)
+			SignerMode:     "",
+			KeyringPath:    "",
+			DefaultKeyName: "my_celes_key",
 		},
 		Submission: SubmissionConfig{
 			Timeout:     "60s",
@@ -243,70 +221,64 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("submission.tx_priority must be 1 (low), 2 (medium), or 3 (high)")
 	}
 
-		// Validate signer mode
-		signerMode := c.Celestia.SignerMode
-		if signerMode == "" {
-		signerMode = "local"
-	}
-	if signerMode != "local" && signerMode != "remote" {
-		return fmt.Errorf("celestia.signer_mode must be 'local' or 'remote', got '%s'", c.Celestia.SignerMode)
-	}
-
-	// If CoreGRPC is configured, validate based on signer mode
+	// If CoreGRPC is configured, validate signer config
 	if c.Celestia.CoreGRPCAddr != "" {
-			switch signerMode {
-			case "local":
-				// Local mode requires keyring settings
-				if c.Celestia.KeyringBackend == "" {
-					return fmt.Errorf("celestia.keyring_backend is required when signer_mode is 'local' and core_grpc_addr is set")
-				}
-				if c.Celestia.DefaultKeyName == "" {
-					return fmt.Errorf("celestia.default_key_name is required when signer_mode is 'local' and core_grpc_addr is set")
-			}
-		case "remote":
-			// Remote mode requires POPSigner settings
-			// API key can come from env var, so only validate key_id here
-				if c.Celestia.RemoteSignerKeyID == "" {
-					return fmt.Errorf("celestia.remote_signer_key_id is required when signer_mode is 'remote'")
-				}
-			}
+		signerCfg := c.buildSignerConfig()
+		if err := signerCfg.Validate(); err != nil {
+			return fmt.Errorf("celestia.signer: %w", err)
+		}
 
 		if c.Celestia.P2PNetwork == "" {
 			return fmt.Errorf("celestia.p2p_network is required when core_grpc_addr is set")
 		}
-
-		// Validate keyring backend-specific configuration
-		if c.Celestia.KeyringBackend == "awskms" {
-			if c.Celestia.AWSKMS.Region == "" {
-				return fmt.Errorf("awskms.region is required when keyring_backend is awskms")
-			}
-			if c.Celestia.AWSKMS.AliasPrefix == "" {
-				return fmt.Errorf("awskms.alias_prefix is required when keyring_backend is awskms")
-			}
-
-			// Validate import configuration
-			hasImportName := c.Celestia.AWSKMS.ImportKeyName != ""
-			hasImportHex := c.Celestia.AWSKMS.ImportKeyHex != ""
-
-			if hasImportName != hasImportHex {
-				return fmt.Errorf("awskms: both import_key_name and import_key_hex must be specified together, or neither")
-			}
-
-			if hasImportHex {
-				// Validate hex format
-				keyHex := strings.TrimPrefix(c.Celestia.AWSKMS.ImportKeyHex, "0x")
-				if _, err := hex.DecodeString(keyHex); err != nil {
-					return fmt.Errorf("awskms.import_key_hex: invalid hex format: %w", err)
-				}
-				// Validate length (32 bytes = 64 hex chars)
-				if len(keyHex) != 64 {
-					return fmt.Errorf("awskms.import_key_hex must be 32 bytes (64 hex characters), got %d", len(keyHex))
-				}
-			}
-		}
 	}
 
 	return nil
+}
+
+// buildSignerConfig constructs a signer.Config from both new and legacy config fields.
+// Legacy fields take precedence for backwards compatibility.
+func (c *Config) buildSignerConfig() signer.Config {
+	cfg := c.Celestia.Signer
+
+	// Migrate legacy fields if they are set
+	if c.Celestia.SignerMode != "" {
+		// Map legacy "remote" to "popsigner"
+		switch c.Celestia.SignerMode {
+		case "remote":
+			cfg.Mode = signer.ModePOPSigner
+		case "local":
+			cfg.Mode = signer.ModeLocal
+		default:
+			cfg.Mode = c.Celestia.SignerMode
+		}
+	}
+
+	// Migrate local keyring settings
+	if c.Celestia.KeyringPath != "" {
+		cfg.Local.KeyringPath = c.Celestia.KeyringPath
+	}
+	if c.Celestia.DefaultKeyName != "" {
+		cfg.Local.KeyName = c.Celestia.DefaultKeyName
+	}
+
+	// Migrate POPSigner settings
+	if c.Celestia.RemoteSignerAPIKey != "" {
+		cfg.POPSigner.APIKey = c.Celestia.RemoteSignerAPIKey
+	}
+	if c.Celestia.RemoteSignerKeyID != "" {
+		cfg.POPSigner.KeyID = c.Celestia.RemoteSignerKeyID
+	}
+	if c.Celestia.RemoteSignerBaseURL != "" {
+		cfg.POPSigner.BaseURL = c.Celestia.RemoteSignerBaseURL
+	}
+
+	// Resolve API key from environment if not set
+	if cfg.POPSigner.APIKey == "" {
+		cfg.POPSigner.APIKey = os.Getenv("POPSIGNER_API_KEY")
+	}
+
+	return cfg
 }
 
 // GetSubmissionTimeout parses and returns the submission timeout duration.
@@ -393,26 +365,13 @@ func parseByteSize(s string) (int64, error) {
 
 // TxClientEnabled returns true if the TX client (CoreGRPC) is configured.
 func (c *Config) TxClientEnabled() bool {
-	// TX client is enabled if CoreGRPC is configured AND either:
-	// - Local mode with keyring path, OR
-	// - Remote mode with key_id
+	// TX client is enabled if CoreGRPC is configured and signer can be validated
 	if c.Celestia.CoreGRPCAddr == "" {
 		return false
 	}
 
-	signerMode := c.Celestia.SignerMode
-	if signerMode == "" {
-		signerMode = "local"
-	}
-
-	switch signerMode {
-	case "local":
-		return c.Celestia.KeyringBackend != ""
-	case "remote":
-		return c.Celestia.RemoteSignerKeyID != ""
-	default:
-		return false
-	}
+	signerCfg := c.buildSignerConfig()
+	return signerCfg.Validate() == nil
 }
 
 // ToCelestiaRPCConfig converts the Config to a celestia.RPCClientConfig.
@@ -421,31 +380,13 @@ func (c *Config) ToCelestiaRPCConfig() celestia.RPCClientConfig {
 
 	var txCfg *celestia.TxClientConfig
 	if c.TxClientEnabled() {
-		// Resolve API key from env var if not set in config
-		apiKey := c.Celestia.RemoteSignerAPIKey
-		if apiKey == "" {
-			apiKey = os.Getenv("POPSIGNER_API_KEY")
-		}
-
-			txCfg = &celestia.TxClientConfig{
-				DefaultKeyName:      c.Celestia.DefaultKeyName,
-				KeyringBackend:      c.Celestia.KeyringBackend,
-				KeyringPath:         c.Celestia.KeyringPath,
-				CoreGRPCAddr:        c.Celestia.CoreGRPCAddr,
-				CoreGRPCTLSEnabled:  c.Celestia.CoreGRPCTLSEnabled,
-			CoreGRPCAuthToken:   c.Celestia.CoreGRPCAuthToken,
-			P2PNetwork:          c.Celestia.P2PNetwork,
-			TxWorkerAccounts:    c.Celestia.TxWorkerAccounts,
-				SignerMode:          c.Celestia.SignerMode,
-				RemoteSignerAPIKey:  apiKey,
-				RemoteSignerKeyID:   c.Celestia.RemoteSignerKeyID,
-				RemoteSignerBaseURL: c.Celestia.RemoteSignerBaseURL,
-			}
-		if c.Celestia.KeyringBackend == "awskms" {
-			txCfg.AWSKMSConfig = &awskeyring.Config{
-				Region:   c.Celestia.AWSKMS.Region,
-				Endpoint: c.Celestia.AWSKMS.Endpoint,
-			}
+		txCfg = &celestia.TxClientConfig{
+			CoreGRPCAddr:       c.Celestia.CoreGRPCAddr,
+			CoreGRPCTLSEnabled: c.Celestia.CoreGRPCTLSEnabled,
+			CoreGRPCAuthToken:  c.Celestia.CoreGRPCAuthToken,
+			P2PNetwork:         c.Celestia.P2PNetwork,
+			TxWorkerAccounts:   c.Celestia.TxWorkerAccounts,
+			Signer:             c.buildSignerConfig(),
 		}
 	}
 

@@ -4,12 +4,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/urfave/cli/v2"
 
 	celestia "github.com/celestiaorg/op-alt-da"
 	"github.com/celestiaorg/op-alt-da/fallback/s3"
+	"github.com/celestiaorg/op-alt-da/signer"
 	opservice "github.com/ethereum-optimism/optimism/op-service"
 	oplog "github.com/ethereum-optimism/optimism/op-service/log"
 )
@@ -307,13 +309,16 @@ type CLIConfig struct {
 	CelestiaNamespace     string
 	CelestiaCompactBlobID bool
 
-	// TX client settings (for clientTX architecture)
-	TxClientConfig celestia.TxClientConfig
+	// TX client settings
+	CoreGRPCAddr       string
+	CoreGRPCTLSEnabled bool
+	CoreGRPCAuthToken  string
+	P2PNetwork         string
 
-	// Signer mode
-	SignerMode string
-
-	// Remote signer settings (POPSigner)
+	// Legacy signer settings (for backwards compatibility)
+	SignerMode          string
+	KeyringPath         string
+	DefaultKeyName      string
 	RemoteSignerAPIKey  string
 	RemoteSignerKeyID   string
 	RemoteSignerBaseURL string
@@ -336,20 +341,18 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 		CelestiaAuthToken:     ctx.String(CelestiaAuthTokenFlagName),
 		CelestiaNamespace:     ctx.String(CelestiaNamespaceFlagName),
 		CelestiaCompactBlobID: ctx.Bool(CelestiaCompactBlobIDFlagName),
-		TxClientConfig: celestia.TxClientConfig{
-			DefaultKeyName:     ctx.String(CelestiaDefaultKeyNameFlagName),
-			KeyringPath:        ctx.String(CelestiaKeyringPathFlagName),
-			CoreGRPCAddr:       ctx.String(CelestiaCoreGRPCAddrFlagName),
-			CoreGRPCTLSEnabled: ctx.Bool(CelestiaCoreGRPCTLSEnabledFlagName),
-			CoreGRPCAuthToken:  ctx.String(CelestiaCoreGRPCAuthTokenFlagName),
-			P2PNetwork:         ctx.String(CelestiaP2PNetworkFlagName),
-		},
-		SignerMode:          ctx.String(CelestiaSignerModeFlagName),
-		RemoteSignerAPIKey:  ctx.String(CelestiaRemoteSignerAPIKeyFlagName),
-		RemoteSignerKeyID:   ctx.String(CelestiaRemoteSignerKeyIDFlagName),
-		RemoteSignerBaseURL: ctx.String(CelestiaRemoteSignerBaseURLFlagName),
-		MetricsEnabled:      ctx.Bool(MetricsEnabledFlagName),
-		MetricsPort:         ctx.Int(MetricsPortFlagName),
+		CoreGRPCAddr:          ctx.String(CelestiaCoreGRPCAddrFlagName),
+		CoreGRPCTLSEnabled:    ctx.Bool(CelestiaCoreGRPCTLSEnabledFlagName),
+		CoreGRPCAuthToken:     ctx.String(CelestiaCoreGRPCAuthTokenFlagName),
+		P2PNetwork:            ctx.String(CelestiaP2PNetworkFlagName),
+		SignerMode:            ctx.String(CelestiaSignerModeFlagName),
+		KeyringPath:           ctx.String(CelestiaKeyringPathFlagName),
+		DefaultKeyName:        ctx.String(CelestiaDefaultKeyNameFlagName),
+		RemoteSignerAPIKey:    ctx.String(CelestiaRemoteSignerAPIKeyFlagName),
+		RemoteSignerKeyID:     ctx.String(CelestiaRemoteSignerKeyIDFlagName),
+		RemoteSignerBaseURL:   ctx.String(CelestiaRemoteSignerBaseURLFlagName),
+		MetricsEnabled:        ctx.Bool(MetricsEnabledFlagName),
+		MetricsPort:           ctx.Int(MetricsPortFlagName),
 		Fallback: CLIFallbackConfig{
 			Enabled:  ctx.Bool(FallbackEnabledFlagName),
 			Provider: ctx.String(FallbackProviderFlagName),
@@ -369,55 +372,57 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 
 // TxClientEnabled returns true if the TX client (CoreGRPC) is enabled.
 func (c CLIConfig) TxClientEnabled() bool {
-	signerMode := c.SignerMode
-	if signerMode == "" {
-		signerMode = "local"
-	}
-
-	switch signerMode {
-	case "local":
-		return c.TxClientConfig.KeyringPath != "" || c.TxClientConfig.CoreGRPCAuthToken != ""
-	case "remote":
-		return c.RemoteSignerKeyID != ""
-	default:
+	if c.CoreGRPCAddr == "" {
 		return false
 	}
+	signerCfg := c.buildSignerConfig()
+	return signerCfg.Validate() == nil
+}
+
+// buildSignerConfig constructs a signer.Config from CLI flags.
+func (c CLIConfig) buildSignerConfig() signer.Config {
+	cfg := signer.DefaultConfig()
+
+	// Map legacy "remote" to "popsigner"
+	switch c.SignerMode {
+	case "remote":
+		cfg.Mode = signer.ModePOPSigner
+	case "local", "":
+		cfg.Mode = signer.ModeLocal
+	default:
+		cfg.Mode = c.SignerMode
+	}
+
+	// Local keyring settings
+	cfg.Local.KeyringPath = c.KeyringPath
+	if c.DefaultKeyName != "" {
+		cfg.Local.KeyName = c.DefaultKeyName
+	}
+
+	// POPSigner settings
+	cfg.POPSigner.KeyID = c.RemoteSignerKeyID
+	cfg.POPSigner.BaseURL = c.RemoteSignerBaseURL
+	if c.RemoteSignerAPIKey != "" {
+		cfg.POPSigner.APIKey = c.RemoteSignerAPIKey
+	} else {
+		cfg.POPSigner.APIKey = os.Getenv("POPSIGNER_API_KEY")
+	}
+
+	return cfg
 }
 
 // Check validates the CLI configuration.
 func (c CLIConfig) Check() error {
-	signerMode := c.SignerMode
-	if signerMode == "" {
-		signerMode = "local"
-	}
-
-	// Validate signer mode
-	if signerMode != "local" && signerMode != "remote" {
-		return fmt.Errorf("invalid signer mode: %s (must be 'local' or 'remote')", signerMode)
-	}
-
 	if c.TxClientEnabled() {
-		switch signerMode {
-		case "local":
-			// Local mode requires keyring settings
-			if c.TxClientConfig.DefaultKeyName == "" {
-				return errors.New("--celestia.tx-client.key-name must be set for local signer mode")
-			}
-			if c.TxClientConfig.KeyringPath == "" {
-				return errors.New("--celestia.tx-client.keyring-path must be set for local signer mode")
-			}
-		case "remote":
-			// Remote mode requires POPSigner settings
-			if c.RemoteSignerKeyID == "" {
-				return errors.New("--celestia.remote-signer.key-id must be set for remote signer mode")
-			}
-			// API key can come from env var, so don't require it here
+		signerCfg := c.buildSignerConfig()
+		if err := signerCfg.Validate(); err != nil {
+			return fmt.Errorf("signer config: %w", err)
 		}
 
-		if c.TxClientConfig.CoreGRPCAddr == "" {
+		if c.CoreGRPCAddr == "" {
 			return errors.New("--celestia.tx-client.core-grpc.addr must be set")
 		}
-		if c.TxClientConfig.P2PNetwork == "" {
+		if c.P2PNetwork == "" {
 			return errors.New("--celestia.tx-client.p2p-network must be set")
 		}
 	}
@@ -434,17 +439,11 @@ func (c CLIConfig) CelestiaConfig() celestia.RPCClientConfig {
 	var cfg *celestia.TxClientConfig
 	if c.TxClientEnabled() {
 		cfg = &celestia.TxClientConfig{
-			DefaultKeyName:      c.TxClientConfig.DefaultKeyName,
-			KeyringPath:         c.TxClientConfig.KeyringPath,
-			CoreGRPCAddr:        c.TxClientConfig.CoreGRPCAddr,
-			CoreGRPCTLSEnabled:  c.TxClientConfig.CoreGRPCTLSEnabled,
-			CoreGRPCAuthToken:   c.TxClientConfig.CoreGRPCAuthToken,
-			P2PNetwork:          c.TxClientConfig.P2PNetwork,
-			TxWorkerAccounts:    c.TxClientConfig.TxWorkerAccounts,
-			SignerMode:          c.SignerMode,
-			RemoteSignerAPIKey:  c.RemoteSignerAPIKey,
-			RemoteSignerKeyID:   c.RemoteSignerKeyID,
-			RemoteSignerBaseURL: c.RemoteSignerBaseURL,
+			CoreGRPCAddr:       c.CoreGRPCAddr,
+			CoreGRPCTLSEnabled: c.CoreGRPCTLSEnabled,
+			CoreGRPCAuthToken:  c.CoreGRPCAuthToken,
+			P2PNetwork:         c.P2PNetwork,
+			Signer:             c.buildSignerConfig(),
 		}
 	}
 	return celestia.RPCClientConfig{
