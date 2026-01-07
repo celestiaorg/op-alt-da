@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	awskeyring "github.com/celestiaorg/aws-kms-keyring"
 	celestia "github.com/celestiaorg/op-alt-da"
 )
 
@@ -383,7 +384,7 @@ func (c *Config) ToCelestiaRPCConfig() celestia.RPCClientConfig {
 			if aliasPrefix == "" {
 				aliasPrefix = "alias/op-alt-da/"
 			}
-			txCfg.KMS = &celestia.KMSConfig{
+			txCfg.KMS = &awskeyring.Config{
 				Region:        c.Celestia.KMS.Region,
 				Endpoint:      c.Celestia.KMS.Endpoint,
 				AliasPrefix:   aliasPrefix,

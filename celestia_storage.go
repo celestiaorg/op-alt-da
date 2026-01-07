@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	awskeyring "github.com/celestiaorg/aws-kms-keyring"
 	txClient "github.com/celestiaorg/celestia-node/api/client"
 	"github.com/celestiaorg/celestia-node/api/rpc/client"
 	"github.com/celestiaorg/celestia-node/blob"
@@ -139,18 +140,7 @@ type TxClientConfig struct {
 	CoreGRPCAuthToken  string
 	P2PNetwork         string
 	TxWorkerAccounts   int // 0=immediate, 1=queued single, >1=parallel workers
-	KMS                *KMSConfig
-}
-
-// KMSConfig configures an AWS KMS-backed keyring using aliases.
-type KMSConfig struct {
-	Region      string
-	Endpoint    string
-	AliasPrefix string
-
-	// Import configuration - specify a key to import on startup
-	ImportKeyName string
-	ImportKeyHex  string
+	KMS                *awskeyring.Config
 }
 
 type RPCClientConfig struct {
@@ -210,7 +200,7 @@ func initTxClient(ctx context.Context, cfg RPCClientConfig) (blobAPI.Module, err
 	var kr keyring.Keyring
 	var err error
 	if cfg.TxClientConfig.KMS != nil {
-		kr, err = newKMSKeyring(ctx, keyname, *cfg.TxClientConfig.KMS)
+		kr, err = awskeyring.NewKMSKeyring(ctx, keyname, *cfg.TxClientConfig.KMS)
 	} else {
 		kr, err = txClient.KeyringWithNewKey(txClient.KeyringConfig{
 			KeyName:     keyname,
