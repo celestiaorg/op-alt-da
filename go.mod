@@ -407,5 +407,3 @@ replace (
 )
 
 replace github.com/ipfs/boxo => github.com/celestiaorg/boxo v0.29.0-fork-4
-
-replace github.com/celestiaorg/aws-kms-keyring => ../aws-kms-keyring
