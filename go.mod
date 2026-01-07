@@ -8,7 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.31.17
 	github.com/aws/aws-sdk-go-v2/credentials v1.18.21
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.90.0
-	github.com/celestiaorg/aws-kms-keyring v0.1.1
+	github.com/celestiaorg/aws-kms-keyring v0.2.0
 	github.com/celestiaorg/celestia-node v0.28.4
 	github.com/celestiaorg/go-square/v3 v3.0.2
 	github.com/cosmos/cosmos-sdk v0.51.6
@@ -407,3 +407,5 @@ replace (
 )
 
 replace github.com/ipfs/boxo => github.com/celestiaorg/boxo v0.29.0-fork-4
+
+replace github.com/celestiaorg/aws-kms-keyring => ../aws-kms-keyring
