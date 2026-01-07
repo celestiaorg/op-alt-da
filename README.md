@@ -37,7 +37,7 @@ The DA server signs transactions locally using a Celestia keyring. This means:
 
 **The server will not work without a properly configured local keyring.**
 
-🚀 Prefer not to store keys on disk? Enable the optional AWS KMS backend via `[celestia.kms]` and map each signer to a KMS alias (`alias/op-alt-da/<key_name>`). The server will connect to AWS (or Localstack) and sign via KMS instead of the local keyring.
+🚀 Prefer not to store keys on disk? Enable the optional AWS KMS backend via `[celestia.awskms]` and map each signer to a KMS alias (`alias/op-alt-da/<key_name>`). The server will connect to AWS (or Localstack) and sign via KMS instead of the local keyring.
 
 ## Quick Start
 
@@ -172,7 +172,7 @@ default_key_name = "my_celes_key"
 p2p_network = "mocha-4"
 
 # Optional AWS KMS keyring (alias/op-alt-da/<key_name>)
-[celestia.kms]
+[celestia.awskms]
 enabled = false
 region = "us-east-1"
 endpoint = ""
@@ -195,7 +195,7 @@ port = 6060
 You can offload signing to AWS KMS (or Localstack) instead of storing private keys locally.
 
 1. Create (or import) a secp256k1 key per signer in KMS and attach an alias `alias/op-alt-da/<key_name>` e.g.: `aws kms create-alias --alias-name alias/op-alt-da/my_celes_key --target-key-id <key-id>`
-2. Populate `[celestia.kms]` in your config with the AWS region, optional endpoint (e.g., `http://localhost:4566` for Localstack), and alias prefix.
+2. Populate `[celestia.awskms]` in your config with the AWS region, optional endpoint (e.g., `http://localhost:4566` for Localstack), and alias prefix.
 3. Optionally import a hex encoded private key exported from node keystore e.g.: `cel-key export --unarmored-hex --unsafe my_celes_key`
 
 When enabled, the DA server enumerates matching aliases, fetches public keys via `GetPublicKey`, and signs transactions via the KMS `Sign` API.

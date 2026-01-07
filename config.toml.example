@@ -78,7 +78,7 @@ tx_worker_accounts = 0
 # Optional AWS KMS-backed keyring.
 # When enabled, configure a KMS alias per key in the form alias/op-alt-da/<key_name>.
 # To import a key from a hex-encoded private key, set import_key_hex.
-[celestia.kms]
+[celestia.awskms]
 enabled = false
 region = "us-east-1"
 # Set to http://localhost:4566 for localstack testing. Leave empty for AWS.
