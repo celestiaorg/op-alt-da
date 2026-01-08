@@ -143,7 +143,7 @@ type TxClientConfig struct {
 	TxWorkerAccounts   int // 0=immediate, 1=queued single, >1=parallel workers
 
 	// Keyring backend-specific configuration
-	AWSKMSConfig       *awskeyring.Config
+	AWSKMSConfig *awskeyring.Config
 }
 
 type RPCClientConfig struct {
