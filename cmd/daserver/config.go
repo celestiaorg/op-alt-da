@@ -74,6 +74,9 @@ type CelestiaAWSKMSConfig struct {
 	// Import configuration - specify a key to import on startup
 	ImportKeyName string `toml:"import_key_name"`
 	ImportKeyHex  string `toml:"import_key_hex"`
+
+	// AutoCreate enables automatic creation of missing keys
+	AutoCreate bool `toml:"auto_create"`
 }
 
 // SubmissionConfig holds submission settings for blob writes.
@@ -389,6 +392,7 @@ func (c *Config) ToCelestiaRPCConfig() celestia.RPCClientConfig {
 				AliasPrefix:   aliasPrefix,
 				ImportKeyName: c.Celestia.AWSKMS.ImportKeyName,
 				ImportKeyHex:  c.Celestia.AWSKMS.ImportKeyHex,
+				AutoCreate:    c.Celestia.AWSKMS.AutoCreate,
 			}
 		}
 	}

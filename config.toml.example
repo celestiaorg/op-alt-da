@@ -70,7 +70,7 @@ core_grpc_tls_enabled = true
 
 # Keyring backend type
 # Options:
-#   - "awskms": AWS KMS remote keyring (requires [awskms] configuration)
+#   - "awskms": AWS KMS remote keyring (requires [celestia.awskms] configuration)
 #   - "test": Unencrypted local keyring (for testing only)
 #   - "file": Encrypted local keyring (requires passphrase)
 #   - "os": OS-native keyring (macOS Keychain, Windows Credential Store, etc.)
@@ -94,11 +94,14 @@ tx_worker_accounts = 0
 # Only used when keyring_backend = "awskms"
 # Configure a KMS alias per key in the form alias/op-alt-da/<key_name>.
 
-[awskms]
+[celestia.awskms]
 region = "us-east-1"
 # Set to http://localhost:4566 for localstack testing. Leave empty for AWS.
 endpoint = ""
 alias_prefix = "alias/op-alt-da/"
+
+# Automatically create keys if they don't exist (useful for development/testing)
+auto_create = false
 
 # Optional: Import an existing private key into KMS on startup
 import_key_name = "my_celes_key"

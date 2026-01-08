@@ -27,19 +27,21 @@ Before running the DA server, you need:
 3. **Access to a Celestia consensus node** - For submitting blobs (CoreGRPC)
 4. **Go 1.21+** - For building from source
 
-### ⚠️ Important: Local Keyring Requirement
+### ⚠️ Important: Keyring Requirement
 
-The DA server signs transactions locally using a Celestia keyring. This means:
+The DA server signs transactions using a Celestia keyring. You have two options:
 
+**Option 1: Local Keyring** (Traditional)
 - You must have a keyring directory (e.g., `~/.celestia-light-mocha-4/keys`)
 - The keyring must contain a funded key for paying transaction fees
 - The key name must match your configuration (`default_key_name`)
 
-**The server will not work without a properly configured local keyring.**
+**Option 2: AWS KMS Keyring** (Recommended for production)
+- Keys are stored securely in AWS KMS
+- Supports auto-creation of keys for simplified setup
+- Works with LocalStack for local development
 
-#### Remote Signer
-
-Set `keyring_backend = "awskms"` and configure `[awskms]` to map each signer to a KMS alias (`alias/op-alt-da/<key_name>`). The server will connect to AWS and sign via KMS instead of the local keyring.
+**The server will not work without a properly configured keyring.**
 
 ## Quick Start
 
@@ -63,6 +65,87 @@ celestia-appd keys show my_celes_key --keyring-backend test \
 # - Mocha faucet: https://faucet.celestia-mocha.com/
 # - Arabica faucet: https://faucet.celestia-arabica-11.com/
 ```
+
+#### Alternative: AWS KMS Keyring Backend
+
+Instead of a local keyring, you can use AWS KMS for signing Celestia transactions. This provides:
+- **Hardware security** - Keys are generated and stored in AWS KMS HSMs
+- **Remote signing** - No local key material needed
+- **Auto-creation** - Keys can be automatically created on first use
+- **LocalStack support** - Test locally before deploying to AWS
+
+##### LocalStack Setup (Development/Testing)
+
+For local development, use LocalStack to emulate AWS KMS:
+
+```bash
+# Start LocalStack with KMS service
+docker run -d -p 4566:4566 localstack/localstack
+
+# Configure op-alt-da to use AWS KMS with auto-creation
+cat > config.toml <<EOF
+[celestia]
+keyring_backend = "awskms"
+default_key_name = "my_celes_key"
+# ... other celestia settings ...
+
+[celestia.awskms]
+region = "us-east-1"
+endpoint = "http://localhost:4566"  # LocalStack endpoint
+alias_prefix = "alias/op-alt-da/"
+auto_create = true  # Automatically create keys if they don't exist
+EOF
+
+# Run the server - the key will be auto-created on startup!
+./bin/da-server --config=config.toml
+```
+
+With `auto_create = true`, the server will automatically:
+1. Check if a KMS key with alias `alias/op-alt-da/my_celes_key` exists
+2. If not found, create a new secp256k1 key in KMS
+3. Create the alias and start using it for signing
+
+**Manual Key Creation (Optional)**
+
+If you prefer to create keys manually or need to use existing keys:
+
+```bash
+# Create a secp256k1 key in LocalStack
+KEY_ID=$(aws --endpoint-url=http://localhost:4566 kms create-key \
+  --key-spec ECC_SECG_P256K1 \
+  --key-usage SIGN_VERIFY \
+  --query 'KeyMetadata.KeyId' \
+  --output text)
+
+# Create an alias for the key
+aws --endpoint-url=http://localhost:4566 kms create-alias \
+  --alias-name alias/op-alt-da/my_celes_key \
+  --target-key-id $KEY_ID
+
+# Set auto_create = false in config.toml
+```
+
+##### AWS Production Setup
+
+For production use with AWS KMS:
+
+```toml
+[celestia]
+keyring_backend = "awskms"
+default_key_name = "my_celes_key"
+
+[celestia.awskms]
+region = "us-east-1"
+endpoint = ""  # Leave empty for AWS
+alias_prefix = "alias/op-alt-da/"
+auto_create = false  # Disable auto-creation in production
+
+# Optional: Import an existing private key
+import_key_name = "my_celes_key"
+import_key_hex = "your-32-byte-hex-private-key"
+```
+
+**Important:** Ensure your AWS credentials are configured via environment variables, IAM role, or AWS credentials file. The server requires `kms:CreateKey`, `kms:CreateAlias`, `kms:GetPublicKey`, `kms:Sign`, and `kms:ListAliases` permissions.
 
 ### 2. Build the Server
 
@@ -175,10 +258,11 @@ default_key_name = "my_celes_key"
 p2p_network = "mocha-4"
 
 # AWS KMS keyring
-[awskms]
+[celestia.awskms]
 region = "us-east-1"
 endpoint = ""  # Set to http://localhost:4566 for localstack
 alias_prefix = "alias/op-alt-da/"
+auto_create = false  # Automatically create keys if they don't exist
 import_key_name = "my_celes_key"
 import_key_hex = "1234..."
 
@@ -193,17 +277,6 @@ timeout = "30s"
 enabled = true
 port = 6060
 ```
-
-### AWS KMS (Optional)
-
-You can offload signing to AWS KMS instead of storing private keys locally.
-
-1. Create a secp256k1 key per signer in KMS and attach an alias `alias/op-alt-da/<key_name>` e.g.: `aws kms create-alias --alias-name alias/op-alt-da/my_celes_key --target-key-id <key-id>` OR
-   Import an existing private key into KMS using `import_key_name` and `import_key_hex` under `[awskms]` in your config.
-2. Set `keyring_backend = "awskms"` in your `[celestia]` config section
-3. Populate `[awskms]` in your config with the AWS region, optional endpoint and alias prefix.
-
-When the keyring backend is set to "awskms", the DA server enumerates matching aliases, fetches public keys via `GetPublicKey`, and signs transactions via the KMS `Sign` API.
 
 ### Generating a Namespace
 
