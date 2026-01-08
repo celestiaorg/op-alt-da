@@ -241,7 +241,7 @@ func initTxClient(ctx context.Context, cfg RPCClientConfig) (blobAPI.Module, err
 			EnableDATLS:  cfg.TLSEnabled,
 		},
 		SubmitConfig: txClient.SubmitConfig{
-			DefaultKeyName:   keyname,
+			DefaultKeyName:   cfg.TxClientConfig.DefaultKeyName,
 			Network:          p2p.Network(cfg.TxClientConfig.P2PNetwork),
 			TxWorkerAccounts: cfg.TxClientConfig.TxWorkerAccounts,
 			CoreGRPCConfig: txClient.CoreGRPCConfig{
