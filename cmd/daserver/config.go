@@ -384,7 +384,7 @@ func (c *Config) ToCelestiaRPCConfig() celestia.RPCClientConfig {
 			if aliasPrefix == "" {
 				aliasPrefix = "alias/op-alt-da/"
 			}
-			txCfg.KMS = &awskeyring.Config{
+			txCfg.AWSKMSConfig = &awskeyring.Config{
 				Region:        c.Celestia.AWSKMS.Region,
 				Endpoint:      c.Celestia.AWSKMS.Endpoint,
 				AliasPrefix:   aliasPrefix,
