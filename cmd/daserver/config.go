@@ -50,6 +50,7 @@ type CelestiaConfig struct {
 	CoreGRPCTLSEnabled bool   `toml:"core_grpc_tls_enabled"`
 
 	// Keyring settings (for signing transactions)
+	KeyringBackend string `toml:"keyring_backend"`
 	KeyringPath    string `toml:"keyring_path"`
 	DefaultKeyName string `toml:"default_key_name"`
 	P2PNetwork     string `toml:"p2p_network"`
@@ -60,13 +61,12 @@ type CelestiaConfig struct {
 	// >1 = parallel submission (multiple worker accounts)
 	TxWorkerAccounts int `toml:"tx_worker_accounts"`
 
-	// Optional AWS KMS-backed keyring configuration
+	// Keyring backend configuration sections
 	AWSKMS CelestiaAWSKMSConfig `toml:"awskms"`
 }
 
-// CelestiaAWSKMSConfig configures the optional AWS KMS backend for signing.
+// CelestiaAWSKMSConfig configures the AWS KMS backend for signing.
 type CelestiaAWSKMSConfig struct {
-	Enabled     bool   `toml:"enabled"`
 	Region      string `toml:"region"`
 	Endpoint    string `toml:"endpoint"`
 	AliasPrefix string `toml:"alias_prefix"`
@@ -145,6 +145,7 @@ func DefaultConfig() Config {
 			CoreGRPCAddr:       "",
 			CoreGRPCAuthToken:  "",
 			CoreGRPCTLSEnabled: true,
+			KeyringBackend:     "test",
 			KeyringPath:        "",
 			DefaultKeyName:     "my_celes_key",
 			P2PNetwork:         "mocha-4",
@@ -227,9 +228,8 @@ func (c *Config) Validate() error {
 
 	// If CoreGRPC is configured, signing settings are required
 	if c.Celestia.CoreGRPCAddr != "" {
-		signingConfigured := c.Celestia.KeyringPath != "" || c.Celestia.AWSKMS.Enabled
-		if !signingConfigured {
-			return fmt.Errorf("configure either celestia.keyring_path or celestia.kms when core_grpc_addr is set")
+		if c.Celestia.KeyringBackend == "" {
+			return fmt.Errorf("celestia.keyring_backend is required when core_grpc_addr is set")
 		}
 		if c.Celestia.DefaultKeyName == "" {
 			return fmt.Errorf("celestia.default_key_name is required when core_grpc_addr is set")
@@ -238,12 +238,13 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("celestia.p2p_network is required when core_grpc_addr is set")
 		}
 
-		if c.Celestia.AWSKMS.Enabled {
+		// Validate keyring backend-specific configuration
+		if c.Celestia.KeyringBackend == "awskms" {
 			if c.Celestia.AWSKMS.Region == "" {
-				return fmt.Errorf("celestia.kms.region is required when kms is enabled")
+				return fmt.Errorf("awskms.region is required when keyring_backend is awskms")
 			}
 			if c.Celestia.AWSKMS.AliasPrefix == "" {
-				return fmt.Errorf("celestia.kms.alias_prefix is required when kms is enabled")
+				return fmt.Errorf("awskms.alias_prefix is required when keyring_backend is awskms")
 			}
 
 			// Validate import configuration
@@ -251,18 +252,18 @@ func (c *Config) Validate() error {
 			hasImportHex := c.Celestia.AWSKMS.ImportKeyHex != ""
 
 			if hasImportName != hasImportHex {
-				return fmt.Errorf("celestia.kms: both import_key_name and import_key_hex must be specified together, or neither")
+				return fmt.Errorf("awskms: both import_key_name and import_key_hex must be specified together, or neither")
 			}
 
 			if hasImportHex {
 				// Validate hex format
 				keyHex := strings.TrimPrefix(c.Celestia.AWSKMS.ImportKeyHex, "0x")
 				if _, err := hex.DecodeString(keyHex); err != nil {
-					return fmt.Errorf("celestia.kms.import_key_hex: invalid hex format: %w", err)
+					return fmt.Errorf("awskms.import_key_hex: invalid hex format: %w", err)
 				}
 				// Validate length (32 bytes = 64 hex chars)
 				if len(keyHex) != 64 {
-					return fmt.Errorf("celestia.kms.import_key_hex must be 32 bytes (64 hex characters), got %d", len(keyHex))
+					return fmt.Errorf("awskms.import_key_hex must be 32 bytes (64 hex characters), got %d", len(keyHex))
 				}
 			}
 		}
@@ -358,10 +359,7 @@ func (c *Config) TxClientEnabled() bool {
 	if c.Celestia.CoreGRPCAddr == "" {
 		return false
 	}
-	if c.Celestia.KeyringPath != "" {
-		return true
-	}
-	return c.Celestia.AWSKMS.Enabled
+	return c.Celestia.KeyringBackend != ""
 }
 
 // ToCelestiaRPCConfig converts the Config to a celestia.RPCClientConfig.
@@ -372,6 +370,7 @@ func (c *Config) ToCelestiaRPCConfig() celestia.RPCClientConfig {
 	if c.TxClientEnabled() {
 		txCfg = &celestia.TxClientConfig{
 			DefaultKeyName:     c.Celestia.DefaultKeyName,
+			KeyringBackend:     c.Celestia.KeyringBackend,
 			KeyringPath:        c.Celestia.KeyringPath,
 			CoreGRPCAddr:       c.Celestia.CoreGRPCAddr,
 			CoreGRPCTLSEnabled: c.Celestia.CoreGRPCTLSEnabled,
@@ -379,7 +378,7 @@ func (c *Config) ToCelestiaRPCConfig() celestia.RPCClientConfig {
 			P2PNetwork:         c.Celestia.P2PNetwork,
 			TxWorkerAccounts:   c.Celestia.TxWorkerAccounts,
 		}
-		if c.Celestia.AWSKMS.Enabled {
+		if c.Celestia.KeyringBackend == "awskms" {
 			aliasPrefix := c.Celestia.AWSKMS.AliasPrefix
 			if aliasPrefix == "" {
 				aliasPrefix = "alias/op-alt-da/"
