@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	awskeyring "github.com/celestiaorg/aws-kms-keyring"
 	celestia "github.com/celestiaorg/op-alt-da"
 )
 
@@ -49,6 +50,7 @@ type CelestiaConfig struct {
 	CoreGRPCTLSEnabled bool   `toml:"core_grpc_tls_enabled"`
 
 	// Keyring settings (for signing transactions)
+	KeyringBackend string `toml:"keyring_backend"`
 	KeyringPath    string `toml:"keyring_path"`
 	DefaultKeyName string `toml:"default_key_name"`
 	P2PNetwork     string `toml:"p2p_network"`
@@ -58,6 +60,23 @@ type CelestiaConfig struct {
 	// 1 = synchronous submission (queued, single signer)
 	// >1 = parallel submission (multiple worker accounts)
 	TxWorkerAccounts int `toml:"tx_worker_accounts"`
+
+	// Keyring backend configuration sections
+	AWSKMS CelestiaAWSKMSConfig `toml:"awskms"`
+}
+
+// CelestiaAWSKMSConfig configures the AWS KMS backend for signing.
+type CelestiaAWSKMSConfig struct {
+	Region      string `toml:"region"`
+	Endpoint    string `toml:"endpoint"`
+	AliasPrefix string `toml:"alias_prefix"`
+
+	// Import configuration - specify a key to import on startup
+	ImportKeyName string `toml:"import_key_name"`
+	ImportKeyHex  string `toml:"import_key_hex"`
+
+	// AutoCreate enables automatic creation of missing keys
+	AutoCreate bool `toml:"auto_create"`
 }
 
 // SubmissionConfig holds submission settings for blob writes.
@@ -129,10 +148,14 @@ func DefaultConfig() Config {
 			CoreGRPCAddr:       "",
 			CoreGRPCAuthToken:  "",
 			CoreGRPCTLSEnabled: true,
+			KeyringBackend:     "test",
 			KeyringPath:        "",
 			DefaultKeyName:     "my_celes_key",
 			P2PNetwork:         "mocha-4",
 			TxWorkerAccounts:   0,
+			AWSKMS: CelestiaAWSKMSConfig{
+				AliasPrefix: "alias/op-alt-da/",
+			},
 		},
 		Submission: SubmissionConfig{
 			Timeout:     "60s",
@@ -206,16 +229,46 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("submission.tx_priority must be 1 (low), 2 (medium), or 3 (high)")
 	}
 
-	// If CoreGRPC is configured, keyring settings are required
+	// If CoreGRPC is configured, signing settings are required
 	if c.Celestia.CoreGRPCAddr != "" {
-		if c.Celestia.KeyringPath == "" {
-			return fmt.Errorf("celestia.keyring_path is required when core_grpc_addr is set")
+		if c.Celestia.KeyringBackend == "" {
+			return fmt.Errorf("celestia.keyring_backend is required when core_grpc_addr is set")
 		}
 		if c.Celestia.DefaultKeyName == "" {
 			return fmt.Errorf("celestia.default_key_name is required when core_grpc_addr is set")
 		}
 		if c.Celestia.P2PNetwork == "" {
 			return fmt.Errorf("celestia.p2p_network is required when core_grpc_addr is set")
+		}
+
+		// Validate keyring backend-specific configuration
+		if c.Celestia.KeyringBackend == "awskms" {
+			if c.Celestia.AWSKMS.Region == "" {
+				return fmt.Errorf("awskms.region is required when keyring_backend is awskms")
+			}
+			if c.Celestia.AWSKMS.AliasPrefix == "" {
+				return fmt.Errorf("awskms.alias_prefix is required when keyring_backend is awskms")
+			}
+
+			// Validate import configuration
+			hasImportName := c.Celestia.AWSKMS.ImportKeyName != ""
+			hasImportHex := c.Celestia.AWSKMS.ImportKeyHex != ""
+
+			if hasImportName != hasImportHex {
+				return fmt.Errorf("awskms: both import_key_name and import_key_hex must be specified together, or neither")
+			}
+
+			if hasImportHex {
+				// Validate hex format
+				keyHex := strings.TrimPrefix(c.Celestia.AWSKMS.ImportKeyHex, "0x")
+				if _, err := hex.DecodeString(keyHex); err != nil {
+					return fmt.Errorf("awskms.import_key_hex: invalid hex format: %w", err)
+				}
+				// Validate length (32 bytes = 64 hex chars)
+				if len(keyHex) != 64 {
+					return fmt.Errorf("awskms.import_key_hex must be 32 bytes (64 hex characters), got %d", len(keyHex))
+				}
+			}
 		}
 	}
 
@@ -306,7 +359,10 @@ func parseByteSize(s string) (int64, error) {
 
 // TxClientEnabled returns true if the TX client (CoreGRPC) is configured.
 func (c *Config) TxClientEnabled() bool {
-	return c.Celestia.CoreGRPCAddr != "" && c.Celestia.KeyringPath != ""
+	if c.Celestia.CoreGRPCAddr == "" {
+		return false
+	}
+	return c.Celestia.KeyringBackend != ""
 }
 
 // ToCelestiaRPCConfig converts the Config to a celestia.RPCClientConfig.
@@ -317,12 +373,27 @@ func (c *Config) ToCelestiaRPCConfig() celestia.RPCClientConfig {
 	if c.TxClientEnabled() {
 		txCfg = &celestia.TxClientConfig{
 			DefaultKeyName:     c.Celestia.DefaultKeyName,
+			KeyringBackend:     c.Celestia.KeyringBackend,
 			KeyringPath:        c.Celestia.KeyringPath,
 			CoreGRPCAddr:       c.Celestia.CoreGRPCAddr,
 			CoreGRPCTLSEnabled: c.Celestia.CoreGRPCTLSEnabled,
 			CoreGRPCAuthToken:  c.Celestia.CoreGRPCAuthToken,
 			P2PNetwork:         c.Celestia.P2PNetwork,
 			TxWorkerAccounts:   c.Celestia.TxWorkerAccounts,
+		}
+		if c.Celestia.KeyringBackend == "awskms" {
+			aliasPrefix := c.Celestia.AWSKMS.AliasPrefix
+			if aliasPrefix == "" {
+				aliasPrefix = "alias/op-alt-da/"
+			}
+			txCfg.AWSKMSConfig = &awskeyring.Config{
+				Region:        c.Celestia.AWSKMS.Region,
+				Endpoint:      c.Celestia.AWSKMS.Endpoint,
+				AliasPrefix:   aliasPrefix,
+				ImportKeyName: c.Celestia.AWSKMS.ImportKeyName,
+				ImportKeyHex:  c.Celestia.AWSKMS.ImportKeyHex,
+				AutoCreate:    c.Celestia.AWSKMS.AutoCreate,
+			}
 		}
 	}
 

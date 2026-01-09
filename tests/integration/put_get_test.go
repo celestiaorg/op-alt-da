@@ -37,6 +37,7 @@ func pickFreePort(t *testing.T) (int, func()) {
 }
 
 func TestIntegration_PutThenGet_RoundTrip(t *testing.T) {
+	t.Skip("Skipping as it depends on quicknode")
 	t.Parallel()
 
 	// Require user-provided devnet configuration
