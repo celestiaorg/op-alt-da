@@ -68,12 +68,44 @@ core_grpc_tls_enabled = true
 #                  --home ~/.celestia-light-mocha-4
 #   3. Fund the address with TIA
 
+# Keyring backend type
+# Options:
+#   - "awskms": AWS KMS remote keyring (requires [celestia.awskms] configuration)
+#   - "test": Unencrypted local keyring (for testing only)
+#   - "file": Encrypted local keyring (requires passphrase)
+#   - "os": OS-native keyring (macOS Keychain, Windows Credential Store, etc.)
+#   - "kwallet": KDE Wallet (Linux)
+#   - "pass": Pass command line tool (Linux)
+#   - "keychain": Legacy macOS keychain
+#   - "memory": In-memory keyring (ephemeral, for testing)
+keyring_backend = "test"
+
 keyring_path = "~/.celestia-light-mocha-4/keys"
 default_key_name = "my_celes_key"
 p2p_network = "mocha-4"
 
 # Parallel submission (0 = immediate, 1 = queued, >1 = parallel workers)
 tx_worker_accounts = 0
+
+# ------------------------------------------------------------------------------
+# AWS KMS Configuration (Optional)
+# ------------------------------------------------------------------------------
+# AWS KMS-backed keyring for signing Celestia transactions.
+# Only used when keyring_backend = "awskms"
+# Configure a KMS alias per key in the form alias/op-alt-da/<key_name>.
+
+[celestia.awskms]
+region = "us-east-1"
+# Set to http://localhost:4566 for localstack testing. Leave empty for AWS.
+endpoint = ""
+alias_prefix = "alias/op-alt-da/"
+
+# Automatically create keys if they don't exist (useful for development/testing)
+auto_create = false
+
+# Optional: Import an existing private key into KMS on startup
+import_key_name = "my_celes_key"
+import_key_hex = ""
 
 # ==============================================================================
 # SUBMISSION CONFIGURATION
