@@ -184,9 +184,6 @@ prefix = ""
 #   - Leave empty for AWS S3
 endpoint = ""
 
-# AWS region
-region = "us-east-1"
-
 # Credential type: "static", "environment", or "iam"
 #   - "static": Use access_key_id and access_key_secret below
 #   - "environment": Use AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY env vars
