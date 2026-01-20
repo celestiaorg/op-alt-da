@@ -32,7 +32,7 @@ idle_timeout = "60s"      # Max time for idle keep-alive connections
 [celestia]
 # Celestia namespace (29 bytes hex, version 0 requires 18 leading zeros)
 # Generate with: 00000000000000000000000000000000000000$(openssl rand -hex 10)
-namespace = "00000000000000000000000000000000000000000000000000000000acfe"
+namespace = "000000000000000000000000000000000000000000000000000000acfe"
 
 # Use compact blob IDs (height + commitment only, recommended)
 blobid_compact = true
