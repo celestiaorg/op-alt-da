@@ -18,7 +18,14 @@ jobs:
   goreleaser:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4.1.2
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 512
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+      - name: Checkout
+        uses: actions/checkout@v4.1.2
         with:
           # Allow goreleaser to access older tag information.
           fetch-depth: 0
@@ -34,7 +41,7 @@ jobs:
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v5.0.0
         with:
-          args: release --clean
+          args: release --clean --skip=publish
         env:
           # GitHub sets the GITHUB_TOKEN secret automatically.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
