@@ -98,14 +98,6 @@ tx_worker_accounts = 0
 region = "us-east-1"
 # Set to http://localhost:4566 for localstack testing. Leave empty for AWS.
 endpoint = ""
-alias_prefix = "alias/op-alt-da/"
-
-# Automatically create keys if they don't exist (useful for development/testing)
-auto_create = false
-
-# Optional: Import an existing private key into KMS on startup
-import_key_name = "my_celes_key"
-import_key_hex = ""
 
 # ==============================================================================
 # SUBMISSION CONFIGURATION
