@@ -382,17 +382,9 @@ func (c *Config) ToCelestiaRPCConfig() celestia.RPCClientConfig {
 			TxWorkerAccounts:   c.Celestia.TxWorkerAccounts,
 		}
 		if c.Celestia.KeyringBackend == "awskms" {
-			aliasPrefix := c.Celestia.AWSKMS.AliasPrefix
-			if aliasPrefix == "" {
-				aliasPrefix = "alias/op-alt-da/"
-			}
 			txCfg.AWSKMSConfig = &awskeyring.Config{
-				Region:        c.Celestia.AWSKMS.Region,
-				Endpoint:      c.Celestia.AWSKMS.Endpoint,
-				AliasPrefix:   aliasPrefix,
-				ImportKeyName: c.Celestia.AWSKMS.ImportKeyName,
-				ImportKeyHex:  c.Celestia.AWSKMS.ImportKeyHex,
-				AutoCreate:    c.Celestia.AWSKMS.AutoCreate,
+				Region:   c.Celestia.AWSKMS.Region,
+				Endpoint: c.Celestia.AWSKMS.Endpoint,
 			}
 		}
 	}

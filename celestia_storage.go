@@ -211,7 +211,9 @@ func initKeyring(ctx context.Context, cfg *RPCClientConfig) (keyring.Keyring, er
 		if cfg.TxClientConfig.AWSKMSConfig == nil {
 			return nil, fmt.Errorf("AWS KMS config is required when using awskms backend")
 		}
-		kr, err = awskeyring.NewKMSKeyring(ctx, keyname, *cfg.TxClientConfig.AWSKMSConfig)
+		kmsCfg := *cfg.TxClientConfig.AWSKMSConfig
+		kmsCfg.KeyName = keyname
+		kr, err = awskeyring.NewKMSKeyring(ctx, kmsCfg)
 	default:
 		kr, err = txClient.KeyringWithNewKey(txClient.KeyringConfig{
 			KeyName:     keyname,
