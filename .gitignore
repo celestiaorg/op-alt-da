@@ -2,3 +2,8 @@ bin/
 throughput-test
 config.toml
 daserver
+
+# E2E bundle runtime artifacts (never commit)
+e2e-bundle/keys/
+e2e-bundle/logs/
+e2e-bundle/config.toml

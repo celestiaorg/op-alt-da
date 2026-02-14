@@ -1,0 +1,115 @@
+name: E2E - Arabica-11
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # Daily at 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: 'Skip version gate and run regardless'
+        type: boolean
+        default: false
+      celestia_node_version:
+        description: 'Override celestia-node version (e.g., v0.22.1)'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  # ============================================================
+  # Job 1: Check if a new celestia-node release needs testing
+  # ============================================================
+  version-gate:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Check latest celestia-node release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ -n "${{ inputs.celestia_node_version }}" ]]; then
+            LATEST="${{ inputs.celestia_node_version }}"
+            echo "Using manually specified version: $LATEST"
+          else
+            # Arabica uses releases tagged with "-arabica" suffix
+            LATEST=$(gh api repos/celestiaorg/celestia-node/releases \
+              --jq '[.[] | select(.tag_name | test("arabica"))][0].tag_name // empty')
+            if [[ -z "$LATEST" ]]; then
+              LATEST=$(gh api repos/celestiaorg/celestia-node/releases/latest --jq '.tag_name')
+            fi
+            echo "Latest celestia-node release for Arabica: $LATEST"
+          fi
+          echo "version=$LATEST" >> "$GITHUB_OUTPUT"
+
+          TESTED="${{ vars.E2E_ARABICA_TESTED_VERSION }}"
+          echo "Previously tested: ${TESTED:-none}"
+
+          if [[ "${{ inputs.force_run }}" == "true" ]]; then
+            echo "Force run requested"
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$LATEST" == "$TESTED" ]]; then
+            echo "::notice::Skipping - $LATEST already tested successfully"
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::New release detected: $LATEST (previously tested: ${TESTED:-none})"
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ============================================================
+  # Job 2: Run the full E2E test suite
+  # ============================================================
+  e2e-test:
+    needs: version-gate
+    if: needs.version-gate.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install foundry (for cast CLI)
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Run E2E tests
+        env:
+          CELESTIA_NETWORK: arabica
+          CELESTIA_NODE_VERSION: ${{ needs.version-gate.outputs.version }}
+          CELESTIA_KEYRING_BASE64: ${{ secrets.CELESTIA_KEYRING_BASE64 }}
+          CELESTIA_ADDRESS: ${{ vars.CELESTIA_ADDRESS }}
+          SYNC_TIMEOUT: "300"
+        working-directory: e2e-bundle
+        run: |
+          chmod +x scripts/*.sh test-rollup.sh
+          bash scripts/e2e-run.sh
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-arabica-logs-${{ github.run_id }}
+          path: e2e-bundle/logs/
+          retention-days: 7
+
+  # ============================================================
+  # Job 3: Save tested version on success
+  # ============================================================
+  save-version:
+    needs: [version-gate, e2e-test]
+    if: needs.e2e-test.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update tested version
+        env:
+          GH_TOKEN: ${{ secrets.E2E_VERSION_TRACKER_TOKEN }}
+        run: |
+          VERSION="${{ needs.version-gate.outputs.version }}"
+          echo "Saving tested version: $VERSION"
+          gh variable set E2E_ARABICA_TESTED_VERSION \
+            --repo "${{ github.repository }}" \
+            --body "$VERSION"
+          echo "::notice::Saved E2E_ARABICA_TESTED_VERSION=$VERSION"

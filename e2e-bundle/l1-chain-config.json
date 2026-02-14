@@ -1,0 +1,25 @@
+{
+  "arrowGlacierBlock": 0,
+  "berlinBlock": 0,
+  "blobSchedule": {
+    "cancun": {
+      "baseFeeUpdateFraction": 3338477,
+      "max": 6,
+      "target": 3
+    }
+  },
+  "byzantiumBlock": 0,
+  "cancunTime": 0,
+  "chainId": 31337,
+  "constantinopleBlock": 0,
+  "eip150Block": 0,
+  "eip155Block": 0,
+  "eip158Block": 0,
+  "grayGlacierBlock": 0,
+  "homesteadBlock": 0,
+  "istanbulBlock": 0,
+  "londonBlock": 0,
+  "muirGlacierBlock": 0,
+  "petersburgBlock": 0,
+  "shanghaiTime": 0
+}

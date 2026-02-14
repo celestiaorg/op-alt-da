@@ -1,0 +1,310 @@
+# OP Stack + Celestia E2E Bundle
+#
+# Usage:
+#   # Set required env vars (or use scripts/e2e-run.sh which handles this):
+#   export CELESTIA_NODE_TAG=v0.29.0-arabica
+#   export CELESTIA_CORE_IP=validator-1.celestia-arabica-11.com
+#   export CELESTIA_P2P_NETWORK=arabica
+#   docker compose up -d
+#
+# Services:
+#   - celestia-light: Celestia light node (syncs headers, serves blob reads)
+#   - anvil: L1 chain with pre-deployed OP Stack contracts
+#   - op-alt-da: Celestia DA server (submits blobs via gRPC, reads via light node)
+#   - op-geth: L2 execution layer
+#   - op-node: L2 consensus layer
+#   - op-batcher: Batch submitter
+#   - op-proposer: State root proposer
+
+services:
+  # =============================================================
+  # Celestia Light Node - Syncs headers & serves blob reads
+  # Image tag matches celestia-node release (e.g., v0.29.0-arabica)
+  # =============================================================
+  celestia-light:
+    image: ghcr.io/celestiaorg/celestia-node:${CELESTIA_NODE_TAG:?CELESTIA_NODE_TAG must be set}
+    restart: unless-stopped
+    environment:
+      NODE_TYPE: light
+      P2P_NETWORK: ${CELESTIA_P2P_NETWORK:-arabica}
+      SYNC_FROM_HEIGHT: ${SYNC_FROM_HEIGHT:-}
+      SYNC_FROM_HASH: ${SYNC_FROM_HASH:-}
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        # Init (skip if already done)
+        celestia light init --p2p.network $${P2P_NETWORK} --rpc.addr=0.0.0.0 2>/dev/null || true
+        # Fast sync: skip to recent height if SYNC_FROM_HEIGHT is set
+        if [ -n "$${SYNC_FROM_HEIGHT}" ] && [ "$${SYNC_FROM_HEIGHT}" != "0" ]; then
+          echo "Patching config for fast sync: height=$${SYNC_FROM_HEIGHT}"
+          sed -i "s/SyncFromHeight = 0/SyncFromHeight = $${SYNC_FROM_HEIGHT}/" /home/celestia/config.toml
+          sed -i "s/SyncFromHash = \"\"/SyncFromHash = \"$${SYNC_FROM_HASH}\"/" /home/celestia/config.toml
+        fi
+        exec celestia light start \
+          --core.ip ${CELESTIA_CORE_IP:?CELESTIA_CORE_IP must be set} \
+          --core.port 9090 \
+          --p2p.network $${P2P_NETWORK} \
+          --rpc.skip-auth \
+          --rpc.addr 0.0.0.0
+    ports:
+      - "26658:26658"   # RPC (exposed for host-side sync monitoring)
+    volumes:
+      - celestia-light-data:/home/celestia
+    healthcheck:
+      test: ["CMD", "bash", "-c", "curl -sf -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"das.SamplingStats\",\"params\":[]}' http://localhost:26658 | jq -e '.result.catch_up_done == true and .result.is_running == true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+  # =============================================================
+  # Anvil - L1 chain with pre-deployed OP Stack contracts
+  # =============================================================
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:v1.5.1
+    platform: linux/amd64
+    restart: unless-stopped
+    entrypoint: ["anvil"]
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "9546"
+      - "--state"
+      - "/state/anvil-state.json"
+      - "--chain-id"
+      - "${L1_CHAIN_ID}"
+      - "--gas-limit"
+      - "${GAS_LIMIT}"
+      - "--block-time"
+      - "${BLOCK_TIME}"
+    ports:
+      - "9546:9546"
+    volumes:
+      - ./anvil-state.json:/state/anvil-state.json
+    healthcheck:
+      test: ["CMD", "cast", "block-number", "--rpc-url", "http://localhost:9546"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # =============================================================
+  # OP-ALT-DA - Celestia DA Server
+  # Submits blobs via gRPC (own keyring), reads via light node RPC
+  # =============================================================
+  op-alt-da:
+    image: rg.nl-ams.scw.cloud/banhbao/op-alt-da:v0.12.0-amd64
+    restart: unless-stopped
+    depends_on:
+      celestia-light:
+        condition: service_healthy
+    volumes:
+      - ./config.toml:/config/config.toml:ro
+      - ./keys:/keys
+    command:
+      - --config=/config/config.toml
+    ports:
+      - "3100:3100"
+      - "6060:6060"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3100/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+
+  # =============================================================
+  # OP GETH INIT - Initialize genesis (runs once, then exits)
+  # =============================================================
+  op-geth-init:
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-geth:v1.101602.3
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -f /data/geth/chaindata/CURRENT ] || [ -d /data/geth/chaindata ]; then
+          echo "op-geth already initialized, skipping genesis init"
+        else
+          echo "Initializing op-geth with genesis..."
+          geth init --datadir=/data /config/genesis.json
+        fi
+    volumes:
+      - op-geth-data:/data
+      - ./genesis.json:/config/genesis.json:ro
+
+  # =============================================================
+  # OP GETH - L2 execution layer
+  # =============================================================
+  op-geth:
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-geth:v1.101602.3
+    restart: unless-stopped
+    depends_on:
+      op-geth-init:
+        condition: service_completed_successfully
+    command:
+      - --datadir=/data
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=8545
+      - --http.vhosts=*
+      - --http.corsdomain=*
+      - --http.api=web3,debug,eth,txpool,net,engine,miner
+      - --ws
+      - --ws.addr=0.0.0.0
+      - --ws.port=8546
+      - --ws.origins=*
+      - --ws.api=debug,eth,txpool,net,engine,miner
+      - --syncmode=full
+      - --gcmode=archive
+      - --nodiscover
+      - --maxpeers=0
+      - --networkid=${L2_CHAIN_ID}
+      - --authrpc.addr=0.0.0.0
+      - --authrpc.port=8551
+      - --authrpc.vhosts=*
+      - --authrpc.jwtsecret=/config/jwt.txt
+      - --rollup.disabletxpoolgossip=true
+      - --ipcdisable
+      - --metrics
+      - --metrics.port=7299
+    volumes:
+      - op-geth-data:/data
+      - ./jwt.txt:/config/jwt.txt:ro
+    ports:
+      - "8545:8545"   # JSON-RPC
+      - "8546:8546"   # WebSocket
+      - "8551:8551"   # Engine API
+      - "7299:7299"   # Metrics
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8545"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
+  # =============================================================
+  # OP NODE - Derives L2 state from L1, rollup consensus
+  # =============================================================
+  op-node:
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.16.3
+    restart: unless-stopped
+    depends_on:
+      op-geth:
+        condition: service_healthy
+      op-alt-da:
+        condition: service_healthy
+    command:
+      - op-node
+      - --l2=http://op-geth:8551
+      - --l2.jwt-secret=/config/jwt.txt
+      - --sequencer.enabled
+      - --sequencer.l1-confs=5
+      - --verifier.l1-confs=4
+      - --rollup.config=/config/rollup.json
+      - --rollup.l1-chain-config=/config/l1-chain-config.json
+      - --rpc.addr=0.0.0.0
+      - --rpc.port=9545
+      - --rpc.enable-admin
+      - --p2p.disable
+      - --l1=http://anvil:9546
+      - --l1.beacon=http://localhost:5052
+      - --l1.beacon.ignore
+      - --l1.rpckind=${L1_RPC_KIND:-basic}
+      - --l1.trustrpc
+      # Celestia Alt-DA
+      - --altda.enabled=true
+      - --altda.verify-on-read=true
+      - --altda.da-server=http://op-alt-da:3100
+      - --metrics.enabled
+      - --metrics.port=7300
+    volumes:
+      - ./l1-chain-config.json:/config/l1-chain-config.json:ro
+      - ./rollup.json:/config/rollup.json:ro
+      - ./jwt.txt:/config/jwt.txt:ro
+    ports:
+      - "9545:9545"   # op-node RPC
+      - "7300:7300"   # Metrics
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9545"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
+  # =============================================================
+  # OP BATCHER - Submits L2 batches to DA layer
+  # =============================================================
+  op-batcher:
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.16.3
+    restart: unless-stopped
+    depends_on:
+      op-geth:
+        condition: service_healthy
+      op-node:
+        condition: service_healthy
+      op-alt-da:
+        condition: service_healthy
+    command:
+      - op-batcher
+      - --l2-eth-rpc=http://op-geth:8545
+      - --rollup-rpc=http://op-node:9545
+      - --poll-interval=1s
+      - --sub-safety-margin=6
+      - --num-confirmations=1
+      - --safe-abort-nonce-too-low-count=3
+      - --resubmission-timeout=30s
+      - --rpc.addr=0.0.0.0
+      - --rpc.port=8548
+      - --max-channel-duration=25
+      - --l1-eth-rpc=http://anvil:9546
+      # Anvil deterministic key (anvil-1)
+      - --private-key=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+      # Celestia Alt-DA
+      - --altda.da-service=true
+      - --altda.enabled=true
+      - --altda.da-server=http://op-alt-da:3100
+      - --metrics.enabled
+      - --metrics.port=7301
+    ports:
+      - "8548:8548"   # Batcher RPC
+      - "7301:7301"   # Metrics
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8548/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
+  # =============================================================
+  # OP PROPOSER - Submits L2 state roots to L1
+  # =============================================================
+  op-proposer:
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-proposer:v1.10.0
+    restart: unless-stopped
+    depends_on:
+      op-node:
+        condition: service_healthy
+    command:
+      - op-proposer
+      - --poll-interval=12s
+      - --rpc.port=8560
+      - --rollup-rpc=http://op-node:9545
+      - --game-factory-address=${DISPUTE_GAME_FACTORY_ADDRESS}
+      - --proposal-interval=6h
+      - --l1-eth-rpc=http://anvil:9546
+      # Anvil deterministic key (anvil-2)
+      - --private-key=0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
+      - --metrics.enabled
+      - --metrics.port=7302
+    ports:
+      - "8560:8560"   # Proposer RPC
+      - "7302:7302"   # Metrics
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8560/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  celestia-light-data:
+  op-geth-data:
+
+networks:
+  default:
+    name: local-opstack-devnet
+    driver: bridge

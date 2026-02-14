@@ -1,0 +1,38 @@
+# OP-ALT-DA Configuration for Celestia Arabica-11
+
+addr = "0.0.0.0"
+port = 3100
+log_level = "info"
+log_format = "text"
+
+[celestia]
+namespace = "00000000000000000000000000000000000000706f700000000000a455"
+
+# Celestia light node (container-to-container networking)
+bridge_addr = "http://celestia-light:26658"
+bridge_auth_token = ""
+bridge_tls_enabled = false
+
+# Public Arabica gRPC for consensus/state queries
+core_grpc_addr = "grpc.celestia-arabica-11.com:443"
+core_grpc_auth_token = ""
+core_grpc_tls_enabled = true
+
+# Keyring (injected at runtime from secret or local keys/)
+keyring_backend = "test"
+keyring_path = "/keys"
+default_key_name = "my_celes_key"
+p2p_network = "arabica-11"
+
+gas_limit = 100000
+fee = 2000
+
+[submission]
+timeout = "60s"
+
+[read]
+timeout = "30s"
+
+[metrics]
+enabled = true
+port = 6060
