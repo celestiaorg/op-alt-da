@@ -797,8 +797,8 @@ github.com/celestiaorg/celestia-app/v7 v7.0.1-arabica h1:XPZOqldqn5eYB6AOGW0wfLt
 github.com/celestiaorg/celestia-app/v7 v7.0.1-arabica/go.mod h1:izIXh7WPE+zTXQXLZknXDh0l4lV/t+aS3Z+t3nB+RCs=
 github.com/celestiaorg/celestia-core v0.39.24 h1:+PBBOfJjvfhBdCWSzDCKJ+mVXY5zjsp0QQ5Bg+Ig0/E=
 github.com/celestiaorg/celestia-core v0.39.24/go.mod h1:JbfLQn9LoJgCFnVeWVE4xk241wCJEMQdWZyFqyuqIPs=
-github.com/celestiaorg/celestia-node v0.29.0-arabica h1:4aE0MDCcBHlID152X7gTIy0xEfwAxLkIMlfI/a4Aqko=
-github.com/celestiaorg/celestia-node v0.29.0-arabica/go.mod h1:E+x4DeWaynitCd4I+F/Kp7sjAUyZ/4cNtod+jIxpeDo=
+github.com/celestiaorg/celestia-node v0.29.1-arabica h1:d1BDQYNagmnLhPxN+AXV3qlP8lbq5eV4HUE0pl8AogU=
+github.com/celestiaorg/celestia-node v0.29.1-arabica/go.mod h1:E+x4DeWaynitCd4I+F/Kp7sjAUyZ/4cNtod+jIxpeDo=
 github.com/celestiaorg/cosmos-sdk v0.52.0 h1:v+XBiN3guSI3DR4LNEp67yLRe6G6ZTuA5tqrPgQoYYk=
 github.com/celestiaorg/cosmos-sdk v0.52.0/go.mod h1:5CTcSAmHZvRwl9eeHHRYjv0IMauzG5adnHOoO5Cuo3I=
 github.com/celestiaorg/cosmos-sdk/api v0.7.6 h1:81in9Zk+noz0ko+hZFSSK8L1aawFN8/CmdcQAUhbiUU=

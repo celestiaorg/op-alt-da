@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.7
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.0
 	github.com/celestiaorg/aws-kms-keyring v0.5.0
-	github.com/celestiaorg/celestia-node v0.29.0-arabica
+	github.com/celestiaorg/celestia-node v0.29.1-arabica
 	github.com/celestiaorg/go-square/v3 v3.0.2
 	github.com/cosmos/cosmos-sdk v0.51.6
 	github.com/ethereum-optimism/optimism v1.16.2
