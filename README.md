@@ -109,7 +109,24 @@ region = "us-east-1"
 endpoint = "http://localhost:4566"  # Leave empty for AWS production
 ```
 
-##### Step 3: Run the Server
+##### Step 3: Get Your Celestia Address
+
+Before running the server, you need to know your Celestia address to fund it with TIA:
+
+```bash
+# Set AWS credentials first
+export AWS_ACCESS_KEY_ID=your-key
+export AWS_SECRET_ACCESS_KEY=your-secret
+export AWS_REGION=us-east-1
+
+# Show the Celestia address for your KMS key
+./bin/da-server keys show --config config.toml
+# Output: celestia1abc123...
+
+# Fund this address with TIA from the appropriate faucet
+```
+
+##### Step 4: Run the Server
 
 ```bash
 ./bin/da-server --config=config.toml

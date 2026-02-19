@@ -193,7 +193,9 @@ func NewCelestiaStore(ctx context.Context, cfg RPCClientConfig) (*CelestiaStore,
 	}, nil
 }
 
-func initKeyring(ctx context.Context, cfg *RPCClientConfig) (keyring.Keyring, error) {
+// InitKeyring initializes a keyring based on the configuration.
+// It supports multiple backends including AWS KMS and local keyrings.
+func InitKeyring(ctx context.Context, cfg *RPCClientConfig) (keyring.Keyring, error) {
 	keyname := cfg.TxClientConfig.DefaultKeyName
 	if keyname == "" {
 		keyname = "my_celes_key"
@@ -226,7 +228,7 @@ func initKeyring(ctx context.Context, cfg *RPCClientConfig) (keyring.Keyring, er
 // initTxClient initializes a transaction client for Celestia.
 // The provided context is used for client initialization and allows cancellation during startup.
 func initTxClient(ctx context.Context, cfg RPCClientConfig) (blobAPI.Module, error) {
-	kr, err := initKeyring(ctx, &cfg)
+	kr, err := InitKeyring(ctx, &cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize keyring: %w", err)
 	}

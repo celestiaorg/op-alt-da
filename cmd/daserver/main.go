@@ -25,6 +25,9 @@ func main() {
 	app.Usage = "Alt-DA Storage Service"
 	app.Description = "Service for storing alt-da inputs to Celestia"
 	app.Action = StartDAServer
+	app.Commands = []*cli.Command{
+		KeysCommand(),
+	}
 
 	ctx := ctxinterrupt.WithSignalWaiterMain(context.Background())
 	err := app.RunContext(ctx, os.Args)
