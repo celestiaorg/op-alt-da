@@ -64,12 +64,25 @@ type CelestiaConfig struct {
 
 	// Legacy flat config fields (for backwards compatibility)
 	// These are deprecated and will be migrated to Signer config
-	SignerMode          string `toml:"signer_mode"`           // Deprecated: use signer.mode
-	KeyringPath         string `toml:"keyring_path"`          // Deprecated: use signer.local.keyring_path
-	DefaultKeyName      string `toml:"default_key_name"`      // Deprecated: use signer.local.key_name
-	RemoteSignerAPIKey  string `toml:"remote_signer_api_key"` // Deprecated: use signer.popsigner.api_key
-	RemoteSignerKeyID   string `toml:"remote_signer_key_id"`  // Deprecated: use signer.popsigner.key_id
-	RemoteSignerBaseURL string `toml:"remote_signer_base_url"`// Deprecated: use signer.popsigner.base_url
+	SignerMode          string               `toml:"signer_mode"`            // Deprecated: use signer.mode
+	KeyringBackend      string               `toml:"keyring_backend"`        // Deprecated: use signer.mode/signer.local
+	KeyringPath         string               `toml:"keyring_path"`           // Deprecated: use signer.local.keyring_path
+	DefaultKeyName      string               `toml:"default_key_name"`       // Deprecated: use signer.local.key_name
+	RemoteSignerAPIKey  string               `toml:"remote_signer_api_key"`  // Deprecated: use signer.popsigner.api_key
+	RemoteSignerKeyID   string               `toml:"remote_signer_key_id"`   // Deprecated: use signer.popsigner.key_id
+	RemoteSignerBaseURL string               `toml:"remote_signer_base_url"` // Deprecated: use signer.popsigner.base_url
+	AWSKMS              CelestiaAWSKMSConfig `toml:"awskms"`                 // Deprecated: use signer.aws_kms
+}
+
+// CelestiaAWSKMSConfig defines legacy AWS KMS settings from pre-signer config.
+type CelestiaAWSKMSConfig struct {
+	Region      string `toml:"region"`
+	Endpoint    string `toml:"endpoint"`
+	AliasPrefix string `toml:"alias_prefix"`
+
+	ImportKeyName string `toml:"import_key_name"`
+	ImportKeyHex  string `toml:"import_key_hex"`
+	AutoCreate    bool   `toml:"auto_create"`
 }
 
 // SubmissionConfig holds submission settings for blob writes.
@@ -146,8 +159,12 @@ func DefaultConfig() Config {
 			Signer:             signer.DefaultConfig(),
 			// Legacy fields (for backwards compatibility)
 			SignerMode:     "",
+			KeyringBackend: "test",
 			KeyringPath:    "",
 			DefaultKeyName: "my_celes_key",
+			AWSKMS: CelestiaAWSKMSConfig{
+				AliasPrefix: "alias/op-alt-da/",
+			},
 		},
 		Submission: SubmissionConfig{
 			Timeout:     "60s",
@@ -253,6 +270,10 @@ func (c *Config) buildSignerConfig() signer.Config {
 			cfg.Mode = c.Celestia.SignerMode
 		}
 	}
+	// Map legacy keyring backend settings.
+	if c.Celestia.KeyringBackend == "awskms" {
+		cfg.Mode = signer.ModeAWSKMS
+	}
 
 	// Migrate local keyring settings
 	if c.Celestia.KeyringPath != "" {
@@ -271,6 +292,10 @@ func (c *Config) buildSignerConfig() signer.Config {
 	}
 	if c.Celestia.RemoteSignerBaseURL != "" {
 		cfg.POPSigner.BaseURL = c.Celestia.RemoteSignerBaseURL
+	}
+	// Migrate legacy AWS KMS settings.
+	if c.Celestia.AWSKMS.Region != "" {
+		cfg.AWSKMS.Region = c.Celestia.AWSKMS.Region
 	}
 
 	// Resolve API key from environment if not set
