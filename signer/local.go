@@ -16,11 +16,15 @@ func NewLocalKeyring(cfg LocalConfig) (keyring.Keyring, string, error) {
 	if cfg.KeyName == "" {
 		return nil, "", fmt.Errorf("local key_name is required")
 	}
+	backend := cfg.BackendName
+	if backend == "" {
+		backend = keyring.BackendTest
+	}
 
 	// Create the keyring using celestia-node's helper
 	kr, err := txClient.KeyringWithNewKey(txClient.KeyringConfig{
 		KeyName:     cfg.KeyName,
-		BackendName: keyring.BackendTest,
+		BackendName: backend,
 	}, cfg.KeyringPath)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create local keyring: %w", err)

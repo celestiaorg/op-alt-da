@@ -29,7 +29,15 @@ func NewKeyring(cfg Config) (keyring.Keyring, string, error) {
 		return NewPOPSignerKeyring(cfg.POPSigner)
 
 	case ModeAWSKMS:
-		return nil, "", fmt.Errorf("AWS KMS signer is not yet implemented")
+		keyID := cfg.AWSKMS.KeyID
+		if keyID == "" {
+			keyID = cfg.Local.KeyName
+		}
+		log.Info("Creating AWS KMS keyring",
+			"key_id", keyID,
+			"region", cfg.AWSKMS.Region,
+			"endpoint", cfg.AWSKMS.Endpoint)
+		return NewAWSKMSKeyring(cfg.AWSKMS, keyID)
 
 	case ModeGCPKMS:
 		return nil, "", fmt.Errorf("GCP Cloud KMS signer is not yet implemented")

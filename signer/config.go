@@ -27,7 +27,7 @@ type Config struct {
 	// POPSigner contains configuration for POPSigner remote signing.
 	POPSigner POPSignerConfig `toml:"popsigner"`
 
-	// AWSKMS contains configuration for AWS KMS signing (future).
+	// AWSKMS contains configuration for AWS KMS signing.
 	AWSKMS AWSKMSConfig `toml:"aws_kms"`
 
 	// GCPKMS contains configuration for GCP Cloud KMS signing (future).
@@ -39,6 +39,10 @@ type Config struct {
 
 // LocalConfig holds configuration for the local filesystem keyring.
 type LocalConfig struct {
+	// BackendName is the cosmos-sdk keyring backend name.
+	// Example values: "test", "file", "os", "memory"
+	BackendName string `toml:"backend"`
+
 	// KeyringPath is the path to the keyring directory.
 	// Example: "~/.celestia-light-mocha-4/keys"
 	KeyringPath string `toml:"keyring_path"`
@@ -61,10 +65,13 @@ type POPSignerConfig struct {
 	BaseURL string `toml:"base_url"`
 }
 
-// AWSKMSConfig holds configuration for AWS KMS signing (future implementation).
+// AWSKMSConfig holds configuration for AWS KMS signing.
 type AWSKMSConfig struct {
 	// Region is the AWS region where the KMS key is located.
 	Region string `toml:"region"`
+
+	// Endpoint is an optional custom KMS endpoint.
+	Endpoint string `toml:"endpoint"`
 
 	// KeyID is the ARN or alias of the KMS key.
 	KeyID string `toml:"key_id"`
@@ -122,7 +129,8 @@ func DefaultConfig() Config {
 	return Config{
 		Mode: ModeLocal,
 		Local: LocalConfig{
-			KeyName: "my_celes_key",
+			BackendName: "test",
+			KeyName:     "my_celes_key",
 		},
 		Vault: VaultConfig{
 			TransitPath: "transit",
@@ -151,7 +159,12 @@ func (c *Config) Validate() error {
 		}
 
 	case ModeAWSKMS:
-		return fmt.Errorf("signer mode '%s' is not yet implemented", ModeAWSKMS)
+		if c.AWSKMS.Region == "" {
+			return fmt.Errorf("signer.aws_kms.region is required when mode is '%s'", ModeAWSKMS)
+		}
+		if c.AWSKMS.KeyID == "" && c.Local.KeyName == "" {
+			return fmt.Errorf("signer.aws_kms.key_id is required when mode is '%s'", ModeAWSKMS)
+		}
 
 	case ModeGCPKMS:
 		return fmt.Errorf("signer mode '%s' is not yet implemented", ModeGCPKMS)
@@ -188,4 +201,3 @@ func (c *VaultConfig) ResolveToken() string {
 	}
 	return os.Getenv("VAULT_TOKEN")
 }
-

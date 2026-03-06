@@ -264,6 +264,8 @@ func (c *Config) buildSignerConfig() signer.Config {
 		switch c.Celestia.SignerMode {
 		case "remote":
 			cfg.Mode = signer.ModePOPSigner
+		case "awskms":
+			cfg.Mode = signer.ModeAWSKMS
 		case "local":
 			cfg.Mode = signer.ModeLocal
 		default:
@@ -271,8 +273,14 @@ func (c *Config) buildSignerConfig() signer.Config {
 		}
 	}
 	// Map legacy keyring backend settings.
-	if c.Celestia.KeyringBackend == "awskms" {
+	switch c.Celestia.KeyringBackend {
+	case "awskms":
+		// Legacy awskms backend maps to signer aws_kms mode.
 		cfg.Mode = signer.ModeAWSKMS
+	default:
+		if c.Celestia.KeyringBackend != "" {
+			cfg.Local.BackendName = c.Celestia.KeyringBackend
+		}
 	}
 
 	// Migrate local keyring settings
@@ -296,6 +304,12 @@ func (c *Config) buildSignerConfig() signer.Config {
 	// Migrate legacy AWS KMS settings.
 	if c.Celestia.AWSKMS.Region != "" {
 		cfg.AWSKMS.Region = c.Celestia.AWSKMS.Region
+	}
+	if c.Celestia.AWSKMS.Endpoint != "" {
+		cfg.AWSKMS.Endpoint = c.Celestia.AWSKMS.Endpoint
+	}
+	if cfg.Mode == signer.ModeAWSKMS && cfg.AWSKMS.KeyID == "" {
+		cfg.AWSKMS.KeyID = cfg.Local.KeyName
 	}
 
 	// Resolve API key from environment if not set

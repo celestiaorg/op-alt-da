@@ -387,6 +387,8 @@ func (c CLIConfig) buildSignerConfig() signer.Config {
 	switch c.SignerMode {
 	case "remote":
 		cfg.Mode = signer.ModePOPSigner
+	case "awskms":
+		cfg.Mode = signer.ModeAWSKMS
 	case "local", "":
 		cfg.Mode = signer.ModeLocal
 	default:
