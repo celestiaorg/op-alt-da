@@ -144,7 +144,7 @@ var (
 	}
 	CelestiaSignerModeFlag = &cli.StringFlag{
 		Name:    CelestiaSignerModeFlagName,
-		Usage:   "signer mode: 'local' (filesystem keyring) or 'remote' (POPSigner)",
+		Usage:   "signer mode: 'local' (filesystem keyring) or 'popsigner' (POPSigner)",
 		Value:   "local",
 		EnvVars: prefixEnvVars("CELESTIA_SIGNER_MODE"),
 	}

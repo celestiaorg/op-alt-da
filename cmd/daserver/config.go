@@ -290,6 +290,16 @@ func (c *Config) buildSignerConfig() signer.Config {
 	if c.Celestia.DefaultKeyName != "" {
 		cfg.Local.KeyName = c.Celestia.DefaultKeyName
 	}
+	// Expand leading '~' in local keyring path to the current user's home directory.
+	if kp := cfg.Local.KeyringPath; strings.HasPrefix(kp, "~") {
+		if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
+			if kp == "~" {
+				cfg.Local.KeyringPath = homeDir
+			} else if strings.HasPrefix(kp, "~/") {
+				cfg.Local.KeyringPath = homeDir + kp[1:]
+			}
+		}
+	}
 
 	// Migrate POPSigner settings
 	if c.Celestia.RemoteSignerAPIKey != "" {
