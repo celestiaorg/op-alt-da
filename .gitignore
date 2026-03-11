@@ -1,4 +1,4 @@
 bin/
 throughput-test
 config.toml
-daserver
+/daserver

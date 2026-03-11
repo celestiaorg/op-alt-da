@@ -8,13 +8,13 @@ This repository implements a Celestia `da-server` for Alt-DA mode using generic 
 ┌─────────────────────────────────────────────────────────────────────┐
 │  PUT Request → Create blob → Submit via CoreGRPC → Return BlobID    │
 │                                    ↑                                │
-│                  clientTX (signs with local keyring)                │
+│                  Signer (local keyring OR POPSigner)                │
 │                                                                     │
 │  GET Request → Parse BlobID (height + commitment) → blob.Get()      │
 │                                    ↑                                │
 │                        Bridge node JSON-RPC                         │
 ├─────────────────────────────────────────────────────────────────────┤
-│  Requirements: Local keyring, Bridge node (read), CoreGRPC (write)  │
+│  Requirements: Signer, Bridge node (read), CoreGRPC (write)         │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -22,33 +22,35 @@ This repository implements a Celestia `da-server` for Alt-DA mode using generic 
 
 Before running the DA server, you need:
 
-1. **A Celestia keyring with a funded account** - Required for signing transactions
+1. **A signer for Celestia transactions** - Either local keyring OR POPSigner
 2. **Access to a Celestia bridge/light node** - For reading blobs (JSON-RPC)
 3. **Access to a Celestia consensus node** - For submitting blobs (CoreGRPC)
 4. **Go 1.21+** - For building from source
 
-### ⚠️ Important: Keyring Requirement
+### Signer Options
 
-The DA server signs transactions using a Celestia keyring. You have two options:
+The DA server supports two signing modes:
 
-**Option 1: Local Keyring** (Traditional)
-- You must have a keyring directory (e.g., `~/.celestia-light-mocha-4/keys`)
-- The keyring must contain a funded key for paying transaction fees
-- The key name must match your configuration (`default_key_name`)
-
-**Option 2: AWS KMS Keyring** (Recommended for production)
-- Uses a single pre-configured KMS key
-- Minimal permissions: only `kms:GetPublicKey` and `kms:Sign` required
-- Key name `default_key_name` in the configuration corresponds to the KMS key alias or key ID
-- Works with LocalStack for local development
-
-**The server will not work without a properly configured keyring.**
+| Mode | Description | Best For |
+|------|-------------|----------|
+| **Local Keyring** | Filesystem-based keyring | Development, self-hosted |
+| **POPSigner** | Remote signing service | Production, key security |
 
 ## Quick Start
 
-### 1. Set Up Celestia Keyring
+### 1. Build the Server
 
-First, create and fund a Celestia key:
+```bash
+make da-server
+# or
+go build -o bin/da-server ./cmd/daserver
+```
+
+### 2. Set Up Signing
+
+Choose **one** of the following:
+
+#### Option A: Local Keyring
 
 ```bash
 # Initialize a Celestia light node (creates keyring directory)
@@ -67,92 +69,41 @@ celestia-appd keys show my_celes_key --keyring-backend test \
 # - Arabica faucet: https://faucet.celestia-arabica-11.com/
 ```
 
-#### Alternative: AWS KMS Keyring Backend
-
-Instead of a local keyring, you can use AWS KMS for signing Celestia transactions. This provides:
-- **Hardware security** - Keys are stored in AWS KMS HSMs
-- **Remote signing** - No local key material needed
-- **Minimal permissions** - Only `kms:GetPublicKey` and `kms:Sign` required
-- **LocalStack support** - Test locally before deploying to AWS
-
-##### Step 1: Create a KMS Key
+#### Option B: POPSigner (Remote Signing)
 
 ```bash
-# For LocalStack (development)
-docker run -d -p 4566:4566 localstack/localstack
+# 1. Create account at https://popsigner.com
+# 2. Generate an API key (psk_live_xxxxx)
+# 3. Create a Celestia key and note the key_id (UUID)
+# 4. Fund the key's Celestia address with TIA
 
-# Create a secp256k1 key
-KEY_ID=$(aws --endpoint-url=http://localhost:4566 kms create-key \
-  --key-spec ECC_SECG_P256K1 \
-  --key-usage SIGN_VERIFY \
-  --query 'KeyMetadata.KeyId' \
-  --output text)
-
-# Create an alias for the key
-aws --endpoint-url=http://localhost:4566 kms create-alias \
-  --alias-name alias/my_celes_key \
-  --target-key-id $KEY_ID
+export POPSIGNER_API_KEY="psk_live_xxxxx"
 ```
 
-For production AWS, omit `--endpoint-url`.
+### 3. Run the Server
 
-##### Step 2: Configure the Server
-
-```toml
-[celestia]
-keyring_backend = "awskms"
-default_key_name = "alias/my_celes_key"  # Use full alias name
-# ... other celestia settings ...
-
-[celestia.awskms]
-region = "us-east-1"
-endpoint = "http://localhost:4566"  # Leave empty for AWS production
-```
-
-##### Step 3: Run the Server
+**With Local Keyring:**
 
 ```bash
 ./bin/da-server --config=config.toml
 ```
 
-**IAM Permissions Required:**
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Effect": "Allow",
-    "Action": ["kms:GetPublicKey", "kms:Sign"],
-    "Resource": "arn:aws:kms:REGION:ACCOUNT:key/KEY_ID"
-  }]
-}
-```
-
-### 2. Build the Server
+**With POPSigner:**
 
 ```bash
-make da-server
-# or
-go build -o bin/da-server ./cmd/daserver
+POPSIGNER_API_KEY="psk_live_xxxxx" ./bin/da-server --config=config.toml
 ```
 
-### 3. Run the Server
+Or using CLI flags:
 
 ```bash
 ./bin/da-server \
   --celestia.namespace="00000000000000000000000000000000000000000000000000000000acfe" \
   --celestia.server="http://localhost:26658" \
-  --celestia.auth-token="your-bridge-auth-token" \
   --celestia.tx-client.core-grpc.addr="consensus-full-mocha-4.celestia-mocha.com:9090" \
   --celestia.tx-client.keyring-path="$HOME/.celestia-light-mocha-4/keys" \
   --celestia.tx-client.key-name="my_celes_key" \
   --celestia.tx-client.p2p-network="mocha-4"
-```
-
-Or using a config file:
-
-```bash
-./bin/da-server --config=config.toml
 ```
 
 ## Configuration
@@ -173,12 +124,21 @@ Or using a config file:
 
 | Flag                                         | Environment Variable                                | Default        | Description                            |
 | -------------------------------------------- | --------------------------------------------------- | -------------- | -------------------------------------- |
-| `--celestia.tx-client.key-name`              | `OP_ALTDA_CELESTIA_TX_CLIENT_KEY_NAME`              | `my_celes_key` | Key name in keyring                    |
-| `--celestia.tx-client.keyring-path`          | `OP_ALTDA_CELESTIA_TX_CLIENT_KEYRING_PATH`          | **(required)** | Path to keyring directory (omit when using KMS) |
 | `--celestia.tx-client.core-grpc.addr`        | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_ADDR`        | **(required)** | CoreGRPC endpoint                      |
 | `--celestia.tx-client.core-grpc.tls-enabled` | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_TLS_ENABLED` | `true`         | Enable TLS for CoreGRPC                |
 | `--celestia.tx-client.core-grpc.auth-token`  | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_AUTH_TOKEN`  |                | CoreGRPC auth token                    |
 | `--celestia.tx-client.p2p-network`           | `OP_ALTDA_CELESTIA_TX_CLIENT_P2P_NETWORK`           | `mocha-4`      | Network: mocha-4, arabica-11, celestia |
+
+#### Signer Configuration
+
+| Flag                                  | Environment Variable                         | Default        | Description                           |
+| ------------------------------------- | -------------------------------------------- | -------------- | ------------------------------------- |
+| `--celestia.signer-mode`              | `OP_ALTDA_CELESTIA_SIGNER_MODE`              | `local`        | Signer mode: local, popsigner         |
+| `--celestia.tx-client.keyring-path`   | `OP_ALTDA_CELESTIA_TX_CLIENT_KEYRING_PATH`   |                | Path to keyring (local mode)          |
+| `--celestia.tx-client.key-name`       | `OP_ALTDA_CELESTIA_TX_CLIENT_KEY_NAME`       | `my_celes_key` | Key name in keyring (local mode)      |
+| `--celestia.remote-signer.key-id`     | `OP_ALTDA_CELESTIA_REMOTE_SIGNER_KEY_ID`     |                | POPSigner key UUID                    |
+| `--celestia.remote-signer.api-key`    | `POPSIGNER_API_KEY`                          |                | POPSigner API key (env var preferred) |
+| `--celestia.remote-signer.base-url`   | `OP_ALTDA_CELESTIA_REMOTE_SIGNER_BASE_URL`   |                | Custom POPSigner endpoint             |
 
 #### Fallback Storage (Optional)
 
@@ -217,38 +177,30 @@ See `config.toml.example` for a complete example:
 # Server settings
 addr = "127.0.0.1"
 port = 3100
-log_level = "info"
-log_format = "text"
 
 [celestia]
 namespace = "00000000000000000000000000000000000000000000000000000000acfe"
-blobid_compact = true
-
-# Bridge node (for reading blobs via JSON-RPC)
 bridge_addr = "http://localhost:26658"
-bridge_auth_token = "your-bridge-auth-token"
-
-# Core gRPC (for submitting blobs to consensus)
 core_grpc_addr = "consensus-full-mocha-4.celestia-mocha.com:9090"
-core_grpc_tls_enabled = true
-
-# Keyring
-keyring_backend = "test"  # or "awskms" for AWS KMS
-keyring_path = "~/.celestia-light-mocha-4/keys"
-default_key_name = "my_celes_key"  # For awskms, use full alias: "alias/my_celes_key"
 p2p_network = "mocha-4"
 
-# AWS KMS keyring (when keyring_backend = "awskms")
-[celestia.awskms]
-region = "us-east-1"
-endpoint = ""  # Set to http://localhost:4566 for localstack
+# Signer configuration - choose ONE mode
+[celestia.signer]
+mode = "local"  # or "popsigner"
+
+# Local keyring settings
+[celestia.signer.local]
+keyring_path = "~/.celestia-light-mocha-4/keys"
+key_name = "my_celes_key"
+
+# POPSigner settings (when mode = "popsigner")
+# [celestia.signer.popsigner]
+# key_id = "your-key-uuid"
+# api_key via POPSIGNER_API_KEY env var (recommended)
 
 [submission]
 timeout = "60s"
 tx_priority = 2  # 1=low, 2=medium, 3=high
-
-[read]
-timeout = "30s"
 
 [metrics]
 enabled = true

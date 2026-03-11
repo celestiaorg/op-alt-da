@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	awskeyring "github.com/celestiaorg/aws-kms-keyring"
 	txClient "github.com/celestiaorg/celestia-node/api/client"
 	"github.com/celestiaorg/celestia-node/api/rpc/client"
 	"github.com/celestiaorg/celestia-node/blob"
@@ -16,7 +15,7 @@ import (
 	"github.com/celestiaorg/celestia-node/nodebuilder/p2p"
 	"github.com/celestiaorg/celestia-node/state"
 	libshare "github.com/celestiaorg/go-square/v3/share"
-	"github.com/cosmos/cosmos-sdk/crypto/keyring"
+	"github.com/celestiaorg/op-alt-da/signer"
 	altda "github.com/ethereum-optimism/optimism/op-alt-da"
 	"github.com/ethereum/go-ethereum/log"
 )
@@ -133,17 +132,14 @@ func (c *CelestiaBlobID) UnmarshalBinary(data []byte) error {
 const VersionByte = 0x0c
 
 type TxClientConfig struct {
-	DefaultKeyName     string
-	KeyringBackend     string // Backend type: remote - "awskms", local - "test", "file", "os", "kwallet", "pass", "keychain", "memory"
-	KeyringPath        string
 	CoreGRPCAddr       string
 	CoreGRPCTLSEnabled bool
 	CoreGRPCAuthToken  string
 	P2PNetwork         string
 	TxWorkerAccounts   int // 0=immediate, 1=queued single, >1=parallel workers
 
-	// Keyring backend-specific configuration
-	AWSKMSConfig *awskeyring.Config
+	// Signer configuration (local keyring, POPSigner, AWS KMS, etc.)
+	Signer signer.Config
 }
 
 type RPCClientConfig struct {
@@ -193,42 +189,13 @@ func NewCelestiaStore(ctx context.Context, cfg RPCClientConfig) (*CelestiaStore,
 	}, nil
 }
 
-func initKeyring(ctx context.Context, cfg *RPCClientConfig) (keyring.Keyring, error) {
-	keyname := cfg.TxClientConfig.DefaultKeyName
-	if keyname == "" {
-		keyname = "my_celes_key"
-	}
-
-	backend := cfg.TxClientConfig.KeyringBackend
-	if backend == "" {
-		backend = keyring.BackendTest
-	}
-
-	var kr keyring.Keyring
-	var err error
-	switch backend {
-	case "awskms":
-		if cfg.TxClientConfig.AWSKMSConfig == nil {
-			return nil, fmt.Errorf("AWS KMS config is required when using awskms backend")
-		}
-		kmsCfg := *cfg.TxClientConfig.AWSKMSConfig
-		kmsCfg.KeyName = keyname
-		kr, err = awskeyring.NewKMSKeyring(ctx, kmsCfg)
-	default:
-		kr, err = txClient.KeyringWithNewKey(txClient.KeyringConfig{
-			KeyName:     keyname,
-			BackendName: backend,
-		}, cfg.TxClientConfig.KeyringPath)
-	}
-	return kr, err
-}
-
 // initTxClient initializes a transaction client for Celestia.
 // The provided context is used for client initialization and allows cancellation during startup.
 func initTxClient(ctx context.Context, cfg RPCClientConfig) (blobAPI.Module, error) {
-	kr, err := initKeyring(ctx, &cfg)
+	// Create keyring using the signer package
+	kr, keyName, err := signer.NewKeyring(cfg.TxClientConfig.Signer)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize keyring: %w", err)
+		return nil, fmt.Errorf("failed to create keyring: %w", err)
 	}
 
 	// Configure client
@@ -243,7 +210,7 @@ func initTxClient(ctx context.Context, cfg RPCClientConfig) (blobAPI.Module, err
 			EnableDATLS:  cfg.TLSEnabled,
 		},
 		SubmitConfig: txClient.SubmitConfig{
-			DefaultKeyName:   cfg.TxClientConfig.DefaultKeyName,
+			DefaultKeyName:   keyName,
 			Network:          p2p.Network(cfg.TxClientConfig.P2PNetwork),
 			TxWorkerAccounts: cfg.TxClientConfig.TxWorkerAccounts,
 			CoreGRPCConfig: txClient.CoreGRPCConfig{
