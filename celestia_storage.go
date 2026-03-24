@@ -340,8 +340,8 @@ func (d *CelestiaStore) submitBlob(ctx context.Context, data []byte) ([]byte, []
 		isCompact:  d.CompactBlobID,
 	}
 
-	// For compact format, re-fetch to get share index and size
-	if d.CompactBlobID {
+	// Full blob IDs include share offset and size, so re-fetch the stored blob metadata.
+	if !d.CompactBlobID {
 		b, err = d.Client.Get(ctx, height, d.Namespace, b.Commitment)
 		if err != nil {
 			return nil, nil, err
