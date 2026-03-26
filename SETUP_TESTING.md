@@ -63,31 +63,19 @@ specifically need to. This document only covers what changes when Celestia
 
 ## Docker Compose Option
 
-If you want to bring up a hard-coded image set instead of starting each service
-manually, this compose file is a reasonable starting point:
+If you want to bring up an (opinionated config) OP stack devnet (Ethereum + Celestia + OP Stack w/ Alt-DA), this is a good starting point:
 
-- https://github.com/nuke-web3/ethereum-docker/blob/master/docker-compose.optimism.yml
+- https://github.com/celestiaorg/op-devnet
 
 For this repo, that compose path still needs two extra steps before it is
-useful for Alt-DA testing:
+useful for Alt-DA testing.
 
-1. Build the local `op-alt-da` image that the stack should run.
-2. Run the full `just genesis` flow so the L1, Celestia, and OP Stack
-   configuration and genesis artifacts exist before `docker compose up`.
+### Build the local `op-alt-da` image
 
-Build the image from this repo:
+The `op-devnet` compose has this tag for testing dev builds for `op-al-da`, configure the tag and source as needed.
 
 ```bash
-docker build -t op-alt-da:local .
-```
-
-Then update the compose setup to use that image tag for the DA server
-container.
-
-Treat `just genesis` as required initialization, not an optional shortcut. The
-compose stack should consume the generated artifacts; it should not replace the
-full genesis flow that prepares L1 contracts, Celestia wiring, and the OP Stack
-chain configuration.
+docker build -t ghcr.io/celestiaorg/op-alt-da:dev
 
 ## What Changes For Celestia `op-alt-da`
 
