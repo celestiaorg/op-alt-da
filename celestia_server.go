@@ -1,6 +1,7 @@
 package celestia
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -69,6 +70,7 @@ func recoveryMiddleware(next http.Handler, logger log.Logger) http.Handler {
 type Store interface {
 	Get(ctx context.Context, key []byte) ([]byte, error)
 	Put(ctx context.Context, data []byte) ([]byte, []byte, error)
+	CreateCommitment(data []byte) ([]byte, error)
 }
 
 // CelestiaServer implements the HTTP server for the DA server.
@@ -267,9 +269,9 @@ func (d *CelestiaServer) parseCommitment(urlPath string) ([]byte, error) {
 	return comm, nil
 }
 
-// getBlob retrieves blob from Celestia. If not found and fallback is available,
-// tries fallback. If found in Celestia and fallback is available, populates fallback (read-through).
-// Also tries fallback on any Celestia error (timeout, connection error, etc.) for resilience.
+// getBlob retrieves blob from Celestia. If found in Celestia and fallback is available,
+// it populates fallback asynchronously (read-through). For non-terminal Celestia errors,
+// it may consult the fallback, but fallback data must verify against the requested commitment.
 func (d *CelestiaServer) getBlob(ctx context.Context, comm []byte) ([]byte, error) {
 	getCtx, cancel := context.WithTimeout(ctx, d.getTimeout)
 	defer cancel()
@@ -284,13 +286,13 @@ func (d *CelestiaServer) getBlob(ctx context.Context, comm []byte) ([]byte, erro
 		return data, nil
 	}
 
+	if isNotFoundError(celestiaErr) {
+		return nil, altda.ErrNotFound
+	}
+
 	// Celestia failed - try fallback if available
 	if !d.fallback.Available() {
 		d.log.Warn("Celestia failed and no fallback available", "err", celestiaErr)
-		// No fallback configured, return original error
-		if isNotFoundError(celestiaErr) {
-			return nil, altda.ErrNotFound
-		}
 		return nil, celestiaErr
 	}
 
@@ -300,15 +302,38 @@ func (d *CelestiaServer) getBlob(ctx context.Context, comm []byte) ([]byte, erro
 	data, err := d.getFallback(ctx, comm)
 	if err != nil {
 		d.log.Warn("Fallback read also failed", "provider", d.fallback.Name(), "fallback_err", err, "original_celestia_err", celestiaErr)
-		// If fallback also failed, return the original Celestia error for non-NotFound cases
-		if isNotFoundError(celestiaErr) {
-			return nil, altda.ErrNotFound
-		}
 		return nil, celestiaErr
+	}
+
+	if err := d.verifyFallbackCommitment(comm, data); err != nil {
+		d.log.Error("Fallback data failed integrity verification",
+			"provider", d.fallback.Name(),
+			"commitment", hex.EncodeToString(comm),
+			"err", err,
+			"original_celestia_err", celestiaErr)
+		return nil, err
 	}
 
 	d.log.Info("Blob retrieved from fallback", "provider", d.fallback.Name(), "commitment", hex.EncodeToString(comm))
 	return data, nil
+}
+
+func (d *CelestiaServer) verifyFallbackCommitment(comm []byte, data []byte) error {
+	blobID, err := parseBlobIDFromCommitment(comm)
+	if err != nil {
+		return fmt.Errorf("failed to parse requested commitment for fallback verification: %w", err)
+	}
+
+	derivedCommitment, err := d.store.CreateCommitment(data)
+	if err != nil {
+		return fmt.Errorf("failed to reconstruct blob commitment from fallback data: %w", err)
+	}
+
+	if !bytes.Equal(blobID.Commitment, derivedCommitment) {
+		return fmt.Errorf("fallback data commitment mismatch")
+	}
+
+	return nil
 }
 
 // handleGetError handles errors from getBlob and writes appropriate HTTP response.
