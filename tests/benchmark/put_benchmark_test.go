@@ -33,7 +33,7 @@ func setupBenchmarkHandler() http.HandlerFunc {
 
 		// Write response (what the real handler does)
 		w.WriteHeader(http.StatusOK)
-		w.Write(commitment)
+		_, _ = w.Write(commitment)
 	}
 }
 

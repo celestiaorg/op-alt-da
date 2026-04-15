@@ -460,7 +460,7 @@ func (c CLIConfig) CelestiaConfig() celestia.RPCClientConfig {
 
 // CelestiaRPCClientEnabled returns true if Celestia RPC client should be used.
 func (c CLIConfig) CelestiaRPCClientEnabled() bool {
-	return !(c.CelestiaEndpoint == "" && c.CelestiaAuthToken == "" && c.CelestiaNamespace == "")
+	return c.CelestiaEndpoint != "" || c.CelestiaAuthToken != "" || c.CelestiaNamespace != ""
 }
 
 // CheckRequired verifies all required flags are set.
