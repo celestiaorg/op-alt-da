@@ -25,7 +25,7 @@ Before running the DA server, you need:
 1. **A signer for Celestia transactions** - Either local keyring OR POPSigner
 2. **Access to a Celestia bridge/light node** - For reading blobs (JSON-RPC)
 3. **Access to a Celestia consensus node** - For submitting blobs (CoreGRPC)
-4. **Go 1.21+** - For building from source
+4. **Go 1.26+** - For building from source
 
 ### Signer Options
 

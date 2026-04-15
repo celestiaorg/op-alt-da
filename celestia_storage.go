@@ -247,9 +247,7 @@ func initRPCClient(ctx context.Context, cfg RPCClientConfig) (blobAPI.Module, er
 	return &celestiaClient.Blob, nil
 }
 
-func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
-	d.Log.Info("celestia: blob request", "id", hex.EncodeToString(key))
-
+func parseBlobIDFromCommitment(key []byte) (*CelestiaBlobID, error) {
 	// Validate minimum length before slicing
 	if len(key) < 2 {
 		return nil, fmt.Errorf("invalid commitment: too short (need at least 2 bytes, got %d)", len(key))
@@ -265,14 +263,25 @@ func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 		return nil, fmt.Errorf("unsupported DA version: 0x%02x (expected 0x%02x)", key[1], VersionByte)
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, d.GetTimeout)
-	defer cancel()
-
 	var blobID CelestiaBlobID
 	// Skip first 2 bytes which are frame version and altda version
 	if err := blobID.UnmarshalBinary(key[2:]); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal blob ID: %w", err)
 	}
+
+	return &blobID, nil
+}
+
+func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
+	d.Log.Info("celestia: blob request", "id", hex.EncodeToString(key))
+
+	blobID, err := parseBlobIDFromCommitment(key)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, d.GetTimeout)
+	defer cancel()
 
 	log.Debug("Retrieving blob with commitment",
 		"blobID.Commitment", hex.EncodeToString(blobID.Commitment),
