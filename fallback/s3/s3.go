@@ -170,9 +170,8 @@ func (p *S3Provider) Get(ctx context.Context, commitment []byte) ([]byte, error)
 }
 
 // getObject retrieves an object by key.
-func (p *S3Provider) getObject(ctx context.Context, key string) ([]byte, error) {
+func (p *S3Provider) getObject(ctx context.Context, key string) (_ []byte, err error) {
 	log.Info("S3 get object", "bucket", p.bucket, "key", key, "path", fmt.Sprintf("s3://%s/%s", p.bucket, key))
-
 	result, err := p.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(p.bucket),
 		Key:    aws.String(key),
@@ -180,7 +179,11 @@ func (p *S3Provider) getObject(ctx context.Context, key string) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer result.Body.Close()
+	defer func() {
+		if closeErr := result.Body.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("s3: failed to close object body: %w", closeErr)
+		}
+	}()
 
 	data, err := io.ReadAll(result.Body)
 	if err != nil {

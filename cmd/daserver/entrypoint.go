@@ -195,7 +195,5 @@ func StartDAServer(cliCtx *cli.Context) error {
 		}
 	}()
 
-	ctxinterrupt.Wait(cliCtx.Context)
-
-	return nil
+	return ctxinterrupt.Wait(cliCtx.Context)
 }

@@ -5,5 +5,6 @@
 !/s3
 !/fallback
 !/metrics
+!/signer
 !/go.mod
 !/go.sum

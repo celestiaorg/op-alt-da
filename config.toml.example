@@ -32,7 +32,7 @@ idle_timeout = "60s"      # Max time for idle keep-alive connections
 [celestia]
 # Celestia namespace (29 bytes hex, version 0 requires 18 leading zeros)
 # Generate with: 00000000000000000000000000000000000000$(openssl rand -hex 10)
-namespace = "000000000000000000000000000000000000000000000000000000acfe"
+namespace = "00000000000000000000000000000000000000000000000000000000acfe"
 
 # Use compact blob IDs (height + commitment only, recommended)
 blobid_compact = true
@@ -59,45 +59,63 @@ core_grpc_addr = "consensus-full-mocha-4.celestia-mocha.com:9090"
 core_grpc_auth_token = ""
 core_grpc_tls_enabled = true
 
+# P2P network: mocha-4, arabica-11, celestia
+p2p_network = "mocha-4"
+
+# Parallel submission (0 = immediate, 1 = queued, >1 = parallel workers)
+tx_worker_accounts = 0
+
+# ==============================================================================
+# SIGNER CONFIGURATION
+# ==============================================================================
+# The signer creates the keyring used for signing Celestia transactions.
+# Choose ONE of the following modes:
+#   - "local": Local filesystem keyring (default)
+#   - "popsigner": POPSigner remote signing service
+#
+# Future modes (not yet implemented):
+#   - "aws_kms": AWS KMS
+#   - "gcp_kms": GCP Cloud KMS
+#   - "vault": HashiCorp Vault Transit
+
+[celestia.signer]
+mode = "local"
+
 # ------------------------------------------------------------------------------
-# Keyring (for signing transactions)
+# Local Keyring (mode = "local")
 # ------------------------------------------------------------------------------
+# Uses a local filesystem keyring for signing.
+#
 # Setup:
 #   1. Initialize: celestia light init --p2p.network mocha-4
 #   2. Create key: celestia-appd keys add my_celes_key --keyring-backend test \
 #                  --home ~/.celestia-light-mocha-4
 #   3. Fund the address with TIA
 
-# Keyring backend type
-# Options:
-#   - "awskms": AWS KMS remote keyring (requires [celestia.awskms] configuration)
-#   - "test": Unencrypted local keyring (for testing only)
-#   - "file": Encrypted local keyring (requires passphrase)
-#   - "os": OS-native keyring (macOS Keychain, Windows Credential Store, etc.)
-#   - "kwallet": KDE Wallet (Linux)
-#   - "pass": Pass command line tool (Linux)
-#   - "keychain": Legacy macOS keychain
-#   - "memory": In-memory keyring (ephemeral, for testing)
-keyring_backend = "test"
-
+[celestia.signer.local]
 keyring_path = "~/.celestia-light-mocha-4/keys"
-default_key_name = "my_celes_key"
-p2p_network = "mocha-4"
-
-# Parallel submission (0 = immediate, 1 = queued, >1 = parallel workers)
-tx_worker_accounts = 0
+key_name = "my_celes_key"
 
 # ------------------------------------------------------------------------------
-# AWS KMS Configuration (Optional)
+# POPSigner (mode = "popsigner")
 # ------------------------------------------------------------------------------
-# AWS KMS-backed keyring for signing Celestia transactions.
-# Only used when keyring_backend = "awskms"
-# Configure a KMS alias per key in the form alias/op-alt-da/<key_name>.
+# Uses POPSigner for secure remote key management.
+# Keys remain remote. You remain sovereign.
+#
+# Setup:
+#   1. Create account at https://popsigner.com
+#   2. Generate an API key
+#   3. Create a Celestia key and note the key_id (UUID)
+#   4. Fund the key's Celestia address with TIA
+#
+# API key can be set via:
+#   - Config: api_key = "psk_live_xxxxx"
+#   - Environment: POPSIGNER_API_KEY=psk_live_xxxxx (recommended for production)
 
-[celestia.awskms]
-region = "us-east-1"
-# Set to http://localhost:4566 for localstack testing. Leave empty for AWS.
-endpoint = ""
+[celestia.signer.popsigner]
+# api_key = ""  # Prefer POPSIGNER_API_KEY env var
+# key_id = "00000000-0000-0000-0000-000000000000"
+# base_url = ""  # Optional: custom API endpoint
 
 # ==============================================================================
 # SUBMISSION CONFIGURATION

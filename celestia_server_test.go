@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	nodeblob "github.com/celestiaorg/celestia-node/blob"
+	libshare "github.com/celestiaorg/go-square/v3/share"
+	"github.com/celestiaorg/op-alt-da/fallback"
 	"github.com/celestiaorg/op-alt-da/metrics"
 	altda "github.com/ethereum-optimism/optimism/op-alt-da"
 	"github.com/ethereum/go-ethereum/log"
@@ -22,8 +25,9 @@ import (
 // mockStore is a mock implementation of the Store interface for testing.
 // It allows testing server handlers without actual Celestia network calls.
 type mockStore struct {
-	getFunc func(ctx context.Context, key []byte) ([]byte, error)
-	putFunc func(ctx context.Context, data []byte) ([]byte, []byte, error)
+	getFunc              func(ctx context.Context, key []byte) ([]byte, error)
+	putFunc              func(ctx context.Context, data []byte) ([]byte, []byte, error)
+	createCommitmentFunc func(data []byte) ([]byte, error)
 }
 
 func (m *mockStore) Get(ctx context.Context, key []byte) ([]byte, error) {
@@ -40,13 +44,55 @@ func (m *mockStore) Put(ctx context.Context, data []byte) ([]byte, []byte, error
 	return nil, nil, errors.New("mock: Put not implemented")
 }
 
+func (m *mockStore) CreateCommitment(data []byte) ([]byte, error) {
+	if m.createCommitmentFunc != nil {
+		return m.createCommitmentFunc(data)
+	}
+	return nil, errors.New("mock: CreateCommitment not implemented")
+}
+
+type mockFallbackProvider struct {
+	getFunc   func(ctx context.Context, commitment []byte) ([]byte, error)
+	putFunc   func(ctx context.Context, commitment []byte, data []byte) error
+	available bool
+	timeout   time.Duration
+	getCalls  int
+	putCalls  int
+}
+
+func (m *mockFallbackProvider) Name() string { return "mock-fallback" }
+
+func (m *mockFallbackProvider) Put(ctx context.Context, commitment []byte, data []byte) error {
+	m.putCalls++
+	if m.putFunc != nil {
+		return m.putFunc(ctx, commitment, data)
+	}
+	return nil
+}
+
+func (m *mockFallbackProvider) Get(ctx context.Context, commitment []byte) ([]byte, error) {
+	m.getCalls++
+	if m.getFunc != nil {
+		return m.getFunc(ctx, commitment)
+	}
+	return nil, fallback.ErrNotFound
+}
+
+func (m *mockFallbackProvider) Available() bool { return m.available }
+func (m *mockFallbackProvider) Timeout() time.Duration {
+	if m.timeout != 0 {
+		return m.timeout
+	}
+	return 30 * time.Second
+}
+
 // createTestServer creates a CelestiaServer for testing with mocked storage.
 func createTestServer(t *testing.T, store Store) *CelestiaServer {
 	logger := log.New()
 
 	return NewCelestiaServer(
 		"127.0.0.1",
-		0,               // port 0 = let OS assign
+		0, // port 0 = let OS assign
 		store,
 		30*time.Second,  // submitTimeout
 		30*time.Second,  // getTimeout
@@ -57,6 +103,26 @@ func createTestServer(t *testing.T, store Store) *CelestiaServer {
 		false,           // metrics disabled for unit tests
 		0,
 		nil, // fallback provider (nil = NoopProvider)
+		logger,
+	)
+}
+
+func createTestServerWithFallback(t *testing.T, store Store, provider fallback.Provider) *CelestiaServer {
+	logger := log.New()
+
+	return NewCelestiaServer(
+		"127.0.0.1",
+		0,
+		store,
+		30*time.Second,
+		30*time.Second,
+		30*time.Second,
+		120*time.Second,
+		60*time.Second,
+		2*1024*1024,
+		false,
+		0,
+		provider,
 		logger,
 	)
 }
@@ -74,6 +140,25 @@ func validCommitment() string {
 	// Full commitment: 0x01 (generic) + 0x0c (version) + blobID
 	comm := append([]byte{0x01, VersionByte}, blobID...)
 	return "0x" + hex.EncodeToString(comm)
+}
+
+func commitmentForData(t *testing.T, data []byte) []byte {
+	t.Helper()
+
+	namespace := libshare.MustNewV0Namespace(bytes.Repeat([]byte{7}, libshare.NamespaceVersionZeroIDSize))
+	b, err := nodeblob.NewBlob(libshare.ShareVersionZero, namespace, data, nil)
+	require.NoError(t, err)
+
+	blobID := CelestiaBlobID{
+		Height:     12345,
+		Commitment: append([]byte(nil), b.Commitment...),
+	}
+	blobID.SetCompact(true)
+
+	id, err := blobID.MarshalBinary()
+	require.NoError(t, err)
+
+	return altda.NewGenericCommitment(append([]byte{VersionByte}, id...)).Encode()
 }
 
 // TestHandleHealth verifies the health endpoint returns 200 OK.
@@ -226,6 +311,78 @@ func TestHandleGet_InternalError(t *testing.T) {
 	server.HandleGet(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestGetBlob_DoesNotUseFallbackOnCelestiaNotFound(t *testing.T) {
+	store := &mockStore{
+		getFunc: func(ctx context.Context, key []byte) ([]byte, error) {
+			return nil, altda.ErrNotFound
+		},
+		createCommitmentFunc: func(data []byte) ([]byte, error) {
+			return []byte("unused"), nil
+		},
+	}
+	fallbackProvider := &mockFallbackProvider{
+		available: true,
+		getFunc: func(ctx context.Context, commitment []byte) ([]byte, error) {
+			return []byte("should not be returned"), nil
+		},
+	}
+
+	server := createTestServerWithFallback(t, store, fallbackProvider)
+
+	data, err := server.getBlob(context.Background(), commitmentForData(t, []byte("blob")))
+
+	require.ErrorIs(t, err, altda.ErrNotFound)
+	assert.Nil(t, data)
+	assert.Equal(t, 0, fallbackProvider.getCalls)
+}
+
+func TestGetBlob_VerifiesFallbackDataAgainstCommitment(t *testing.T) {
+	commitment := commitmentForData(t, []byte("expected blob"))
+	store := &mockStore{
+		getFunc: func(ctx context.Context, key []byte) ([]byte, error) {
+			return nil, errors.New("temporary celestia failure")
+		},
+		createCommitmentFunc: func(data []byte) ([]byte, error) {
+			blobID, err := parseBlobIDFromCommitment(commitmentForData(t, data))
+			require.NoError(t, err)
+			return append([]byte(nil), blobID.Commitment...), nil
+		},
+	}
+
+	t.Run("matching fallback blob is returned", func(t *testing.T) {
+		fallbackProvider := &mockFallbackProvider{
+			available: true,
+			getFunc: func(ctx context.Context, requestedCommitment []byte) ([]byte, error) {
+				return []byte("expected blob"), nil
+			},
+		}
+		server := createTestServerWithFallback(t, store, fallbackProvider)
+
+		data, err := server.getBlob(context.Background(), commitment)
+
+		require.NoError(t, err)
+		assert.Equal(t, []byte("expected blob"), data)
+		assert.Equal(t, 1, fallbackProvider.getCalls)
+	})
+
+	t.Run("mismatched fallback blob is rejected", func(t *testing.T) {
+		fallbackProvider := &mockFallbackProvider{
+			available: true,
+			getFunc: func(ctx context.Context, requestedCommitment []byte) ([]byte, error) {
+				return []byte("tampered blob"), nil
+			},
+		}
+		server := createTestServerWithFallback(t, store, fallbackProvider)
+
+		data, err := server.getBlob(context.Background(), commitment)
+
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "fallback data commitment mismatch")
+		assert.Nil(t, data)
+		assert.Equal(t, 1, fallbackProvider.getCalls)
+	})
 }
 
 // TestHandlePut_Success verifies successful blob submission returns 200.
@@ -398,4 +555,3 @@ func TestBlobIDVersioning(t *testing.T) {
 		})
 	}
 }
-

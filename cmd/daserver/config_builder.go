@@ -121,6 +121,20 @@ func BuildConfigFromCLI(ctx *cli.Context) (*Config, error) {
 		cfg.Celestia.P2PNetwork = ctx.String(CelestiaP2PNetworkFlagName)
 	}
 
+	// Remote signer flags
+	if ctx.IsSet(CelestiaSignerModeFlagName) {
+		cfg.Celestia.SignerMode = ctx.String(CelestiaSignerModeFlagName)
+	}
+	if ctx.IsSet(CelestiaRemoteSignerAPIKeyFlagName) {
+		cfg.Celestia.RemoteSignerAPIKey = ctx.String(CelestiaRemoteSignerAPIKeyFlagName)
+	}
+	if ctx.IsSet(CelestiaRemoteSignerKeyIDFlagName) {
+		cfg.Celestia.RemoteSignerKeyID = ctx.String(CelestiaRemoteSignerKeyIDFlagName)
+	}
+	if ctx.IsSet(CelestiaRemoteSignerBaseURLFlagName) {
+		cfg.Celestia.RemoteSignerBaseURL = ctx.String(CelestiaRemoteSignerBaseURLFlagName)
+	}
+
 	// Metrics flags
 	if ctx.IsSet(MetricsEnabledFlagName) {
 		cfg.Metrics.Enabled = ctx.Bool(MetricsEnabledFlagName)

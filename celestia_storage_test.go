@@ -2,9 +2,14 @@ package celestia
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"math/rand"
 	"testing"
 
+	nodeblob "github.com/celestiaorg/celestia-node/blob"
+	blobAPI "github.com/celestiaorg/celestia-node/nodebuilder/blob"
+	libshare "github.com/celestiaorg/go-square/v3/share"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -160,3 +165,90 @@ func TestCelestiaBlobIDConstants(t *testing.T) {
 	assert.Equal(t, 48, FullBlobIDSize, "Full format: 8 + 32 + 4 + 4 = 48 bytes")
 }
 
+func TestSubmitBlob_FullBlobIDIncludesShareMetadata(t *testing.T) {
+	namespace := libshare.MustNewV0Namespace(bytes.Repeat([]byte{1}, libshare.NamespaceVersionZeroIDSize))
+	input := []byte("full blob id data")
+	retrievedBlob := mustRetrievedBlob(t, namespace, input, 7)
+	expectedSize, err := retrievedBlob.Length()
+	require.NoError(t, err)
+
+	client := &blobAPI.API{}
+	client.Internal.Submit = func(context.Context, []*nodeblob.Blob, *nodeblob.SubmitOptions) (uint64, error) {
+		return 12345, nil
+	}
+	client.Internal.Get = func(context.Context, uint64, libshare.Namespace, nodeblob.Commitment) (*nodeblob.Blob, error) {
+		return retrievedBlob, nil
+	}
+
+	store := &CelestiaStore{
+		Namespace:     namespace,
+		Client:        client,
+		CompactBlobID: false,
+	}
+
+	id, blobData, err := store.submitBlob(context.Background(), input)
+	require.NoError(t, err)
+	assert.Equal(t, input, blobData)
+	assert.Len(t, id, FullBlobIDSize)
+
+	var blobID CelestiaBlobID
+	require.NoError(t, blobID.UnmarshalBinary(id))
+	assert.False(t, blobID.IsCompact())
+	assert.Equal(t, uint64(12345), blobID.Height)
+	assert.Equal(t, uint32(7), blobID.ShareOffset)
+	assert.Equal(t, uint32(expectedSize), blobID.ShareSize)
+}
+
+func TestSubmitBlob_CompactBlobIDSkipsShareMetadataLookup(t *testing.T) {
+	namespace := libshare.MustNewV0Namespace(bytes.Repeat([]byte{2}, libshare.NamespaceVersionZeroIDSize))
+	input := []byte("compact blob id data")
+	getCalled := false
+
+	client := &blobAPI.API{}
+	client.Internal.Submit = func(context.Context, []*nodeblob.Blob, *nodeblob.SubmitOptions) (uint64, error) {
+		return 54321, nil
+	}
+	client.Internal.Get = func(context.Context, uint64, libshare.Namespace, nodeblob.Commitment) (*nodeblob.Blob, error) {
+		getCalled = true
+		return nil, nil
+	}
+
+	store := &CelestiaStore{
+		Namespace:     namespace,
+		Client:        client,
+		CompactBlobID: true,
+	}
+
+	id, blobData, err := store.submitBlob(context.Background(), input)
+	require.NoError(t, err)
+	assert.Equal(t, input, blobData)
+	assert.False(t, getCalled)
+	assert.Len(t, id, CompactBlobIDSize)
+
+	var blobID CelestiaBlobID
+	require.NoError(t, blobID.UnmarshalBinary(id))
+	assert.True(t, blobID.IsCompact())
+	assert.Equal(t, uint64(54321), blobID.Height)
+	assert.Zero(t, blobID.ShareOffset)
+	assert.Zero(t, blobID.ShareSize)
+}
+
+func mustRetrievedBlob(t *testing.T, namespace libshare.Namespace, data []byte, index int) *nodeblob.Blob {
+	t.Helper()
+
+	created, err := nodeblob.NewBlob(libshare.ShareVersionZero, namespace, data, nil)
+	require.NoError(t, err)
+
+	payload, err := json.Marshal(map[string]any{
+		"namespace":     namespace.Bytes(),
+		"data":          data,
+		"share_version": libshare.ShareVersionZero,
+		"commitment":    created.Commitment,
+		"index":         index,
+	})
+	require.NoError(t, err)
+
+	var retrieved nodeblob.Blob
+	require.NoError(t, json.Unmarshal(payload, &retrieved))
+	return &retrieved
+}

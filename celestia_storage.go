@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	awskeyring "github.com/celestiaorg/aws-kms-keyring"
 	txClient "github.com/celestiaorg/celestia-node/api/client"
 	"github.com/celestiaorg/celestia-node/api/rpc/client"
 	"github.com/celestiaorg/celestia-node/blob"
@@ -16,7 +15,7 @@ import (
 	"github.com/celestiaorg/celestia-node/nodebuilder/p2p"
 	"github.com/celestiaorg/celestia-node/state"
 	libshare "github.com/celestiaorg/go-square/v3/share"
-	"github.com/cosmos/cosmos-sdk/crypto/keyring"
+	"github.com/celestiaorg/op-alt-da/signer"
 	altda "github.com/ethereum-optimism/optimism/op-alt-da"
 	"github.com/ethereum/go-ethereum/log"
 )
@@ -133,17 +132,14 @@ func (c *CelestiaBlobID) UnmarshalBinary(data []byte) error {
 const VersionByte = 0x0c
 
 type TxClientConfig struct {
-	DefaultKeyName     string
-	KeyringBackend     string // Backend type: remote - "awskms", local - "test", "file", "os", "kwallet", "pass", "keychain", "memory"
-	KeyringPath        string
 	CoreGRPCAddr       string
 	CoreGRPCTLSEnabled bool
 	CoreGRPCAuthToken  string
 	P2PNetwork         string
 	TxWorkerAccounts   int // 0=immediate, 1=queued single, >1=parallel workers
 
-	// Keyring backend-specific configuration
-	AWSKMSConfig *awskeyring.Config
+	// Signer configuration (local keyring, POPSigner, AWS KMS, etc.)
+	Signer signer.Config
 }
 
 type RPCClientConfig struct {
@@ -193,42 +189,13 @@ func NewCelestiaStore(ctx context.Context, cfg RPCClientConfig) (*CelestiaStore,
 	}, nil
 }
 
-func initKeyring(ctx context.Context, cfg *RPCClientConfig) (keyring.Keyring, error) {
-	keyname := cfg.TxClientConfig.DefaultKeyName
-	if keyname == "" {
-		keyname = "my_celes_key"
-	}
-
-	backend := cfg.TxClientConfig.KeyringBackend
-	if backend == "" {
-		backend = keyring.BackendTest
-	}
-
-	var kr keyring.Keyring
-	var err error
-	switch backend {
-	case "awskms":
-		if cfg.TxClientConfig.AWSKMSConfig == nil {
-			return nil, fmt.Errorf("AWS KMS config is required when using awskms backend")
-		}
-		kmsCfg := *cfg.TxClientConfig.AWSKMSConfig
-		kmsCfg.KeyName = keyname
-		kr, err = awskeyring.NewKMSKeyring(ctx, kmsCfg)
-	default:
-		kr, err = txClient.KeyringWithNewKey(txClient.KeyringConfig{
-			KeyName:     keyname,
-			BackendName: backend,
-		}, cfg.TxClientConfig.KeyringPath)
-	}
-	return kr, err
-}
-
 // initTxClient initializes a transaction client for Celestia.
 // The provided context is used for client initialization and allows cancellation during startup.
 func initTxClient(ctx context.Context, cfg RPCClientConfig) (blobAPI.Module, error) {
-	kr, err := initKeyring(ctx, &cfg)
+	// Create keyring using the signer package
+	kr, keyName, err := signer.NewKeyring(cfg.TxClientConfig.Signer)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize keyring: %w", err)
+		return nil, fmt.Errorf("failed to create keyring: %w", err)
 	}
 
 	// Configure client
@@ -243,7 +210,7 @@ func initTxClient(ctx context.Context, cfg RPCClientConfig) (blobAPI.Module, err
 			EnableDATLS:  cfg.TLSEnabled,
 		},
 		SubmitConfig: txClient.SubmitConfig{
-			DefaultKeyName:   cfg.TxClientConfig.DefaultKeyName,
+			DefaultKeyName:   keyName,
 			Network:          p2p.Network(cfg.TxClientConfig.P2PNetwork),
 			TxWorkerAccounts: cfg.TxClientConfig.TxWorkerAccounts,
 			CoreGRPCConfig: txClient.CoreGRPCConfig{
@@ -280,9 +247,7 @@ func initRPCClient(ctx context.Context, cfg RPCClientConfig) (blobAPI.Module, er
 	return &celestiaClient.Blob, nil
 }
 
-func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
-	d.Log.Info("celestia: blob request", "id", hex.EncodeToString(key))
-
+func parseBlobIDFromCommitment(key []byte) (*CelestiaBlobID, error) {
 	// Validate minimum length before slicing
 	if len(key) < 2 {
 		return nil, fmt.Errorf("invalid commitment: too short (need at least 2 bytes, got %d)", len(key))
@@ -298,14 +263,25 @@ func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 		return nil, fmt.Errorf("unsupported DA version: 0x%02x (expected 0x%02x)", key[1], VersionByte)
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, d.GetTimeout)
-	defer cancel()
-
 	var blobID CelestiaBlobID
 	// Skip first 2 bytes which are frame version and altda version
 	if err := blobID.UnmarshalBinary(key[2:]); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal blob ID: %w", err)
 	}
+
+	return &blobID, nil
+}
+
+func (d *CelestiaStore) Get(ctx context.Context, key []byte) ([]byte, error) {
+	d.Log.Info("celestia: blob request", "id", hex.EncodeToString(key))
+
+	blobID, err := parseBlobIDFromCommitment(key)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, d.GetTimeout)
+	defer cancel()
 
 	log.Debug("Retrieving blob with commitment",
 		"blobID.Commitment", hex.EncodeToString(blobID.Commitment),
@@ -373,8 +349,8 @@ func (d *CelestiaStore) submitBlob(ctx context.Context, data []byte) ([]byte, []
 		isCompact:  d.CompactBlobID,
 	}
 
-	// For compact format, re-fetch to get share index and size
-	if d.CompactBlobID {
+	// Full blob IDs include share offset and size, so re-fetch the stored blob metadata.
+	if !d.CompactBlobID {
 		b, err = d.Client.Get(ctx, height, d.Namespace, b.Commitment)
 		if err != nil {
 			return nil, nil, err
