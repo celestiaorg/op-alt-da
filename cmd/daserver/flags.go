@@ -186,7 +186,7 @@ var (
 	}
 	FallbackS3CredTypeFlag = &cli.StringFlag{
 		Name:    FallbackS3CredTypeFlagName,
-		Usage:   "S3 credential type: static, environment, iam",
+		Usage:   "S3 credential type: static, environment, iam, anonymous",
 		Value:   "",
 		EnvVars: prefixEnvVars("FALLBACK_S3_CREDENTIAL_TYPE"),
 	}

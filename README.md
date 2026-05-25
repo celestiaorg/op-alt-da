@@ -190,7 +190,7 @@ Or using a config file:
 | `--fallback.s3.prefix`            | `OP_ALTDA_FALLBACK_S3_PREFIX`            |             | S3 key prefix                            |
 | `--fallback.s3.endpoint`          | `OP_ALTDA_FALLBACK_S3_ENDPOINT`          |             | S3 endpoint (for MinIO, etc.)            |
 | `--fallback.s3.region`            | `OP_ALTDA_FALLBACK_S3_REGION`            | `us-east-1` | S3 region                                |
-| `--fallback.s3.credential-type`   | `OP_ALTDA_FALLBACK_S3_CREDENTIAL_TYPE`   |             | Credential type: static, environment, iam |
+| `--fallback.s3.credential-type`   | `OP_ALTDA_FALLBACK_S3_CREDENTIAL_TYPE`   | `anonymous` | Credential type: static, environment, iam, anonymous |
 | `--fallback.s3.access-key-id`     | `OP_ALTDA_FALLBACK_S3_ACCESS_KEY_ID`     |             | S3 access key                            |
 | `--fallback.s3.access-key-secret` | `OP_ALTDA_FALLBACK_S3_ACCESS_KEY_SECRET` |             | S3 secret key                            |
 | `--fallback.s3.timeout`           | `OP_ALTDA_FALLBACK_S3_TIMEOUT`           | `30s`       | S3 operation timeout                     |

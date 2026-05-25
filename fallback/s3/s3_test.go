@@ -28,6 +28,27 @@ func TestNewS3Provider_InvalidCredentialType(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown credential type")
 }
 
+func TestNewS3Provider_AnonymousCredentials(t *testing.T) {
+	ctx := context.Background()
+	provider, err := NewS3Provider(ctx, Config{
+		Bucket:         "public-bucket",
+		CredentialType: "anonymous",
+	})
+	require.NoError(t, err)
+	assert.NotNil(t, provider)
+	assert.True(t, provider.Available())
+}
+
+func TestNewS3Provider_DefaultAnonymousWhenNoCredentials(t *testing.T) {
+	ctx := context.Background()
+	provider, err := NewS3Provider(ctx, Config{
+		Bucket: "public-bucket",
+	})
+	require.NoError(t, err)
+	assert.NotNil(t, provider)
+	assert.True(t, provider.Available())
+}
+
 func TestNewS3Provider_StaticCredentialsRequired(t *testing.T) {
 	ctx := context.Background()
 	_, err := NewS3Provider(ctx, Config{
@@ -52,6 +73,19 @@ func TestS3Provider_MakeKey(t *testing.T) {
 	// With prefix
 	provider.prefix = "blobs"
 	assert.Equal(t, "blobs/"+expectedHash, provider.makeKey(commitment))
+}
+
+func TestS3Provider_MakeDerivationKey(t *testing.T) {
+	provider := &S3Provider{prefix: "00000000000000000000000000000000000000ca1de12ac5a629c3c42f"}
+
+	commitment, err := hex.DecodeString("010ca2f3ac00000000007b156d9cdc8698d364787f4ae8a8e18346e55756533f6a4562a199b13d60548e")
+	require.NoError(t, err)
+
+	key := provider.makeDerivationKey(commitment)
+	assert.Equal(t,
+		"00000000000000000000000000000000000000ca1de12ac5a629c3c42f/cea2f3ac00000000007b156d9cdc8698d364787f4ae8a8e18346e55756533f6a4562a199b13d60548e",
+		key,
+	)
 }
 
 func TestS3Provider_Name(t *testing.T) {
@@ -84,19 +118,17 @@ func TestS3Provider_Timeout(t *testing.T) {
 func TestConfig_Defaults(t *testing.T) {
 	ctx := context.Background()
 
-	// This will fail to create because we don't have real credentials,
-	// but we can verify the config validation works
 	cfg := Config{
 		Bucket: "test-bucket",
 	}
 
 	// Test that defaults are applied (region, timeout)
-	// We can't fully test without real S3, but we can test the validation
 	assert.Equal(t, "", cfg.Region) // Will be defaulted in NewS3Provider
 
 	// Test with static credentials (will succeed in creating provider)
 	cfg = Config{
 		Bucket:          "test-bucket",
+		CredentialType:  "static",
 		AccessKeyID:     "test-key",
 		AccessKeySecret: "test-secret",
 		Region:          "us-west-2",
