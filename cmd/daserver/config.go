@@ -133,6 +133,8 @@ type S3Config struct {
 	AccessKeyID     string `toml:"access_key_id"`
 	AccessKeySecret string `toml:"access_key_secret"`
 	Timeout         string `toml:"timeout"`
+	// ReadLegacyBlobs tries the legacy Caldera cache key format when the primary key is not found.
+	ReadLegacyBlobs bool `toml:"read_legacy_blobs"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.

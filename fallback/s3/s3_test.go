@@ -75,13 +75,13 @@ func TestS3Provider_MakeKey(t *testing.T) {
 	assert.Equal(t, "blobs/"+expectedHash, provider.makeKey(commitment))
 }
 
-func TestS3Provider_MakeDerivationKey(t *testing.T) {
+func TestS3Provider_MakeReadOnlyLegacyDerivationKey(t *testing.T) {
 	provider := &S3Provider{prefix: "00000000000000000000000000000000000000ca1de12ac5a629c3c42f"}
 
 	commitment, err := hex.DecodeString("010ca2f3ac00000000007b156d9cdc8698d364787f4ae8a8e18346e55756533f6a4562a199b13d60548e")
 	require.NoError(t, err)
 
-	key := provider.makeDerivationKey(commitment)
+	key := provider.makeReadOnlyLegacyDerivationKey(commitment)
 	assert.Equal(t,
 		"00000000000000000000000000000000000000ca1de12ac5a629c3c42f/cea2f3ac00000000007b156d9cdc8698d364787f4ae8a8e18346e55756533f6a4562a199b13d60548e",
 		key,

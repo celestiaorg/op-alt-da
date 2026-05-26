@@ -210,3 +210,6 @@ access_key_secret = ""
 
 # Operation timeout
 timeout = "30s"
+
+# Try reading legacy blobs from S3 (Caldera cache key format) when the primary key is not found
+read_legacy_blobs = false

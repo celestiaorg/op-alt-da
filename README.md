@@ -154,6 +154,7 @@ Or using CLI flags:
 | `--fallback.s3.access-key-id`     | `OP_ALTDA_FALLBACK_S3_ACCESS_KEY_ID`     |             | S3 access key                            |
 | `--fallback.s3.access-key-secret` | `OP_ALTDA_FALLBACK_S3_ACCESS_KEY_SECRET` |             | S3 secret key                            |
 | `--fallback.s3.timeout`           | `OP_ALTDA_FALLBACK_S3_TIMEOUT`           | `30s`       | S3 operation timeout                     |
+| `--fallback.s3.read-legacy-blobs` | `OP_ALTDA_FALLBACK_S3_READ_LEGACY_BLOBS` | `false`     | Try reading legacy blobs from S3 (Caldera cache key format) |
 
 #### Metrics
 

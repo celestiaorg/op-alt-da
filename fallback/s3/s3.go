@@ -42,14 +42,17 @@ type Config struct {
 	CredentialType string
 	// Timeout is the timeout for S3 operations (default: 30s)
 	Timeout time.Duration
+	// ReadLegacyBlobs enables a second S3 lookup using the legacy Caldera cache key format.
+	ReadLegacyBlobs bool
 }
 
 // S3Provider implements the fallback.Provider interface using AWS S3.
 type S3Provider struct {
-	client  *s3.Client
-	bucket  string
-	prefix  string
-	timeout time.Duration
+	client          *s3.Client
+	bucket          string
+	prefix          string
+	timeout         time.Duration
+	readLegacyBlobs bool
 }
 
 // NewS3Provider creates a new S3 fallback provider.
@@ -121,10 +124,11 @@ func NewS3Provider(ctx context.Context, cfg Config) (*S3Provider, error) {
 	}
 
 	return &S3Provider{
-		client:  client,
-		bucket:  cfg.Bucket,
-		prefix:  cfg.Prefix,
-		timeout: cfg.Timeout,
+		client:          client,
+		bucket:          cfg.Bucket,
+		prefix:          cfg.Prefix,
+		timeout:         cfg.Timeout,
+		readLegacyBlobs: cfg.ReadLegacyBlobs,
 	}, nil
 }
 
@@ -159,7 +163,11 @@ func (p *S3Provider) Get(ctx context.Context, commitment []byte) ([]byte, error)
 		return nil, err
 	}
 
-	data, err = p.getObject(ctx, p.makeDerivationKey(commitment))
+	if !p.readLegacyBlobs {
+		return nil, fallback.ErrNotFound
+	}
+
+	data, err = p.getObject(ctx, p.makeReadOnlyLegacyDerivationKey(commitment))
 	if err != nil {
 		if isNotFoundError(err) {
 			return nil, fallback.ErrNotFound
@@ -210,11 +218,10 @@ func (p *S3Provider) makeKey(commitment []byte) string {
 	return path.Join(p.prefix, hex.EncodeToString(keccakKey))
 }
 
-// Caldera storage format in s3
-// makeDerivationKey generates the legacy S3 object key used by external caches.
+// makeReadOnlyLegacyDerivationKey generates the legacy S3 object key used by external caches.
 // Format: prefix/hex(0xce || blobID), where blobID is the commitment with the
 // 0x01 generic and 0x0c celestia version prefix stripped.
-func (p *S3Provider) makeDerivationKey(commitment []byte) string {
+func (p *S3Provider) makeReadOnlyLegacyDerivationKey(commitment []byte) string {
 	blobID := commitment
 	if len(commitment) >= 2 && commitment[0] == 0x01 && commitment[1] == 0x0c {
 		blobID = commitment[2:]

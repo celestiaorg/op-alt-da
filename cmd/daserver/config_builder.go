@@ -174,6 +174,9 @@ func BuildConfigFromCLI(ctx *cli.Context) (*Config, error) {
 	if ctx.IsSet(FallbackS3TimeoutFlagName) {
 		cfg.Fallback.S3.Timeout = ctx.Duration(FallbackS3TimeoutFlagName).String()
 	}
+	if ctx.IsSet(FallbackS3ReadLegacyBlobsFlagName) {
+		cfg.Fallback.S3.ReadLegacyBlobs = ctx.Bool(FallbackS3ReadLegacyBlobsFlagName)
+	}
 
 	return cfg, nil
 }

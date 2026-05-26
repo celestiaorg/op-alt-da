@@ -54,7 +54,8 @@ const (
 	FallbackS3CredTypeFlagName  = "fallback.s3.credential-type"
 	FallbackS3AccessKeyFlagName = "fallback.s3.access-key-id"
 	FallbackS3SecretKeyFlagName = "fallback.s3.access-key-secret"
-	FallbackS3TimeoutFlagName   = "fallback.s3.timeout"
+	FallbackS3TimeoutFlagName        = "fallback.s3.timeout"
+	FallbackS3ReadLegacyBlobsFlagName = "fallback.s3.read-legacy-blobs"
 )
 
 const EnvVarPrefix = "OP_ALTDA"
@@ -240,6 +241,12 @@ var (
 		Value:   30 * time.Second,
 		EnvVars: prefixEnvVars("FALLBACK_S3_TIMEOUT"),
 	}
+	FallbackS3ReadLegacyBlobsFlag = &cli.BoolFlag{
+		Name:    FallbackS3ReadLegacyBlobsFlagName,
+		Usage:   "Try reading legacy blobs from S3 (Caldera cache key format) when the primary key is not found",
+		Value:   false,
+		EnvVars: prefixEnvVars("FALLBACK_S3_READ_LEGACY_BLOBS"),
+	}
 )
 
 var requiredFlags = []cli.Flag{
@@ -278,6 +285,7 @@ var optionalFlags = []cli.Flag{
 	FallbackS3AccessKeyFlag,
 	FallbackS3SecretKeyFlag,
 	FallbackS3TimeoutFlag,
+	FallbackS3ReadLegacyBlobsFlag,
 }
 
 // Flags contains the list of configuration options available to the binary.
@@ -365,6 +373,7 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 				AccessKeyID:     ctx.String(FallbackS3AccessKeyFlagName),
 				AccessKeySecret: ctx.String(FallbackS3SecretKeyFlagName),
 				Timeout:         ctx.Duration(FallbackS3TimeoutFlagName),
+				ReadLegacyBlobs: ctx.Bool(FallbackS3ReadLegacyBlobsFlagName),
 			},
 		},
 	}
