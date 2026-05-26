@@ -72,10 +72,10 @@ useful for Alt-DA testing.
 
 ### Build the local `op-alt-da` image
 
-The `op-devnet` compose has this tag for testing dev builds for `op-al-da`, configure the tag and source as needed.
+The `op-devnet` compose has this tag for testing dev builds for `op-alt-da`, configure the tag and source as needed.
 
 ```bash
-docker build -t ghcr.io/celestiaorg/op-alt-da:dev
+docker build -t ghcr.io/celestiaorg/op-alt-da:dev .
 
 ## What Changes For Celestia `op-alt-da`
 
