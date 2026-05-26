@@ -39,10 +39,12 @@ func TestNewS3Provider_AnonymousCredentials(t *testing.T) {
 	assert.True(t, provider.Available())
 }
 
-func TestNewS3Provider_DefaultAnonymousWhenNoCredentials(t *testing.T) {
+func TestNewS3Provider_EmptyCredentialTypeWithStaticKeys(t *testing.T) {
 	ctx := context.Background()
 	provider, err := NewS3Provider(ctx, Config{
-		Bucket: "public-bucket",
+		Bucket:          "test-bucket",
+		AccessKeyID:     "test-key",
+		AccessKeySecret: "test-secret",
 	})
 	require.NoError(t, err)
 	assert.NotNil(t, provider)

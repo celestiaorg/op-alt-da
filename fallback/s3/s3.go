@@ -37,8 +37,8 @@ type Config struct {
 	// AccessKeySecret is the AWS secret key (optional, uses default credential chain if empty)
 	AccessKeySecret string
 	// CredentialType specifies how to authenticate:
-	// "static", "environment", "iam", or "anonymous" (for public buckets).
-	// When empty and no access keys are set, anonymous access is used.
+	// "static", "environment", "iam", "anonymous" (public buckets), or "" (auto-detect).
+	// Empty credential type uses the default AWS credential chain when no access keys are set.
 	CredentialType string
 	// Timeout is the timeout for S3 operations (default: 30s)
 	Timeout time.Duration
@@ -89,17 +89,13 @@ func NewS3Provider(ctx context.Context, cfg Config) (*S3Provider, error) {
 		credsProvider = credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.AccessKeySecret, "")
 	case "anonymous", "public":
 		credsProvider = aws.AnonymousCredentials{}
-	case "environment", "iam":
+	case "environment", "iam", "":
+		// Use default credential chain (environment, IAM role, etc.).
+		// If static credentials are provided, use them.
 		if cfg.AccessKeyID != "" && cfg.AccessKeySecret != "" {
 			credsProvider = credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.AccessKeySecret, "")
 		} else {
 			useDefaultChain = true
-		}
-	case "":
-		if cfg.AccessKeyID != "" && cfg.AccessKeySecret != "" {
-			credsProvider = credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.AccessKeySecret, "")
-		} else {
-			credsProvider = aws.AnonymousCredentials{}
 		}
 	default:
 		return nil, fmt.Errorf("s3: unknown credential type: %s", cfg.CredentialType)

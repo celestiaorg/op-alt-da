@@ -197,11 +197,12 @@ endpoint = ""
 # AWS region
 region = "us-east-1"
 
-# Credential type: "static", "environment", "iam", or "anonymous"
+# Credential type: "static", "environment", "iam", "anonymous", or "" (auto-detect)
 #   - "static": Use access_key_id and access_key_secret below
 #   - "environment": Use AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY env vars
 #   - "iam": Use IAM role (EC2, ECS, Lambda)
-#   - "anonymous": Unsigned requests for public buckets (also the default when no credentials are set)
+#   - "anonymous": Unsigned requests for public buckets
+#   - "": Use default credential chain (environment, IAM role, etc.)
 credential_type = "anonymous"
 
 # Static credentials (when credential_type = "static")
