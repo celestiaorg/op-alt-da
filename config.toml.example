@@ -197,11 +197,13 @@ endpoint = ""
 # AWS region
 region = "us-east-1"
 
-# Credential type: "static", "environment", or "iam"
+# Credential type: "static", "environment", "iam", "anonymous", or "" (auto-detect)
 #   - "static": Use access_key_id and access_key_secret below
 #   - "environment": Use AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY env vars
 #   - "iam": Use IAM role (EC2, ECS, Lambda)
-credential_type = "environment"
+#   - "anonymous": Unsigned requests for public buckets
+#   - "": Use default credential chain (environment, IAM role, etc.)
+credential_type = "anonymous"
 
 # Static credentials (when credential_type = "static")
 access_key_id = ""
@@ -209,3 +211,6 @@ access_key_secret = ""
 
 # Operation timeout
 timeout = "30s"
+
+# Try reading legacy blobs from S3 (Caldera cache key format) when the primary key is not found
+read_legacy_blobs = false

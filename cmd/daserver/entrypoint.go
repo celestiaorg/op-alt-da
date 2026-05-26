@@ -136,6 +136,11 @@ func StartDAServer(cliCtx *cli.Context) error {
 					s3Timeout = cliCtx.Duration(FallbackS3TimeoutFlagName)
 				}
 
+				readLegacyBlobs := cfg.Fallback.S3.ReadLegacyBlobs
+				if cliCtx.IsSet(FallbackS3ReadLegacyBlobsFlagName) {
+					readLegacyBlobs = cliCtx.Bool(FallbackS3ReadLegacyBlobsFlagName)
+				}
+
 				s3Cfg := s3.Config{
 					Bucket:          firstNonEmpty(cfg.Fallback.S3.Bucket, cliCtx.String(FallbackS3BucketFlagName)),
 					Prefix:          firstNonEmpty(cfg.Fallback.S3.Prefix, cliCtx.String(FallbackS3PrefixFlagName)),
@@ -145,6 +150,7 @@ func StartDAServer(cliCtx *cli.Context) error {
 					AccessKeyID:     firstNonEmpty(cfg.Fallback.S3.AccessKeyID, cliCtx.String(FallbackS3AccessKeyFlagName)),
 					AccessKeySecret: firstNonEmpty(cfg.Fallback.S3.AccessKeySecret, cliCtx.String(FallbackS3SecretKeyFlagName)),
 					Timeout:         s3Timeout,
+					ReadLegacyBlobs: readLegacyBlobs,
 				}
 
 				if s3Cfg.Bucket == "" {
@@ -159,7 +165,8 @@ func StartDAServer(cliCtx *cli.Context) error {
 				l.Info("Fallback provider initialized",
 					"provider", "s3",
 					"bucket", s3Cfg.Bucket,
-					"prefix", s3Cfg.Prefix)
+					"prefix", s3Cfg.Prefix,
+					"read_legacy_blobs", s3Cfg.ReadLegacyBlobs)
 			default:
 				return fmt.Errorf("unknown fallback provider: %s", provider)
 			}

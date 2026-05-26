@@ -17,7 +17,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/celestiaorg/op-alt-da/fallback"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/log"
 )
+
+const celestiaDerivationVersionForked = 0xce
 
 // Config holds S3 provider configuration.
 type Config struct {
@@ -33,18 +36,23 @@ type Config struct {
 	AccessKeyID string
 	// AccessKeySecret is the AWS secret key (optional, uses default credential chain if empty)
 	AccessKeySecret string
-	// CredentialType specifies how to authenticate: "static", "environment", "iam" (default: auto-detect)
+	// CredentialType specifies how to authenticate:
+	// "static", "environment", "iam", "anonymous" (public buckets), or "" (auto-detect).
+	// Empty credential type uses the default AWS credential chain when no access keys are set.
 	CredentialType string
 	// Timeout is the timeout for S3 operations (default: 30s)
 	Timeout time.Duration
+	// ReadLegacyBlobs enables a second S3 lookup using the legacy Caldera cache key format.
+	ReadLegacyBlobs bool
 }
 
 // S3Provider implements the fallback.Provider interface using AWS S3.
 type S3Provider struct {
-	client  *s3.Client
-	bucket  string
-	prefix  string
-	timeout time.Duration
+	client          *s3.Client
+	bucket          string
+	prefix          string
+	timeout         time.Duration
+	readLegacyBlobs bool
 }
 
 // NewS3Provider creates a new S3 fallback provider.
@@ -61,36 +69,6 @@ func NewS3Provider(ctx context.Context, cfg Config) (*S3Provider, error) {
 		cfg.Timeout = 30 * time.Second
 	}
 
-	// Build AWS config options
-	var opts []func(*config.LoadOptions) error
-	opts = append(opts, config.WithRegion(cfg.Region))
-
-	// Configure credentials based on credential type
-	switch cfg.CredentialType {
-	case "static":
-		if cfg.AccessKeyID == "" || cfg.AccessKeySecret == "" {
-			return nil, errors.New("s3: access key and secret required for static credentials")
-		}
-		opts = append(opts, config.WithCredentialsProvider(
-			credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.AccessKeySecret, ""),
-		))
-	case "environment", "iam", "":
-		// Use default credential chain (environment, IAM role, etc.)
-		// If static credentials are provided, use them
-		if cfg.AccessKeyID != "" && cfg.AccessKeySecret != "" {
-			opts = append(opts, config.WithCredentialsProvider(
-				credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.AccessKeySecret, ""),
-			))
-		}
-	default:
-		return nil, fmt.Errorf("s3: unknown credential type: %s", cfg.CredentialType)
-	}
-
-	awsCfg, err := config.LoadDefaultConfig(ctx, opts...)
-	if err != nil {
-		return nil, fmt.Errorf("s3: failed to load AWS config: %w", err)
-	}
-
 	// Build S3 client options
 	var s3Opts []func(*s3.Options)
 	if cfg.Endpoint != "" {
@@ -100,13 +78,53 @@ func NewS3Provider(ctx context.Context, cfg Config) (*S3Provider, error) {
 		})
 	}
 
-	client := s3.NewFromConfig(awsCfg, s3Opts...)
+	var credsProvider aws.CredentialsProvider
+	useDefaultChain := false
+
+	switch cfg.CredentialType {
+	case "static":
+		if cfg.AccessKeyID == "" || cfg.AccessKeySecret == "" {
+			return nil, errors.New("s3: access key and secret required for static credentials")
+		}
+		credsProvider = credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.AccessKeySecret, "")
+	case "anonymous", "public":
+		credsProvider = aws.AnonymousCredentials{}
+	case "environment", "iam", "":
+		// Use default credential chain (environment, IAM role, etc.).
+		// If static credentials are provided, use them.
+		if cfg.AccessKeyID != "" && cfg.AccessKeySecret != "" {
+			credsProvider = credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.AccessKeySecret, "")
+		} else {
+			useDefaultChain = true
+		}
+	default:
+		return nil, fmt.Errorf("s3: unknown credential type: %s", cfg.CredentialType)
+	}
+
+	var client *s3.Client
+	if useDefaultChain {
+		opts := []func(*config.LoadOptions) error{
+			config.WithRegion(cfg.Region),
+		}
+		awsCfg, err := config.LoadDefaultConfig(ctx, opts...)
+		if err != nil {
+			return nil, fmt.Errorf("s3: failed to load AWS config: %w", err)
+		}
+		client = s3.NewFromConfig(awsCfg, s3Opts...)
+	} else {
+		awsCfg := aws.Config{
+			Region:      cfg.Region,
+			Credentials: credsProvider,
+		}
+		client = s3.NewFromConfig(awsCfg, s3Opts...)
+	}
 
 	return &S3Provider{
-		client:  client,
-		bucket:  cfg.Bucket,
-		prefix:  cfg.Prefix,
-		timeout: cfg.Timeout,
+		client:          client,
+		bucket:          cfg.Bucket,
+		prefix:          cfg.Prefix,
+		timeout:         cfg.Timeout,
+		readLegacyBlobs: cfg.ReadLegacyBlobs,
 	}, nil
 }
 
@@ -134,6 +152,18 @@ func (p *S3Provider) Put(ctx context.Context, commitment []byte, data []byte) er
 // Get retrieves blob data by commitment.
 func (p *S3Provider) Get(ctx context.Context, commitment []byte) ([]byte, error) {
 	data, err := p.getObject(ctx, p.makeKey(commitment))
+	if err == nil {
+		return data, nil
+	}
+	if !isNotFoundError(err) {
+		return nil, err
+	}
+
+	if !p.readLegacyBlobs {
+		return nil, fallback.ErrNotFound
+	}
+
+	data, err = p.getObject(ctx, p.makeReadOnlyLegacyDerivationKey(commitment))
 	if err != nil {
 		if isNotFoundError(err) {
 			return nil, fallback.ErrNotFound
@@ -145,6 +175,7 @@ func (p *S3Provider) Get(ctx context.Context, commitment []byte) ([]byte, error)
 
 // getObject retrieves an object by key.
 func (p *S3Provider) getObject(ctx context.Context, key string) (_ []byte, err error) {
+	log.Info("S3 get object", "bucket", p.bucket, "key", key, "path", fmt.Sprintf("s3://%s/%s", p.bucket, key))
 	result, err := p.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(p.bucket),
 		Key:    aws.String(key),
@@ -181,6 +212,18 @@ func (p *S3Provider) Timeout() time.Duration {
 func (p *S3Provider) makeKey(commitment []byte) string {
 	keccakKey := crypto.Keccak256(commitment)
 	return path.Join(p.prefix, hex.EncodeToString(keccakKey))
+}
+
+// makeReadOnlyLegacyDerivationKey generates the legacy S3 object key used by external caches.
+// Format: prefix/hex(0xce || blobID), where blobID is the commitment with the
+// 0x01 generic and 0x0c celestia version prefix stripped.
+func (p *S3Provider) makeReadOnlyLegacyDerivationKey(commitment []byte) string {
+	blobID := commitment
+	if len(commitment) >= 2 && commitment[0] == 0x01 && commitment[1] == 0x0c {
+		blobID = commitment[2:]
+	}
+	s3id := append([]byte{celestiaDerivationVersionForked}, blobID...)
+	return path.Join(p.prefix, hex.EncodeToString(s3id))
 }
 
 // isNotFoundError checks if the error indicates the object was not found.
