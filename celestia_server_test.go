@@ -103,11 +103,16 @@ func createTestServer(t *testing.T, store Store) *CelestiaServer {
 		false,           // metrics disabled for unit tests
 		0,
 		nil, // fallback provider (nil = NoopProvider)
+		fallback.ModeBoth,
 		logger,
 	)
 }
 
 func createTestServerWithFallback(t *testing.T, store Store, provider fallback.Provider) *CelestiaServer {
+	return createTestServerWithFallbackMode(t, store, provider, fallback.ModeBoth)
+}
+
+func createTestServerWithFallbackMode(t *testing.T, store Store, provider fallback.Provider, mode string) *CelestiaServer {
 	logger := log.New()
 
 	return NewCelestiaServer(
@@ -123,6 +128,7 @@ func createTestServerWithFallback(t *testing.T, store Store, provider fallback.P
 		false,
 		0,
 		provider,
+		mode,
 		logger,
 	)
 }
@@ -336,6 +342,23 @@ func TestGetBlob_DoesNotUseFallbackOnCelestiaNotFound(t *testing.T) {
 	require.ErrorIs(t, err, altda.ErrNotFound)
 	assert.Nil(t, data)
 	assert.Equal(t, 0, fallbackProvider.getCalls)
+}
+
+func TestGetBlob_ReadFallbackMode_SkipsWriteThrough(t *testing.T) {
+	blob := []byte("blob from celestia")
+	fallbackProvider := &mockFallbackProvider{available: true}
+	store := &mockStore{
+		getFunc: func(ctx context.Context, key []byte) ([]byte, error) {
+			return blob, nil
+		},
+	}
+
+	server := createTestServerWithFallbackMode(t, store, fallbackProvider, fallback.ModeReadFallback)
+
+	data, err := server.getBlob(context.Background(), commitmentForData(t, blob))
+	require.NoError(t, err)
+	assert.Equal(t, blob, data)
+	assert.Equal(t, 0, fallbackProvider.putCalls)
 }
 
 func TestGetBlob_VerifiesFallbackDataAgainstCommitment(t *testing.T) {

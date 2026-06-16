@@ -10,6 +10,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	celestia "github.com/celestiaorg/op-alt-da"
+	"github.com/celestiaorg/op-alt-da/fallback"
 	"github.com/celestiaorg/op-alt-da/fallback/s3"
 	"github.com/celestiaorg/op-alt-da/signer"
 	opservice "github.com/ethereum-optimism/optimism/op-service"
@@ -47,6 +48,7 @@ const (
 	// fallback provider flags
 	FallbackEnabledFlagName     = "fallback.enabled"
 	FallbackProviderFlagName    = "fallback.provider"
+	FallbackModeFlagName        = "fallback.mode"
 	FallbackS3BucketFlagName    = "fallback.s3.bucket"
 	FallbackS3PrefixFlagName    = "fallback.s3.prefix"
 	FallbackS3EndpointFlagName  = "fallback.s3.endpoint"
@@ -193,6 +195,12 @@ var (
 		Value:   "s3",
 		EnvVars: prefixEnvVars("FALLBACK_PROVIDER"),
 	}
+	FallbackModeFlag = &cli.StringFlag{
+		Name:    FallbackModeFlagName,
+		Usage:   "Fallback mode: write_through, read_fallback, or both",
+		Value:   fallback.ModeBoth,
+		EnvVars: prefixEnvVars("FALLBACK_MODE"),
+	}
 	FallbackS3BucketFlag = &cli.StringFlag{
 		Name:    FallbackS3BucketFlagName,
 		Usage:   "S3 bucket name for fallback storage",
@@ -277,6 +285,7 @@ var optionalFlags = []cli.Flag{
 	// Fallback flags
 	FallbackEnabledFlag,
 	FallbackProviderFlag,
+	FallbackModeFlag,
 	FallbackS3BucketFlag,
 	FallbackS3PrefixFlag,
 	FallbackS3EndpointFlag,
@@ -300,6 +309,7 @@ func init() {
 type CLIFallbackConfig struct {
 	Enabled  bool
 	Provider string
+	Mode     string
 	S3       s3.Config
 }
 
@@ -364,6 +374,7 @@ func ReadCLIConfig(ctx *cli.Context) CLIConfig {
 		Fallback: CLIFallbackConfig{
 			Enabled:  ctx.Bool(FallbackEnabledFlagName),
 			Provider: ctx.String(FallbackProviderFlagName),
+			Mode:     ctx.String(FallbackModeFlagName),
 			S3: s3.Config{
 				Bucket:          ctx.String(FallbackS3BucketFlagName),
 				Prefix:          ctx.String(FallbackS3PrefixFlagName),

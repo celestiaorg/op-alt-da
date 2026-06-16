@@ -9,6 +9,7 @@ import (
 	"time"
 
 	celestia "github.com/celestiaorg/op-alt-da"
+	"github.com/celestiaorg/op-alt-da/fallback"
 	"github.com/celestiaorg/op-alt-da/signer"
 )
 
@@ -119,6 +120,9 @@ type FallbackConfig struct {
 	// Provider type: "s3"
 	Provider string `toml:"provider"`
 
+	// Mode controls fallback write/read behavior: write_through, read_fallback, or both.
+	Mode string `toml:"mode"`
+
 	// S3 configuration (when provider = "s3")
 	S3 S3Config `toml:"s3"`
 }
@@ -183,6 +187,7 @@ func DefaultConfig() Config {
 		Fallback: FallbackConfig{
 			Enabled:  false,
 			Provider: "s3",
+			Mode:     fallback.ModeBoth,
 			S3: S3Config{
 				Region:  "us-east-1",
 				Timeout: "30s",
@@ -250,6 +255,10 @@ func (c *Config) Validate() error {
 		if c.Celestia.P2PNetwork == "" {
 			return fmt.Errorf("celestia.p2p_network is required when core_grpc_addr is set")
 		}
+	}
+
+	if err := fallback.ValidateMode(c.Fallback.Mode); err != nil {
+		return err
 	}
 
 	return nil

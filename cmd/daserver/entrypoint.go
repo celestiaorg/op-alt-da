@@ -121,6 +121,7 @@ func StartDAServer(cliCtx *cli.Context) error {
 
 		// Initialize fallback provider (prefer TOML config, fall back to CLI flags)
 		var fallbackProvider fallback.Provider = &fallback.NoopProvider{}
+		fallbackMode := firstNonEmpty(cfg.Fallback.Mode, cliCtx.String(FallbackModeFlagName))
 		fallbackEnabled := cfg.Fallback.Enabled || cliCtx.Bool(FallbackEnabledFlagName)
 		if fallbackEnabled {
 			provider := cfg.Fallback.Provider
@@ -162,10 +163,12 @@ func StartDAServer(cliCtx *cli.Context) error {
 					return fmt.Errorf("failed to initialize S3 fallback provider: %w", err)
 				}
 				fallbackProvider = s3Provider
+				fallbackMode := firstNonEmpty(cfg.Fallback.Mode, cliCtx.String(FallbackModeFlagName))
 				l.Info("Fallback provider initialized",
 					"provider", "s3",
 					"bucket", s3Cfg.Bucket,
 					"prefix", s3Cfg.Prefix,
+					"mode", fallback.NormalizeMode(fallbackMode),
 					"read_legacy_blobs", s3Cfg.ReadLegacyBlobs)
 			default:
 				return fmt.Errorf("unknown fallback provider: %s", provider)
@@ -185,6 +188,7 @@ func StartDAServer(cliCtx *cli.Context) error {
 			cfg.Metrics.Enabled,
 			cfg.Metrics.Port,
 			fallbackProvider,
+			fallbackMode,
 			l,
 		)
 	} else {
