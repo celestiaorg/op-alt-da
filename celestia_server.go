@@ -99,7 +99,8 @@ type CelestiaServer struct {
 	metricsServer  *http.Server // Separate server for graceful shutdown
 
 	// Fallback provider for write-through and read-fallback
-	fallback fallback.Provider
+	fallback       fallback.Provider
+	fallbackMode   string
 
 	// Track pending async operations for graceful shutdown
 	wg sync.WaitGroup
@@ -119,6 +120,7 @@ func NewCelestiaServer(
 	metricsEnabled bool,
 	metricsPort int,
 	fallbackProvider fallback.Provider,
+	fallbackMode string,
 	log log.Logger,
 ) *CelestiaServer {
 	endpoint := net.JoinHostPort(host, strconv.Itoa(port))
@@ -138,6 +140,7 @@ func NewCelestiaServer(
 		metricsEnabled: metricsEnabled,
 		metricsPort:    metricsPort,
 		fallback:       fallbackProvider,
+		fallbackMode:   fallback.NormalizeMode(fallbackMode),
 		httpServer: &http.Server{
 			Addr:           endpoint,
 			ReadTimeout:    httpReadTimeout,
@@ -278,8 +281,8 @@ func (d *CelestiaServer) getBlob(ctx context.Context, comm []byte) ([]byte, erro
 
 	data, celestiaErr := d.store.Get(getCtx, comm)
 	if celestiaErr == nil {
-		// Success from Celestia - read-through to fallback for future requests
-		if d.fallback.Available() {
+		// Success from Celestia - optionally read-through to fallback for future requests
+		if d.fallback.Available() && fallback.WriteEnabled(d.fallbackMode) {
 			d.wg.Add(1)
 			go d.putFallback(context.Background(), comm, data)
 		}
@@ -443,7 +446,7 @@ func (d *CelestiaServer) HandlePut(w http.ResponseWriter, r *http.Request) {
 		"duration", duration)
 
 	// Write to fallback provider asynchronously (non-blocking)
-	if d.fallback.Available() {
+	if d.fallback.Available() && fallback.WriteEnabled(d.fallbackMode) {
 		d.wg.Add(1)
 		go d.putFallback(context.Background(), commitment, input)
 	}
