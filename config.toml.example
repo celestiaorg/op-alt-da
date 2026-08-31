@@ -53,14 +53,14 @@ bridge_tls_enabled = false
 # gRPC endpoint for transaction submission to consensus.
 # Examples:
 #   - Local: localhost:9090
-#   - Mocha: consensus-full-mocha-4.celestia-mocha.com:9090
+#   - Mocha: rpc-mocha.pops.one:9090
 
-core_grpc_addr = "consensus-full-mocha-4.celestia-mocha.com:9090"
+core_grpc_addr = "rpc-mocha.pops.one:9090"
 core_grpc_auth_token = ""
 core_grpc_tls_enabled = true
 
-# P2P network: mocha-4, arabica-11, celestia
-p2p_network = "mocha-4"
+# P2P network: mocha-5, arabica-11, celestia
+p2p_network = "mocha-5"
 
 # Parallel submission (0 = immediate, 1 = queued, >1 = parallel workers)
 tx_worker_accounts = 0
@@ -87,13 +87,13 @@ mode = "local"
 # Uses a local filesystem keyring for signing.
 #
 # Setup:
-#   1. Initialize: celestia light init --p2p.network mocha-4
+#   1. Initialize: celestia light init --p2p.network mocha-5
 #   2. Create key: celestia-appd keys add my_celes_key --keyring-backend test \
-#                  --home ~/.celestia-light-mocha-4
+#                  --home ~/.celestia-light-mocha-5
 #   3. Fund the address with TIA
 
 [celestia.signer.local]
-keyring_path = "~/.celestia-light-mocha-4/keys"
+keyring_path = "~/.celestia-light-mocha-5/keys"
 key_name = "my_celes_key"
 
 # ------------------------------------------------------------------------------

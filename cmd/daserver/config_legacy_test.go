@@ -53,7 +53,7 @@ func TestValidate_LegacyAWSKMSConfig(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Celestia.Namespace = strings.Repeat("0", 58)
 	cfg.Celestia.CoreGRPCAddr = "localhost:9090"
-	cfg.Celestia.P2PNetwork = "mocha-4"
+	cfg.Celestia.P2PNetwork = "mocha-5"
 	cfg.Celestia.KeyringBackend = "awskms"
 	cfg.Celestia.DefaultKeyName = "alias/op-alt-da/signer"
 	cfg.Celestia.AWSKMS.Region = "us-east-1"

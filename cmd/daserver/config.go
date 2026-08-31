@@ -51,7 +51,7 @@ type CelestiaConfig struct {
 	CoreGRPCAuthToken  string `toml:"core_grpc_auth_token"`
 	CoreGRPCTLSEnabled bool   `toml:"core_grpc_tls_enabled"`
 
-	// P2P network (mocha-4, arabica-11, celestia)
+	// P2P network (mocha-5, arabica-11, celestia)
 	P2PNetwork string `toml:"p2p_network"`
 
 	// Parallel submission settings
@@ -160,7 +160,7 @@ func DefaultConfig() Config {
 			CoreGRPCAddr:       "",
 			CoreGRPCAuthToken:  "",
 			CoreGRPCTLSEnabled: true,
-			P2PNetwork:         "mocha-4",
+			P2PNetwork:         "mocha-5",
 			TxWorkerAccounts:   0,
 			Signer:             signer.DefaultConfig(),
 			// Legacy fields (for backwards compatibility)

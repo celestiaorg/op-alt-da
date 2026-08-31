@@ -54,15 +54,15 @@ Choose **one** of the following:
 
 ```bash
 # Initialize a Celestia light node (creates keyring directory)
-celestia light init --p2p.network mocha-4
+celestia light init --p2p.network mocha-5
 
 # Add a new key to the keyring
 celestia-appd keys add my_celes_key --keyring-backend test \
-  --home ~/.celestia-light-mocha-4
+  --home ~/.celestia-light-mocha-5
 
 # Display the address to fund with TIA
 celestia-appd keys show my_celes_key --keyring-backend test \
-  --home ~/.celestia-light-mocha-4 -a
+  --home ~/.celestia-light-mocha-5 -a
 
 # Fund this address with TIA from:
 # - Mocha faucet: https://faucet.celestia-mocha.com/
@@ -100,10 +100,10 @@ Or using CLI flags:
 ./bin/da-server \
   --celestia.namespace="00000000000000000000000000000000000000000000000000000000acfe" \
   --celestia.server="http://localhost:26658" \
-  --celestia.tx-client.core-grpc.addr="consensus-full-mocha-4.celestia-mocha.com:9090" \
-  --celestia.tx-client.keyring-path="$HOME/.celestia-light-mocha-4/keys" \
+  --celestia.tx-client.core-grpc.addr="rpc-mocha.pops.one:9090" \
+  --celestia.tx-client.keyring-path="$HOME/.celestia-light-mocha-5/keys" \
   --celestia.tx-client.key-name="my_celes_key" \
-  --celestia.tx-client.p2p-network="mocha-4"
+  --celestia.tx-client.p2p-network="mocha-5"
 ```
 
 ## Configuration
@@ -127,7 +127,7 @@ Or using CLI flags:
 | `--celestia.tx-client.core-grpc.addr`        | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_ADDR`        | **(required)** | CoreGRPC endpoint                      |
 | `--celestia.tx-client.core-grpc.tls-enabled` | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_TLS_ENABLED` | `true`         | Enable TLS for CoreGRPC                |
 | `--celestia.tx-client.core-grpc.auth-token`  | `OP_ALTDA_CELESTIA_TX_CLIENT_CORE_GRPC_AUTH_TOKEN`  |                | CoreGRPC auth token                    |
-| `--celestia.tx-client.p2p-network`           | `OP_ALTDA_CELESTIA_TX_CLIENT_P2P_NETWORK`           | `mocha-4`      | Network: mocha-4, arabica-11, celestia |
+| `--celestia.tx-client.p2p-network`           | `OP_ALTDA_CELESTIA_TX_CLIENT_P2P_NETWORK`           | `mocha-5`      | Network: mocha-5, arabica-11, celestia |
 
 #### Signer Configuration
 
@@ -182,8 +182,8 @@ port = 3100
 [celestia]
 namespace = "00000000000000000000000000000000000000000000000000000000acfe"
 bridge_addr = "http://localhost:26658"
-core_grpc_addr = "consensus-full-mocha-4.celestia-mocha.com:9090"
-p2p_network = "mocha-4"
+core_grpc_addr = "rpc-mocha.pops.one:9090"
+p2p_network = "mocha-5"
 
 # Signer configuration - choose ONE mode
 [celestia.signer]
@@ -191,7 +191,7 @@ mode = "local"  # or "popsigner"
 
 # Local keyring settings
 [celestia.signer.local]
-keyring_path = "~/.celestia-light-mocha-4/keys"
+keyring_path = "~/.celestia-light-mocha-5/keys"
 key_name = "my_celes_key"
 
 # POPSigner settings (when mode = "popsigner")
@@ -260,8 +260,8 @@ Fallback failures are non-fatal and logged as warnings.
 ```bash
 ./bin/da-server \
   --celestia.namespace="$NAMESPACE" \
-  --celestia.tx-client.keyring-path="$HOME/.celestia-light-mocha-4/keys" \
-  --celestia.tx-client.core-grpc.addr="consensus-full-mocha-4.celestia-mocha.com:9090" \
+  --celestia.tx-client.keyring-path="$HOME/.celestia-light-mocha-5/keys" \
+  --celestia.tx-client.core-grpc.addr="rpc-mocha.pops.one:9090" \
   --fallback.enabled=true \
   --fallback.s3.bucket="my-da-fallback" \
   --fallback.s3.region="us-east-1"
@@ -358,10 +358,10 @@ Ensure your keyring path is correct and contains the specified key:
 ```bash
 # List keys in keyring
 celestia-appd keys list --keyring-backend test \
-  --home ~/.celestia-light-mocha-4
+  --home ~/.celestia-light-mocha-5
 
 # Verify keyring path exists
-ls -la ~/.celestia-light-mocha-4/keys/
+ls -la ~/.celestia-light-mocha-5/keys/
 ```
 
 ### "insufficient funds"
@@ -371,7 +371,7 @@ Your Celestia account needs TIA to pay for transaction fees:
 ```bash
 # Check balance
 celestia-appd query bank balances $(celestia-appd keys show my_celes_key -a \
-  --keyring-backend test --home ~/.celestia-light-mocha-4) \
+  --keyring-backend test --home ~/.celestia-light-mocha-5) \
   --node https://rpc-mocha.pops.one:443
 ```
 
@@ -381,7 +381,7 @@ Verify the CoreGRPC endpoint is accessible:
 
 ```bash
 # Test connection
-grpcurl -plaintext consensus-full-mocha-4.celestia-mocha.com:9090 list
+grpcurl -plaintext rpc-mocha.pops.one:9090 list
 ```
 
 ## License
