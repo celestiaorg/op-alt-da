@@ -9,7 +9,7 @@ import (
 
 	nodeblob "github.com/celestiaorg/celestia-node/blob"
 	blobAPI "github.com/celestiaorg/celestia-node/nodebuilder/blob"
-	libshare "github.com/celestiaorg/go-square/v3/share"
+	libshare "github.com/celestiaorg/go-square/v4/share"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
