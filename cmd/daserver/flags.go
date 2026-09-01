@@ -117,7 +117,7 @@ var (
 	}
 	CelestiaKeyringPathFlag = &cli.StringFlag{
 		Name:    CelestiaKeyringPathFlagName,
-		Usage:   "celestia tx client keyring path e.g. ~/.celestia-light-mocha-4/keys",
+		Usage:   "celestia tx client keyring path e.g. ~/.celestia-light-mocha-5/keys",
 		Value:   "",
 		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_KEYRING_PATH"),
 	}
@@ -141,8 +141,8 @@ var (
 	}
 	CelestiaP2PNetworkFlag = &cli.StringFlag{
 		Name:    CelestiaP2PNetworkFlagName,
-		Usage:   "celestia tx client p2p network (mocha-4, arabica-11, celestia)",
-		Value:   "mocha-4",
+		Usage:   "celestia tx client p2p network (mocha-5, arabica-11, celestia)",
+		Value:   "mocha-5",
 		EnvVars: prefixEnvVars("CELESTIA_TX_CLIENT_P2P_NETWORK"),
 	}
 	CelestiaSignerModeFlag = &cli.StringFlag{

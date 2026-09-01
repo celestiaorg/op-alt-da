@@ -44,7 +44,7 @@ type LocalConfig struct {
 	BackendName string `toml:"backend"`
 
 	// KeyringPath is the path to the keyring directory.
-	// Example: "~/.celestia-light-mocha-4/keys"
+	// Example: "~/.celestia-light-mocha-5/keys"
 	KeyringPath string `toml:"keyring_path"`
 
 	// KeyName is the name of the key to use from the keyring.

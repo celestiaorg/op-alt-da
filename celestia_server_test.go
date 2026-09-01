@@ -12,7 +12,7 @@ import (
 	"time"
 
 	nodeblob "github.com/celestiaorg/celestia-node/blob"
-	libshare "github.com/celestiaorg/go-square/v3/share"
+	libshare "github.com/celestiaorg/go-square/v4/share"
 	"github.com/celestiaorg/op-alt-da/fallback"
 	"github.com/celestiaorg/op-alt-da/metrics"
 	altda "github.com/ethereum-optimism/optimism/op-alt-da"
